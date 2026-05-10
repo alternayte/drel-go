@@ -178,3 +178,90 @@ output:
 	buildOut, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
 }
+
+func TestGenerate_WithValueObjects(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/types.go": `package models
+
+import (
+	"database/sql/driver"
+	"fmt"
+)
+
+type Email struct{ address string }
+
+func NewEmail(addr string) Email { return Email{address: addr} }
+func (e Email) String() string   { return e.address }
+func (e Email) Value() (driver.Value, error) { return e.address, nil }
+func (e *Email) Scan(src any) error {
+	s, ok := src.(string)
+	if !ok { return fmt.Errorf("Email.Scan: expected string, got %T", src) }
+	e.address = s
+	return nil
+}
+
+type Role string
+const (
+	RoleUser  Role = "user"
+	RoleAdmin Role = "admin"
+)
+`,
+		"models/user.go": `package models
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name  string ` + "`db:\"name\"`" + `
+	email Email  ` + "`db:\"email\"`" + `
+	role  Role   ` + "`db:\"role\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	// Save and restore working directory.
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	// Run the full codegen pipeline.
+	err = Generate("drel.yaml")
+	require.NoError(t, err)
+
+	// Verify model file was generated.
+	modelFile := filepath.Join(dir, "models", "user_drel.go")
+	assert.FileExists(t, modelFile)
+
+	modelContent, err := os.ReadFile(modelFile)
+	require.NoError(t, err)
+	modelStr := string(modelContent)
+
+	// Verify VO type uses unqualified name (Email, not testmod/models.Email).
+	assert.Contains(t, modelStr, "drel.Column[Email]")
+	assert.Contains(t, modelStr, `drel.NewCol[Email]("email")`)
+
+	// Verify string-based enum type uses unqualified name.
+	assert.Contains(t, modelStr, "drel.Column[Role]")
+	assert.Contains(t, modelStr, `drel.NewCol[Role]("role")`)
+
+	// Verify snapshot uses local types.
+	assert.Contains(t, modelStr, "email Email")
+	assert.Contains(t, modelStr, "role Role")
+
+	// Run go mod tidy and go build to verify generated code compiles.
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	tidyOut, err := tidy.CombinedOutput()
+	require.NoError(t, err, "go mod tidy failed: %s", string(tidyOut))
+
+	build := exec.Command("go", "build", "./...")
+	build.Dir = dir
+	buildOut, err := build.CombinedOutput()
+	require.NoError(t, err, "go build failed: %s", string(buildOut))
+}
