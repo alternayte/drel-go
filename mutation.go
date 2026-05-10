@@ -8,7 +8,7 @@ import (
 	"github.com/alternayte/drel/internal/driver"
 )
 
-func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracker *changeTracker) error {
+func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
 	tracker.DetectChanges()
 	pc := tracker.GetPendingChanges()
 
@@ -18,12 +18,12 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
 		if te.meta.ScanReturning != nil {
 			if err := te.meta.ScanReturning(te.entity, row); err != nil {
-				return fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
+				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
 		} else {
 			var discard any
 			if err := row.Scan(&discard, &discard, &discard); err != nil {
-				return fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
+				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
 		}
 	}
@@ -41,10 +41,10 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
 		affected, err := dbTx.Exec(ctx, result.SQL, result.Args...)
 		if err != nil {
-			return fmt.Errorf("drel: update %s: %w", te.meta.Table, err)
+			return nil, fmt.Errorf("drel: update %s: %w", te.meta.Table, err)
 		}
 		if affected == 0 {
-			return fmt.Errorf("drel: update %s: no rows affected (pk=%v)", te.meta.Table, pkVal)
+			return nil, fmt.Errorf("drel: update %s: no rows affected (pk=%v)", te.meta.Table, pkVal)
 		}
 	}
 
@@ -53,10 +53,22 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
 		_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
 		if err != nil {
-			return fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
+			return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
 		}
 	}
 
+	events := collectPendingEvents(tracker)
 	tracker.PostFlush()
-	return nil
+	return events, nil
+}
+
+func collectPendingEvents(tracker *changeTracker) []any {
+	var events []any
+	for _, te := range tracker.entities {
+		if er, ok := te.entity.(EventRecorder); ok {
+			events = append(events, er.PendingEvents()...)
+			er.ClearEvents()
+		}
+	}
+	return events
 }

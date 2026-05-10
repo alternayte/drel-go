@@ -9,14 +9,20 @@ import (
 
 // Tx represents an active database transaction with change tracking.
 type Tx struct {
-	engine  *Engine
-	dbTx    driver.Tx
-	tracker *changeTracker
+	engine     *Engine
+	dbTx       driver.Tx
+	tracker    *changeTracker
+	heldEvents []any
 }
 
 // SaveChanges flushes all tracked changes within this transaction.
 func (tx *Tx) SaveChanges(ctx context.Context) error {
-	return flushChanges(ctx, tx.dbTx, tx.engine.Dialect(), tx.tracker)
+	events, err := flushChanges(ctx, tx.dbTx, tx.engine.Dialect(), tx.tracker)
+	if err != nil {
+		return err
+	}
+	tx.heldEvents = append(tx.heldEvents, events...)
+	return nil
 }
 
 // Exec executes a raw SQL statement within the transaction and returns the

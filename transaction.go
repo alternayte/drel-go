@@ -65,9 +65,12 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		return err
 	}
 
-	if err := flushChanges(ctx, dbTx, e.Dialect(), tx.tracker); err != nil {
+	events, err := flushChanges(ctx, dbTx, e.Dialect(), tx.tracker)
+	if err != nil {
 		return err
 	}
+	allEvents := append(tx.heldEvents, events...)
+	_ = allEvents // hooks are wired in a subsequent task
 
 	if err := dbTx.Commit(ctx); err != nil {
 		return fmt.Errorf("drel: commit: %w", err)
