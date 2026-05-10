@@ -207,6 +207,46 @@ func (p *Postgres) BuildDelete(table string, pkColumn string, pkValue any) diale
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
+func (p *Postgres) BuildSoftDelete(table string, pkColumn string, pkValue any) dialect.Result {
+	sql := fmt.Sprintf(
+		"UPDATE %s SET %s = NOW() WHERE %s = $1",
+		quoteIdent(table), quoteIdent("deleted_at"), quoteIdent(pkColumn),
+	)
+	return dialect.Result{SQL: sql, Args: []any{pkValue}}
+}
+
+func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	var b strings.Builder
+	var args []any
+	paramIdx := 1
+
+	b.WriteString("UPDATE ")
+	b.WriteString(quoteIdent(table))
+	b.WriteString(" SET ")
+
+	for i, cv := range changes {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+		args = append(args, cv.Value)
+		paramIdx++
+	}
+
+	b.WriteString(fmt.Sprintf(", %s = %s + 1", quoteIdent(versionCol), quoteIdent(versionCol)))
+
+	b.WriteString(fmt.Sprintf(" WHERE %s = $%d", quoteIdent(pkColumn), paramIdx))
+	args = append(args, pkValue)
+	paramIdx++
+
+	b.WriteString(fmt.Sprintf(" AND %s = $%d", quoteIdent(versionCol), paramIdx))
+	args = append(args, currentVersion)
+
+	b.WriteString(fmt.Sprintf(" RETURNING %s", quoteIdent(versionCol)))
+
+	return dialect.Result{SQL: b.String(), Args: args}
+}
+
 func quoteIdent(name string) string {
 	return `"` + name + `"`
 }

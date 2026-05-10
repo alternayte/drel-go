@@ -20,4 +20,6 @@ type Dialect interface {
 	BuildInsert(table string, columns []string, values []any, returningCols []string) Result
 	BuildUpdate(table string, changes []ColumnValue, pkColumn string, pkValue any) Result
 	BuildDelete(table string, pkColumn string, pkValue any) Result
+	BuildSoftDelete(table string, pkColumn string, pkValue any) Result
+	BuildUpdateVersioned(table string, changes []ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) Result
 }
