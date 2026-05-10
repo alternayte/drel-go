@@ -49,6 +49,15 @@ func (d *PgxDriver) Exec(ctx context.Context, sql string, args ...any) (int64, e
 	return tag.RowsAffected(), nil
 }
 
+// Begin starts a new database transaction.
+func (d *PgxDriver) Begin(ctx context.Context) (driver.Tx, error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxTx{tx: tx}, nil
+}
+
 // Close shuts down the connection pool.
 func (d *PgxDriver) Close() {
 	d.pool.Close()
