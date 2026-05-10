@@ -1,0 +1,50 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work.sum
+
+# Vendor (if not vendoring)
+vendor/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+
+# Superpowers (skill definitions, never commit)
+docs/superpowers/
+
+# Generated drel files (codegen output, regenerated via `drel generate`)
+*_drel.go
+db/drel_gen.go
+
+# SQLite test databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Atlas migration lock (local only)
+atlas.lock
+
+# Binary output
+/bin/
+/dist/
