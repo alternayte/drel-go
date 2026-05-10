@@ -10,6 +10,9 @@ import (
 // ErrNotFound is returned when a query expects a result but finds none.
 var ErrNotFound = errors.New("drel: not found")
 
+// ErrConcurrencyConflict is returned when an entity was modified by another transaction.
+var ErrConcurrencyConflict = errors.New("drel: concurrency conflict — entity was modified by another transaction")
+
 // QueryBuilder constructs and executes typed queries with an immutable builder pattern.
 type QueryBuilder[T any] struct {
 	engine  *Engine

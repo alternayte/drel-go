@@ -38,6 +38,7 @@ type SoftDelete struct {
 
 func (s SoftDelete) DeletedAt() *time.Time    { return s.deletedAt }
 func (s *SoftDelete) DeletedAtPtr() **time.Time { return &s.deletedAt }
+func (s SoftDelete) IsDeleted() bool             { return s.deletedAt != nil }
 
 type Versioned struct {
 	version int
