@@ -8,10 +8,37 @@ import (
 
 // ModelMeta describes the database mapping for a model type T.
 type ModelMeta[T any] struct {
-	Table    string
-	Columns  []string
-	PKColumn string
-	Scan     func(Row) (*T, error)
+	Table         string
+	Columns       []string
+	PKColumn      string
+	Scan          func(Row) (*T, error)
+	Snapshot      func(*T) any
+	Diff          func(*T, any) []FieldChange
+	PKValue       func(*T) any
+	InsertColumns func(*T) ([]string, []any)
+}
+
+func toMetaBase[T any](meta *ModelMeta[T]) *modelMetaBase {
+	return &modelMetaBase{
+		Table:    meta.Table,
+		Columns:  meta.Columns,
+		PKColumn: meta.PKColumn,
+		Snapshot: func(entity any) any {
+			return meta.Snapshot(entity.(*T))
+		},
+		Diff: func(entity any, snapshot any) []FieldChange {
+			return meta.Diff(entity.(*T), snapshot)
+		},
+		PKValue: func(entity any) any {
+			return meta.PKValue(entity.(*T))
+		},
+		InsertColumns: func(entity any) ([]string, []any) {
+			return meta.InsertColumns(entity.(*T))
+		},
+		ScanRow: func(row Row) (any, error) {
+			return meta.Scan(row)
+		},
+	}
 }
 
 // Repository provides typed query access for a specific model.
