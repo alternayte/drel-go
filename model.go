@@ -6,6 +6,7 @@ type Model[K comparable] struct {
 	id        K
 	createdAt time.Time
 	updatedAt time.Time
+	events    []any
 }
 
 func (m Model[K]) ID() K               { return m.id }
@@ -17,6 +18,18 @@ func (m Model[K]) UpdatedAt() time.Time { return m.updatedAt }
 // and updatedAt without directly accessing unexported fields.
 func (m *Model[K]) ScanPtrs() (*K, *time.Time, *time.Time) {
 	return &m.id, &m.createdAt, &m.updatedAt
+}
+
+func (m *Model[K]) RecordEvent(event any) {
+	m.events = append(m.events, event)
+}
+
+func (m *Model[K]) PendingEvents() []any {
+	return m.events
+}
+
+func (m *Model[K]) ClearEvents() {
+	m.events = nil
 }
 
 type SoftDelete struct {
