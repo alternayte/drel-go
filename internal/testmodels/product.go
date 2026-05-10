@@ -56,6 +56,9 @@ var ProductMeta = drel.ModelMeta[Product]{
 	InsertColumns: func(p *Product) ([]string, []any) {
 		return []string{"name", "price", "in_stock"}, []any{p.Name, p.Price, p.InStock}
 	},
+	ScanReturning: func(p *Product, row drel.Row) error {
+		return row.Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+	},
 }
 
 var Products = struct {

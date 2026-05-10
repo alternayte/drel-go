@@ -8,18 +8,19 @@ import (
 
 // ModelMeta describes the database mapping for a model type T.
 type ModelMeta[T any] struct {
-	Table         string
-	Columns       []string
-	PKColumn      string
-	Scan          func(Row) (*T, error)
-	Snapshot      func(*T) any
-	Diff          func(*T, any) []FieldChange
-	PKValue       func(*T) any
-	InsertColumns func(*T) ([]string, []any)
+	Table          string
+	Columns        []string
+	PKColumn       string
+	Scan           func(Row) (*T, error)
+	Snapshot       func(*T) any
+	Diff           func(*T, any) []FieldChange
+	PKValue        func(*T) any
+	InsertColumns  func(*T) ([]string, []any)
+	ScanReturning  func(*T, Row) error
 }
 
 func toMetaBase[T any](meta *ModelMeta[T]) *modelMetaBase {
-	return &modelMetaBase{
+	base := &modelMetaBase{
 		Table:    meta.Table,
 		Columns:  meta.Columns,
 		PKColumn: meta.PKColumn,
@@ -39,6 +40,12 @@ func toMetaBase[T any](meta *ModelMeta[T]) *modelMetaBase {
 			return meta.Scan(row)
 		},
 	}
+	if meta.ScanReturning != nil {
+		base.ScanReturning = func(entity any, row Row) error {
+			return meta.ScanReturning(entity.(*T), row)
+		}
+	}
+	return base
 }
 
 // Repository provides typed query access for a specific model.

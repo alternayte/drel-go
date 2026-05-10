@@ -18,14 +18,15 @@ const (
 var ErrEntityNotTracked = errors.New("drel: entity is not tracked")
 
 type modelMetaBase struct {
-	Table         string
-	Columns       []string
-	PKColumn      string
-	Snapshot      func(entity any) any
-	Diff          func(entity any, snapshot any) []FieldChange
-	PKValue       func(entity any) any
-	InsertColumns func(entity any) ([]string, []any)
-	ScanRow       func(Row) (any, error)
+	Table          string
+	Columns        []string
+	PKColumn       string
+	Snapshot       func(entity any) any
+	Diff           func(entity any, snapshot any) []FieldChange
+	PKValue        func(entity any) any
+	InsertColumns  func(entity any) ([]string, []any)
+	ScanRow        func(Row) (any, error)
+	ScanReturning  func(entity any, row Row) error
 }
 
 type trackedEntity struct {
