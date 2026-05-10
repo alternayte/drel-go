@@ -146,3 +146,13 @@ func (r *Repository[T]) Count(ctx context.Context) (int, error) {
 func (r *Repository[T]) Exists(ctx context.Context) (bool, error) {
 	return r.newBuilder().Exists(ctx)
 }
+
+// Unscoped returns a query builder with all global filters removed.
+func (r *Repository[T]) Unscoped() *QueryBuilder[T] {
+	return r.newBuilder().Unscoped()
+}
+
+// WithoutFilter returns a query builder with the named filter removed.
+func (r *Repository[T]) WithoutFilter(name string) *QueryBuilder[T] {
+	return r.newBuilder().WithoutFilter(name)
+}

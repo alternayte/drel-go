@@ -18,12 +18,14 @@ type QueryBuilder[T any] struct {
 	orderBy []ast.OrderByExpr
 	limit   *int
 	offset  *int
+	filters []NamedFilter
 }
 
 func newQueryBuilder[T any](engine *Engine, meta *ModelMeta[T]) *QueryBuilder[T] {
 	return &QueryBuilder[T]{
-		engine: engine,
-		meta:   meta,
+		engine:  engine,
+		meta:    meta,
+		filters: append([]NamedFilter(nil), meta.Filters...),
 	}
 }
 
@@ -35,6 +37,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		orderBy: make([]ast.OrderByExpr, len(q.orderBy)),
 		limit:   q.limit,
 		offset:  q.offset,
+		filters: append([]NamedFilter(nil), q.filters...),
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
@@ -81,17 +84,43 @@ func (q *QueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 		Type:    queryType,
 	}
 
-	if len(q.wheres) == 1 {
-		node.Where = &q.wheres[0]
-	} else if len(q.wheres) > 1 {
+	allWheres := make([]ast.WhereClause, 0, len(q.filters)+len(q.wheres))
+	for _, f := range q.filters {
+		allWheres = append(allWheres, f.Clause)
+	}
+	allWheres = append(allWheres, q.wheres...)
+
+	if len(allWheres) == 1 {
+		node.Where = &allWheres[0]
+	} else if len(allWheres) > 1 {
 		combined := ast.WhereClause{
 			LogicalOp: ast.LogicalAnd,
-			Children:  q.wheres,
+			Children:  allWheres,
 		}
 		node.Where = &combined
 	}
 
 	return node
+}
+
+// Unscoped returns a new builder with all global filters removed.
+func (q *QueryBuilder[T]) Unscoped() *QueryBuilder[T] {
+	c := q.clone()
+	c.filters = nil
+	return c
+}
+
+// WithoutFilter returns a new builder with the named filter removed.
+func (q *QueryBuilder[T]) WithoutFilter(name string) *QueryBuilder[T] {
+	c := q.clone()
+	var remaining []NamedFilter
+	for _, f := range c.filters {
+		if f.Name != name {
+			remaining = append(remaining, f)
+		}
+	}
+	c.filters = remaining
+	return c
 }
 
 // All executes the query and returns all matching results.

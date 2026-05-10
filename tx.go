@@ -88,6 +88,16 @@ func (r *TxRepository[T]) All(ctx context.Context) ([]*T, error) {
 	return newTxQueryBuilder(r.tx, &r.meta).All(ctx)
 }
 
+// Unscoped returns a query builder with all global filters removed.
+func (r *TxRepository[T]) Unscoped() *TxQueryBuilder[T] {
+	return newTxQueryBuilder(r.tx, &r.meta).Unscoped()
+}
+
+// WithoutFilter returns a query builder with the named filter removed.
+func (r *TxRepository[T]) WithoutFilter(name string) *TxQueryBuilder[T] {
+	return newTxQueryBuilder(r.tx, &r.meta).WithoutFilter(name)
+}
+
 // TxQueryBuilder constructs and executes typed queries within a transaction.
 type TxQueryBuilder[T any] struct {
 	tx      *Tx
@@ -96,10 +106,15 @@ type TxQueryBuilder[T any] struct {
 	orderBy []ast.OrderByExpr
 	limit   *int
 	offset  *int
+	filters []NamedFilter
 }
 
 func newTxQueryBuilder[T any](tx *Tx, meta *ModelMeta[T]) *TxQueryBuilder[T] {
-	return &TxQueryBuilder[T]{tx: tx, meta: meta}
+	return &TxQueryBuilder[T]{
+		tx:      tx,
+		meta:    meta,
+		filters: append([]NamedFilter(nil), meta.Filters...),
+	}
 }
 
 func (q *TxQueryBuilder[T]) clone() *TxQueryBuilder[T] {
@@ -110,6 +125,7 @@ func (q *TxQueryBuilder[T]) clone() *TxQueryBuilder[T] {
 		orderBy: make([]ast.OrderByExpr, len(q.orderBy)),
 		limit:   q.limit,
 		offset:  q.offset,
+		filters: append([]NamedFilter(nil), q.filters...),
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
@@ -148,13 +164,40 @@ func (q *TxQueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 		Offset:  q.offset,
 		Type:    queryType,
 	}
-	if len(q.wheres) == 1 {
-		node.Where = &q.wheres[0]
-	} else if len(q.wheres) > 1 {
-		combined := ast.WhereClause{LogicalOp: ast.LogicalAnd, Children: q.wheres}
+
+	allWheres := make([]ast.WhereClause, 0, len(q.filters)+len(q.wheres))
+	for _, f := range q.filters {
+		allWheres = append(allWheres, f.Clause)
+	}
+	allWheres = append(allWheres, q.wheres...)
+
+	if len(allWheres) == 1 {
+		node.Where = &allWheres[0]
+	} else if len(allWheres) > 1 {
+		combined := ast.WhereClause{LogicalOp: ast.LogicalAnd, Children: allWheres}
 		node.Where = &combined
 	}
 	return node
+}
+
+// Unscoped returns a new builder with all global filters removed.
+func (q *TxQueryBuilder[T]) Unscoped() *TxQueryBuilder[T] {
+	c := q.clone()
+	c.filters = nil
+	return c
+}
+
+// WithoutFilter returns a new builder with the named filter removed.
+func (q *TxQueryBuilder[T]) WithoutFilter(name string) *TxQueryBuilder[T] {
+	c := q.clone()
+	var remaining []NamedFilter
+	for _, f := range c.filters {
+		if f.Name != name {
+			remaining = append(remaining, f)
+		}
+	}
+	c.filters = remaining
+	return c
 }
 
 // All executes the query and returns all matching results.
