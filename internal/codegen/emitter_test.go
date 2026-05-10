@@ -15,9 +15,9 @@ func TestEmitModelFile_SimpleModel(t *testing.T) {
 		PKType:  "int",
 		TableName: "products",
 		Fields: []FieldInfo{
-			{Name: "name", GoType: "string", ColumnName: "name"},
-			{Name: "price", GoType: "int", ColumnName: "price"},
-			{Name: "inStock", GoType: "bool", ColumnName: "in_stock"},
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "price", GoType: "int", ColumnName: "price", LocalGoType: "int"},
+			{Name: "inStock", GoType: "bool", ColumnName: "in_stock", LocalGoType: "bool"},
 		},
 	}
 
@@ -95,7 +95,7 @@ func TestEmitModelFile_WithSoftDelete(t *testing.T) {
 		TableName:     "articles",
 		HasSoftDelete: true,
 		Fields: []FieldInfo{
-			{Name: "title", GoType: "string", ColumnName: "title"},
+			{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
 		},
 	}
 
@@ -126,7 +126,7 @@ func TestEmitModelFile_WithVersioned(t *testing.T) {
 		TableName:    "items",
 		HasVersioned: true,
 		Fields: []FieldInfo{
-			{Name: "label", GoType: "string", ColumnName: "label"},
+			{Name: "label", GoType: "string", ColumnName: "label", LocalGoType: "string"},
 		},
 	}
 
@@ -192,7 +192,7 @@ func TestEmitDBFile(t *testing.T) {
 			PKType:    "int",
 			TableName: "users",
 			Fields: []FieldInfo{
-				{Name: "name", GoType: "string", ColumnName: "name"},
+				{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
 			},
 		},
 		{
@@ -202,7 +202,7 @@ func TestEmitDBFile(t *testing.T) {
 			PKType:    "int",
 			TableName: "posts",
 			Fields: []FieldInfo{
-				{Name: "title", GoType: "string", ColumnName: "title"},
+				{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
 			},
 		},
 	}
@@ -242,6 +242,45 @@ func TestEmitDBFile_DedupImports(t *testing.T) {
 
 	// The import should appear exactly once.
 	assert.Equal(t, 1, strings.Count(out, `models "myapp/models"`))
+}
+
+func TestEmitModelFile_WithSingleColVO(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "email", GoType: "testmod/models.Email", ColumnName: "email", IsVO: true, LocalGoType: "Email"},
+		},
+	}
+
+	output := EmitModelFile(m)
+
+	assert.Contains(t, output, "drel.Column[Email]")
+	assert.Contains(t, output, `drel.NewCol[Email]("email")`)
+	assert.Contains(t, output, "email Email")  // snapshot struct field
+	assert.Contains(t, output, "&p.email")      // scan
+	assert.Contains(t, output, "p.email != s.email") // diff
+}
+
+func TestEmitModelFile_MultiColVOTreatedAsColumn(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Product",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "products",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "balance", GoType: "testmod/models.Money", ColumnName: "balance", IsMultiColVO: true, LocalGoType: "Money"},
+		},
+	}
+
+	output := EmitModelFile(m)
+
+	assert.Contains(t, output, "drel.Column[Money]")
+	assert.Contains(t, output, "&p.balance")
 }
 
 // extractLine returns the first line in s that contains substr.
