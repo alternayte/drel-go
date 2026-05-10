@@ -18,6 +18,14 @@ type ModelMeta[T any] struct {
 	InsertColumns  func(*T) ([]string, []any)
 	ScanReturning  func(*T, Row) error
 	ColumnValue    func(*T, int) any
+	Filters        []NamedFilter
+	HasSoftDelete  bool
+	HasVersioned   bool
+	HasAudit       bool
+	VersionValue   func(*T) int
+	SetVersion     func(*T, int)
+	AuditSetCreate func(*T, string)
+	AuditSetUpdate func(*T, string)
 }
 
 // ToMetaBase converts a typed ModelMeta[T] to a type-erased ModelMetaBase.
@@ -50,6 +58,25 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 	if meta.ColumnValue != nil {
 		base.ColumnValue = func(entity any, colIdx int) any {
 			return meta.ColumnValue(entity.(*T), colIdx)
+		}
+	}
+	base.HasSoftDelete = meta.HasSoftDelete
+	base.HasVersioned = meta.HasVersioned
+	base.HasAudit = meta.HasAudit
+	if meta.VersionValue != nil {
+		base.VersionValue = func(entity any) int {
+			return meta.VersionValue(entity.(*T))
+		}
+		base.SetVersion = func(entity any, v int) {
+			meta.SetVersion(entity.(*T), v)
+		}
+	}
+	if meta.AuditSetCreate != nil {
+		base.AuditSetCreate = func(entity any, actor string) {
+			meta.AuditSetCreate(entity.(*T), actor)
+		}
+		base.AuditSetUpdate = func(entity any, actor string) {
+			meta.AuditSetUpdate(entity.(*T), actor)
 		}
 	}
 	return base

@@ -30,13 +30,21 @@ type ModelMetaBase struct {
 	ScanRow        func(Row) (any, error)
 	ScanReturning  func(entity any, row Row) error
 	ColumnValue    func(entity any, colIdx int) any
+	HasSoftDelete  bool
+	HasVersioned   bool
+	HasAudit       bool
+	VersionValue   func(entity any) int
+	SetVersion     func(entity any, v int)
+	AuditSetCreate func(entity any, actor string)
+	AuditSetUpdate func(entity any, actor string)
 }
 
 type trackedEntity struct {
-	entity   any
-	state    entityState
-	snapshot any
-	meta     *ModelMetaBase
+	entity     any
+	state      entityState
+	snapshot   any
+	meta       *ModelMetaBase
+	hardDelete bool
 }
 
 type changeTracker struct {
