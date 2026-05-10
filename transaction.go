@@ -70,10 +70,23 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		return err
 	}
 	allEvents := append(tx.heldEvents, events...)
-	_ = allEvents // hooks are wired in a subsequent task
+
+	for _, hook := range e.beforeCommitHooks {
+		if err := hook(ctx, tx, allEvents); err != nil {
+			return err
+		}
+	}
+
+	if err := flushHookChanges(ctx, dbTx, e.Dialect(), tx.tracker); err != nil {
+		return err
+	}
 
 	if err := dbTx.Commit(ctx); err != nil {
 		return fmt.Errorf("drel: commit: %w", err)
+	}
+
+	for _, hook := range e.afterCommitHooks {
+		hook(ctx, allEvents)
 	}
 
 	return nil
