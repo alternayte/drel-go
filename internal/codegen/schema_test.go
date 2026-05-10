@@ -100,6 +100,47 @@ func TestGenerateSchema_MultipleModels(t *testing.T) {
 	assert.Contains(t, sql, "CREATE TABLE posts")
 }
 
+func TestGenerateSchema_WithEnum(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumValues: []string{"admin", "user"}},
+		}},
+	}
+	sql := GenerateSchema(models)
+
+	assert.Contains(t, sql, "CREATE TYPE role AS ENUM ('admin', 'user');")
+	assert.Contains(t, sql, "role role NOT NULL")
+}
+
+func TestGenerateSchema_BelongsToFK(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+		}},
+		{Name: "Post", PKType: "int", TableName: "posts", Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title"},
+			{Name: "authorID", GoType: "int", ColumnName: "author_id"},
+			{Name: "author", GoType: "*users.User", RelTag: "belongs_to,fk=author_id",
+				Relation: &RelationFieldInfo{Type: "belongs_to", FK: "author_id", TargetModel: "User"}},
+		}},
+	}
+	sql := GenerateSchema(models)
+
+	assert.Contains(t, sql, "author_id integer NOT NULL REFERENCES users(id)")
+}
+
+func TestGenerateCreateTable_NoFK_WhenNilMap(t *testing.T) {
+	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts", Fields: []FieldInfo{
+		{Name: "authorID", GoType: "int", ColumnName: "author_id"},
+	}}
+	sql := GenerateCreateTable(m, nil)
+
+	assert.Contains(t, sql, "author_id integer NOT NULL")
+	assert.NotContains(t, sql, "REFERENCES")
+}
+
 func TestGenerateDropSchema_ReverseOrder(t *testing.T) {
 	models := []ModelInfo{
 		{Name: "User", TableName: "users"},

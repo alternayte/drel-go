@@ -2,9 +2,11 @@ package codegen
 
 import (
 	"fmt"
+	"go/constant"
 	"go/types"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -152,6 +154,9 @@ func extractFields(st *types.Struct) []FieldInfo {
 		if relTag != "" {
 			fi.Relation = parseRelTagStructured(relTag)
 			fi.LocalGoType = localTypeName(f.Type())
+			if fi.Relation != nil && fi.Relation.Type == "belongs_to" {
+				fi.Relation.TargetModel = targetModelName(f.Type())
+			}
 		}
 
 		if dbCol != "" {
@@ -166,6 +171,13 @@ func extractFields(st *types.Struct) []FieldInfo {
 				if isMultiColumnMapper(f.Type()) {
 					fi.IsMultiColVO = true
 					fi.MultiColPrefix = dbCol
+				}
+				if !isPrimitiveType(goTypeStr) && !fi.IsVO && !fi.IsMultiColVO {
+					enumValues := findEnumValues(f.Type())
+					if len(enumValues) > 0 {
+						fi.IsEnum = true
+						fi.EnumValues = enumValues
+					}
 				}
 			}
 		}
@@ -207,4 +219,65 @@ func parseDBTag(rawTag string) string {
 func parseRelTag(rawTag string) string {
 	st := reflect.StructTag(rawTag)
 	return st.Get("rel")
+}
+
+func findEnumValues(t types.Type) []string {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return nil
+	}
+	basic, ok := named.Underlying().(*types.Basic)
+	if !ok {
+		return nil
+	}
+	if basic.Kind() != types.String && !isIntegerBasicKind(basic.Kind()) {
+		return nil
+	}
+
+	typePkg := named.Obj().Pkg()
+	if typePkg == nil {
+		return nil
+	}
+
+	scope := typePkg.Scope()
+	var values []string
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		c, ok := obj.(*types.Const)
+		if !ok {
+			continue
+		}
+		if !types.Identical(c.Type(), named) {
+			continue
+		}
+		val := c.Val().ExactString()
+		if basic.Kind() == types.String {
+			val = constant.StringVal(c.Val())
+		}
+		values = append(values, val)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func isIntegerBasicKind(k types.BasicKind) bool {
+	switch k {
+	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
+		types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
+		return true
+	}
+	return false
+}
+
+func targetModelName(t types.Type) string {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	if named, ok := t.(*types.Named); ok {
+		return named.Obj().Name()
+	}
+	return ""
 }
