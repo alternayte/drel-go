@@ -4,6 +4,7 @@ package drel_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -388,4 +389,214 @@ func TestIntegration_ComplexQuery(t *testing.T) {
 	require.Len(t, products, 2)
 	assert.Equal(t, "Gadget", products[0].Name)
 	assert.Equal(t, "Thingamajig", products[1].Name)
+}
+
+func TestIntegration_Transaction_Insert(t *testing.T) {
+	engine := setupTestDB(t)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		p := &testmodels.Product{Name: "NewProduct", Price: 999, InStock: true}
+		repo.Add(p)
+		return nil
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	products, err := repo.All(ctx)
+	require.NoError(t, err)
+	require.Len(t, products, 1)
+	assert.Equal(t, "NewProduct", products[0].Name)
+	assert.Equal(t, 999, products[0].Price)
+}
+
+func TestIntegration_Transaction_Update(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		product, err := repo.Find(ctx, 1)
+		if err != nil {
+			return err
+		}
+		product.Name = "UpdatedWidget"
+		return nil
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	product, err := repo.Find(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "UpdatedWidget", product.Name)
+}
+
+func TestIntegration_Transaction_UpdateOnlyChangedFields(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		product, err := repo.Find(ctx, 1)
+		if err != nil {
+			return err
+		}
+		product.Price = 1234
+		return nil
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	product, err := repo.Find(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1234, product.Price)
+	assert.Equal(t, "Widget", product.Name)
+}
+
+func TestIntegration_Transaction_Delete(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		product, err := repo.Find(ctx, 1)
+		if err != nil {
+			return err
+		}
+		return repo.Remove(product)
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 4, count)
+}
+
+func TestIntegration_Transaction_MultipleOps(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+
+		newP := &testmodels.Product{Name: "BrandNew", Price: 777, InStock: true}
+		repo.Add(newP)
+
+		existing, err := repo.Find(ctx, 2)
+		if err != nil {
+			return err
+		}
+		existing.Name = "ModifiedGadget"
+
+		toDelete, err := repo.Find(ctx, 3)
+		if err != nil {
+			return err
+		}
+		return repo.Remove(toDelete)
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 5, count) // 5 original - 1 deleted + 1 added = 5
+
+	gadget, err := repo.Where(testmodels.Products.Name.Eq("ModifiedGadget")).First(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "ModifiedGadget", gadget.Name)
+}
+
+func TestIntegration_Transaction_Rollback(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		p := &testmodels.Product{Name: "ShouldNotExist", Price: 1, InStock: true}
+		repo.Add(p)
+		return fmt.Errorf("intentional rollback")
+	})
+	require.Error(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 5, count)
+}
+
+func TestIntegration_Transaction_PanicRollback(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	assert.Panics(t, func() {
+		engine.Transaction(ctx, func(tx *drel.Tx) error {
+			repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+			p := &testmodels.Product{Name: "ShouldNotExist", Price: 1, InStock: true}
+			repo.Add(p)
+			panic("intentional panic")
+		})
+	})
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 5, count)
+}
+
+func TestIntegration_Transaction_MidTxSaveChanges(t *testing.T) {
+	engine := setupTestDB(t)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+
+		first := &testmodels.Product{Name: "First", Price: 100, InStock: true}
+		repo.Add(first)
+		if err := tx.SaveChanges(ctx); err != nil {
+			return err
+		}
+
+		assert.NotEqual(t, 0, first.ID)
+
+		second := &testmodels.Product{Name: "Second", Price: 200, InStock: true}
+		repo.Add(second)
+		return nil
+	})
+	require.NoError(t, err)
+
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
+func TestIntegration_Transaction_Empty(t *testing.T) {
+	engine := setupTestDB(t)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestIntegration_Transaction_NoOpUpdate(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, testmodels.ProductMeta)
+		_, err := repo.Find(ctx, 1)
+		return err
+	})
+	require.NoError(t, err)
 }
