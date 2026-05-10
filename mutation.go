@@ -13,6 +13,10 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 	pc := tracker.GetPendingChanges()
 
 	for _, te := range pc.Added {
+		if te.meta.HasAudit && te.meta.AuditSetCreate != nil {
+			actor := ActorFromContext(ctx)
+			te.meta.AuditSetCreate(te.entity, actor)
+		}
 		cols, vals := te.meta.InsertColumns(te.entity)
 		result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
 		row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
@@ -29,22 +33,42 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 	}
 
 	for _, te := range pc.Modified {
+		if te.meta.HasAudit && te.meta.AuditSetUpdate != nil {
+			actor := ActorFromContext(ctx)
+			te.meta.AuditSetUpdate(te.entity, actor)
+		}
 		changes := te.meta.Diff(te.entity, te.snapshot)
 		if len(changes) == 0 {
 			continue
+		}
+		if te.meta.HasAudit {
+			actor := ActorFromContext(ctx)
+			changes = append(changes, FieldChange{Column: "updated_by", Value: actor})
 		}
 		cvs := make([]dialect.ColumnValue, len(changes))
 		for i, c := range changes {
 			cvs[i] = dialect.ColumnValue{Column: c.Column, Value: c.Value}
 		}
 		pkVal := te.meta.PKValue(te.entity)
-		result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
-		affected, err := dbTx.Exec(ctx, result.SQL, result.Args...)
-		if err != nil {
-			return nil, fmt.Errorf("drel: update %s: %w", te.meta.Table, err)
-		}
-		if affected == 0 {
-			return nil, fmt.Errorf("drel: update %s: no rows affected (pk=%v)", te.meta.Table, pkVal)
+
+		if te.meta.HasVersioned && te.meta.VersionValue != nil {
+			currentVersion := te.meta.VersionValue(te.entity)
+			result := d.BuildUpdateVersioned(te.meta.Table, cvs, te.meta.PKColumn, pkVal, "version", currentVersion)
+			row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
+			var newVersion int
+			if err := row.Scan(&newVersion); err != nil {
+				return nil, ErrConcurrencyConflict
+			}
+			te.meta.SetVersion(te.entity, newVersion)
+		} else {
+			result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
+			affected, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			if err != nil {
+				return nil, fmt.Errorf("drel: update %s: %w", te.meta.Table, err)
+			}
+			if affected == 0 {
+				return nil, fmt.Errorf("drel: update %s: no rows affected (pk=%v)", te.meta.Table, pkVal)
+			}
 		}
 	}
 
