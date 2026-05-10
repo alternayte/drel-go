@@ -94,6 +94,16 @@ func (ct *changeTracker) MarkDeleted(entity any) error {
 	return nil
 }
 
+func (ct *changeTracker) MarkHardDeleted(entity any) error {
+	te, exists := ct.index[entity]
+	if !exists {
+		return fmt.Errorf("%w: cannot remove an entity that is not tracked", ErrEntityNotTracked)
+	}
+	te.state = StateDeleted
+	te.hardDelete = true
+	return nil
+}
+
 func (ct *changeTracker) DetectChanges() {
 	for _, te := range ct.entities {
 		if te.state != StateUnchanged {

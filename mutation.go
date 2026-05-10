@@ -50,10 +50,18 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 
 	for _, te := range pc.Deleted {
 		pkVal := te.meta.PKValue(te.entity)
-		result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
-		_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
-		if err != nil {
-			return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
+		if te.meta.HasSoftDelete && !te.hardDelete {
+			result := d.BuildSoftDelete(te.meta.Table, te.meta.PKColumn, pkVal)
+			_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			if err != nil {
+				return nil, fmt.Errorf("drel: soft delete %s: %w", te.meta.Table, err)
+			}
+		} else {
+			result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
+			_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			if err != nil {
+				return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
+			}
 		}
 	}
 

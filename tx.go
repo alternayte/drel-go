@@ -38,6 +38,12 @@ func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	return tx.dbTx.QueryRow(ctx, sql, args...)
 }
 
+// HardRemove marks a tracked entity for permanent (hard) deletion on the next
+// flush, bypassing soft delete even when the model supports it.
+func (tx *Tx) HardRemove(entity any) error {
+	return tx.tracker.MarkHardDeleted(entity)
+}
+
 // TxRepository provides tracked query and mutation access within a transaction.
 type TxRepository[T any] struct {
 	tx   *Tx

@@ -247,6 +247,126 @@ func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnVa
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
+func (p *Postgres) BuildBulkInsert(table string, columns []string, rows [][]any) dialect.Result {
+	var b strings.Builder
+	var args []any
+	paramIdx := 1
+
+	b.WriteString("INSERT INTO ")
+	b.WriteString(quoteIdent(table))
+	b.WriteString(" (")
+	for i, col := range columns {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(quoteIdent(col))
+	}
+	b.WriteString(") VALUES ")
+
+	for ri, row := range rows {
+		if ri > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("(")
+		for ci, val := range row {
+			if ci > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("$%d", paramIdx))
+			args = append(args, val)
+			paramIdx++
+		}
+		b.WriteString(")")
+	}
+
+	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+func (p *Postgres) BuildBulkUpdate(table string, sets []dialect.ColumnValue, where *ast.WhereClause) dialect.Result {
+	var b strings.Builder
+	var args []any
+	paramIdx := 1
+
+	b.WriteString("UPDATE ")
+	b.WriteString(quoteIdent(table))
+	b.WriteString(" SET ")
+	for i, cv := range sets {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+		args = append(args, cv.Value)
+		paramIdx++
+	}
+
+	if where != nil {
+		b.WriteString(" WHERE ")
+		writeWhere(&b, &args, *where, paramIdx)
+	}
+
+	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+func (p *Postgres) BuildBulkDelete(table string, where *ast.WhereClause) dialect.Result {
+	var b strings.Builder
+	var args []any
+	paramIdx := 1
+
+	b.WriteString("DELETE FROM ")
+	b.WriteString(quoteIdent(table))
+
+	if where != nil {
+		b.WriteString(" WHERE ")
+		writeWhere(&b, &args, *where, paramIdx)
+	}
+
+	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+func (p *Postgres) BuildBulkSoftDelete(table string, where *ast.WhereClause) dialect.Result {
+	var b strings.Builder
+	var args []any
+	paramIdx := 1
+
+	b.WriteString("UPDATE ")
+	b.WriteString(quoteIdent(table))
+	b.WriteString(" SET ")
+	b.WriteString(quoteIdent("deleted_at"))
+	b.WriteString(" = NOW() WHERE ")
+	b.WriteString(quoteIdent("deleted_at"))
+	b.WriteString(" IS NULL")
+
+	if where != nil {
+		b.WriteString(" AND ")
+		writeWhere(&b, &args, *where, paramIdx)
+	}
+
+	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) dialect.Result {
+	result := p.BuildBulkInsert(table, columns, rows)
+
+	var b strings.Builder
+	b.WriteString(result.SQL)
+	b.WriteString(" ON CONFLICT (")
+	for i, col := range conflictCols {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(quoteIdent(col))
+	}
+	b.WriteString(") DO UPDATE SET ")
+	for i, col := range updateCols {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(fmt.Sprintf("%s = EXCLUDED.%s", quoteIdent(col), quoteIdent(col)))
+	}
+
+	return dialect.Result{SQL: b.String(), Args: result.Args}
+}
+
 func quoteIdent(name string) string {
 	return `"` + name + `"`
 }
