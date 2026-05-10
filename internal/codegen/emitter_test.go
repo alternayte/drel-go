@@ -40,12 +40,13 @@ func TestEmitModelFile_SimpleModel(t *testing.T) {
 
 	// Scan function
 	assert.Contains(t, out, "func scanProduct(row drel.Row) (*Product, error)")
-	assert.Contains(t, out, "&p.id")
+	assert.Contains(t, out, "idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()")
+	assert.Contains(t, out, "idPtr")
 	assert.Contains(t, out, "&p.name")
 	assert.Contains(t, out, "&p.price")
 	assert.Contains(t, out, "&p.inStock")
-	assert.Contains(t, out, "&p.createdAt")
-	assert.Contains(t, out, "&p.updatedAt")
+	assert.Contains(t, out, "createdAtPtr")
+	assert.Contains(t, out, "updatedAtPtr")
 
 	// Snapshot
 	assert.Contains(t, out, "type productSnapshot struct {")
@@ -60,7 +61,7 @@ func TestEmitModelFile_SimpleModel(t *testing.T) {
 
 	// PK value
 	assert.Contains(t, out, "func productPKValue(p *Product) any")
-	assert.Contains(t, out, "return p.id")
+	assert.Contains(t, out, "return p.ID()")
 
 	// Insert columns
 	assert.Contains(t, out, "func productInsertColumns(p *Product) ([]string, []any)")
@@ -69,7 +70,8 @@ func TestEmitModelFile_SimpleModel(t *testing.T) {
 
 	// Scan returning
 	assert.Contains(t, out, "func productScanReturning(p *Product, row drel.Row) error")
-	assert.Contains(t, out, "row.Scan(&p.id, &p.createdAt, &p.updatedAt)")
+	assert.Contains(t, out, "idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()")
+	assert.Contains(t, out, "row.Scan(idPtr, createdAtPtr, updatedAtPtr)")
 
 	// ModelMeta
 	assert.Contains(t, out, "var ProductMeta = drel.ModelMeta[Product]{")
@@ -100,7 +102,7 @@ func TestEmitModelFile_WithSoftDelete(t *testing.T) {
 	out := EmitModelFile(m)
 
 	// Verify deletedAt in scan
-	assert.Contains(t, out, "&p.deletedAt")
+	assert.Contains(t, out, "p.DeletedAtPtr()")
 
 	// Verify deleted_at column in column refs
 	assert.Contains(t, out, `DeletedAt drel.Column[*time.Time]`)
@@ -111,7 +113,7 @@ func TestEmitModelFile_WithSoftDelete(t *testing.T) {
 
 	// Verify scan order: fields, then softDelete, then createdAt/updatedAt
 	scanLine := extractLine(out, "row.Scan(")
-	assert.True(t, strings.Index(scanLine, "&p.deletedAt") < strings.Index(scanLine, "&p.createdAt"),
+	assert.True(t, strings.Index(scanLine, "DeletedAtPtr") < strings.Index(scanLine, "createdAtPtr"),
 		"deletedAt should be scanned before createdAt")
 }
 
@@ -131,7 +133,7 @@ func TestEmitModelFile_WithVersioned(t *testing.T) {
 	out := EmitModelFile(m)
 
 	// Verify version in scan
-	assert.Contains(t, out, "&p.version")
+	assert.Contains(t, out, "p.VersionPtr()")
 
 	// Verify version column in column refs
 	assert.Contains(t, out, "Version drel.OrderedColumn[int]")
@@ -142,7 +144,7 @@ func TestEmitModelFile_WithVersioned(t *testing.T) {
 
 	// Verify scan order: fields, then version, then createdAt/updatedAt
 	scanLine := extractLine(out, "row.Scan(")
-	assert.True(t, strings.Index(scanLine, "&p.version") < strings.Index(scanLine, "&p.createdAt"),
+	assert.True(t, strings.Index(scanLine, "VersionPtr") < strings.Index(scanLine, "createdAtPtr"),
 		"version should be scanned before createdAt")
 }
 

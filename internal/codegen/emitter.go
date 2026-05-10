@@ -75,7 +75,7 @@ func EmitModelFile(m ModelInfo) string {
 	emitDiff(&b, m, lower)
 
 	// --- PK value ---
-	b.WriteString(fmt.Sprintf("func %sPKValue(p *%s) any {\n\treturn p.id\n}\n\n", lower, m.Name))
+	b.WriteString(fmt.Sprintf("func %sPKValue(p *%s) any {\n\treturn p.ID()\n}\n\n", lower, m.Name))
 
 	// --- Insert columns ---
 	emitInsertColumns(&b, m, lower)
@@ -103,8 +103,8 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	if m.HasVersioned {
 		b.WriteString("\tVersion drel.OrderedColumn[int]\n")
 	}
-	b.WriteString("\tCreatedAt drel.OrderedColumn[time.Time]\n")
-	b.WriteString("\tUpdatedAt drel.OrderedColumn[time.Time]\n")
+	b.WriteString("\tCreatedAt drel.Column[time.Time]\n")
+	b.WriteString("\tUpdatedAt drel.Column[time.Time]\n")
 	b.WriteString("}{\n")
 
 	// Struct literal values
@@ -118,8 +118,8 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	if m.HasVersioned {
 		b.WriteString("\tVersion: drel.NewOrderedCol[int](\"version\"),\n")
 	}
-	b.WriteString("\tCreatedAt: drel.NewOrderedCol[time.Time](\"created_at\"),\n")
-	b.WriteString("\tUpdatedAt: drel.NewOrderedCol[time.Time](\"updated_at\"),\n")
+	b.WriteString("\tCreatedAt: drel.NewCol[time.Time](\"created_at\"),\n")
+	b.WriteString("\tUpdatedAt: drel.NewCol[time.Time](\"updated_at\"),\n")
 	b.WriteString("}\n\n")
 }
 
@@ -142,20 +142,21 @@ func allColumns(m ModelInfo) []string {
 func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []string) {
 	b.WriteString(fmt.Sprintf("func scan%s(row drel.Row) (*%s, error) {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\tp := &%s{}\n", m.Name))
+	b.WriteString("\tidPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
 
 	// Build scan args
 	var scanArgs []string
-	scanArgs = append(scanArgs, "&p.id")
+	scanArgs = append(scanArgs, "idPtr")
 	for _, f := range m.Fields {
 		scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
 	}
 	if m.HasSoftDelete {
-		scanArgs = append(scanArgs, "&p.deletedAt")
+		scanArgs = append(scanArgs, "p.DeletedAtPtr()")
 	}
 	if m.HasVersioned {
-		scanArgs = append(scanArgs, "&p.version")
+		scanArgs = append(scanArgs, "p.VersionPtr()")
 	}
-	scanArgs = append(scanArgs, "&p.createdAt", "&p.updatedAt")
+	scanArgs = append(scanArgs, "createdAtPtr", "updatedAtPtr")
 
 	b.WriteString(fmt.Sprintf("\terr := row.Scan(%s)\n", strings.Join(scanArgs, ", ")))
 	b.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
@@ -208,8 +209,8 @@ func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 
 func emitScanReturning(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString(fmt.Sprintf("func %sScanReturning(p *%s, row drel.Row) error {\n", lower, m.Name))
-	scanArgs := []string{"&p.id", "&p.createdAt", "&p.updatedAt"}
-	b.WriteString(fmt.Sprintf("\treturn row.Scan(%s)\n", strings.Join(scanArgs, ", ")))
+	b.WriteString("\tidPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
+	b.WriteString("\treturn row.Scan(idPtr, createdAtPtr, updatedAtPtr)\n")
 	b.WriteString("}\n\n")
 }
 
