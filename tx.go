@@ -19,6 +19,19 @@ func (tx *Tx) SaveChanges(ctx context.Context) error {
 	return flushChanges(ctx, tx.dbTx, tx.engine.Dialect(), tx.tracker)
 }
 
+// Exec executes a raw SQL statement within the transaction and returns the
+// number of rows affected. Use this for INSERT, UPDATE, DELETE, or DDL
+// statements that don't return rows.
+func (tx *Tx) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	return tx.dbTx.Exec(ctx, sql, args...)
+}
+
+// QueryRow executes a raw SQL query within the transaction that is expected
+// to return at most one row. Use row.Scan to read the result.
+func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	return tx.dbTx.QueryRow(ctx, sql, args...)
+}
+
 // TxRepository provides tracked query and mutation access within a transaction.
 type TxRepository[T any] struct {
 	tx   *Tx
