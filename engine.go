@@ -12,8 +12,10 @@ import (
 
 // Engine holds a database driver and dialect for executing queries.
 type Engine struct {
-	drv     driver.Driver
-	dialect dialect.Dialect
+	drv               driver.Driver
+	dialect           dialect.Dialect
+	beforeCommitHooks []BeforeCommitHook
+	afterCommitHooks  []AfterCommitHook
 }
 
 // Option configures Engine creation.
@@ -63,4 +65,12 @@ func (e *Engine) Driver() driver.Driver {
 // Dialect returns the SQL dialect used by this engine.
 func (e *Engine) Dialect() dialect.Dialect {
 	return e.dialect
+}
+
+func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
+	e.beforeCommitHooks = append(e.beforeCommitHooks, hook)
+}
+
+func (e *Engine) OnAfterCommit(hook AfterCommitHook) {
+	e.afterCommitHooks = append(e.afterCommitHooks, hook)
 }

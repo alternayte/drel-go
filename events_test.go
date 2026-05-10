@@ -1,6 +1,7 @@
 package drel
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +43,18 @@ func TestModel_PendingEvents_EmptyByDefault(t *testing.T) {
 	m := &testModel{}
 
 	assert.Empty(t, m.PendingEvents())
+}
+
+func TestEngine_OnAfterCommit_RegistersHook(t *testing.T) {
+	e := &Engine{}
+	e.OnAfterCommit(func(ctx context.Context, events []any) {})
+
+	assert.Len(t, e.afterCommitHooks, 1)
+}
+
+func TestEngine_OnBeforeCommit_RegistersHook(t *testing.T) {
+	e := &Engine{}
+	e.OnBeforeCommit(func(ctx context.Context, tx *Tx, events []any) error { return nil })
+
+	assert.Len(t, e.beforeCommitHooks, 1)
 }
