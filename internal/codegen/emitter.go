@@ -57,6 +57,17 @@ func columnConstructor(goType, colName string) string {
 	}
 }
 
+// columnFields returns only the fields that map to database columns (non-relationship fields).
+func columnFields(fields []FieldInfo) []FieldInfo {
+	var out []FieldInfo
+	for _, f := range fields {
+		if f.ColumnName != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // EmitModelFile generates the complete per-model _drel.go file content.
 func EmitModelFile(m ModelInfo) string {
 	var b strings.Builder
@@ -99,11 +110,12 @@ func EmitModelFile(m ModelInfo) string {
 }
 
 func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
+	colFields := columnFields(m.Fields)
 	// Struct type definition
 	b.WriteString(fmt.Sprintf("var %s = struct {\n", varPlural))
 	// ID column - always present, derived from PKType
 	b.WriteString(fmt.Sprintf("\tID %s\n", columnTypeName(m.PKType)))
-	for _, f := range m.Fields {
+	for _, f := range colFields {
 		b.WriteString(fmt.Sprintf("\t%s %s\n", exportName(f.Name), columnTypeName(fieldDisplayType(f))))
 	}
 	if m.HasSoftDelete {
@@ -118,7 +130,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 
 	// Struct literal values
 	b.WriteString(fmt.Sprintf("\tID: %s,\n", columnConstructor(m.PKType, "id")))
-	for _, f := range m.Fields {
+	for _, f := range colFields {
 		b.WriteString(fmt.Sprintf("\t%s: %s,\n", exportName(f.Name), columnConstructor(fieldDisplayType(f), f.ColumnName)))
 	}
 	if m.HasSoftDelete {
@@ -135,7 +147,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 // allColumns returns the full ordered list of column names for this model.
 func allColumns(m ModelInfo) []string {
 	cols := []string{"id"}
-	for _, f := range m.Fields {
+	for _, f := range columnFields(m.Fields) {
 		cols = append(cols, f.ColumnName)
 	}
 	if m.HasSoftDelete {
@@ -156,7 +168,7 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 	// Build scan args
 	var scanArgs []string
 	scanArgs = append(scanArgs, "idPtr")
-	for _, f := range m.Fields {
+	for _, f := range columnFields(m.Fields) {
 		scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
 	}
 	if m.HasSoftDelete {
@@ -173,9 +185,10 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 }
 
 func emitSnapshot(b *strings.Builder, m ModelInfo, lower string) {
+	colFields := columnFields(m.Fields)
 	// Snapshot struct
 	b.WriteString(fmt.Sprintf("type %sSnapshot struct {\n", lower))
-	for _, f := range m.Fields {
+	for _, f := range colFields {
 		b.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fieldDisplayType(f)))
 	}
 	b.WriteString("}\n\n")
@@ -183,7 +196,7 @@ func emitSnapshot(b *strings.Builder, m ModelInfo, lower string) {
 	// Snapshot function
 	b.WriteString(fmt.Sprintf("func snapshot%s(p *%s) any {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\treturn %sSnapshot{", lower))
-	for i, f := range m.Fields {
+	for i, f := range colFields {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -196,7 +209,7 @@ func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString(fmt.Sprintf("func diff%s(p *%s, snap any) []drel.FieldChange {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\ts := snap.(%sSnapshot)\n", lower))
 	b.WriteString("\tvar changes []drel.FieldChange\n")
-	for _, f := range m.Fields {
+	for _, f := range columnFields(m.Fields) {
 		b.WriteString(fmt.Sprintf("\tif p.%s != s.%s {\n", f.Name, f.Name))
 		b.WriteString(fmt.Sprintf("\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: p.%s})\n", f.ColumnName, f.Name))
 		b.WriteString("\t}\n")
@@ -208,7 +221,7 @@ func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString(fmt.Sprintf("func %sInsertColumns(p *%s) ([]string, []any) {\n", lower, m.Name))
 	var colNames []string
 	var colVals []string
-	for _, f := range m.Fields {
+	for _, f := range columnFields(m.Fields) {
 		colNames = append(colNames, fmt.Sprintf("%q", f.ColumnName))
 		colVals = append(colVals, fmt.Sprintf("p.%s", f.Name))
 	}

@@ -136,7 +136,8 @@ func extractFields(st *types.Struct) []FieldInfo {
 		}
 		tag := st.Tag(i)
 		dbCol := parseDBTag(tag)
-		if dbCol == "" {
+		relTag := parseRelTag(tag)
+		if dbCol == "" && relTag == "" {
 			continue
 		}
 
@@ -145,26 +146,57 @@ func extractFields(st *types.Struct) []FieldInfo {
 			GoType:     f.Type().String(),
 			ColumnName: dbCol,
 			IsExported: f.Exported(),
-			RelTag:     parseRelTag(tag),
+			RelTag:     relTag,
 		}
 
-		goTypeStr := f.Type().String()
-		if isPrimitiveType(goTypeStr) {
-			fi.LocalGoType = goTypeStr
-		} else {
+		if relTag != "" {
+			fi.Relation = parseRelTagStructured(relTag)
 			fi.LocalGoType = localTypeName(f.Type())
-			if isScannerValuer(f.Type()) {
-				fi.IsVO = true
-			}
-			if isMultiColumnMapper(f.Type()) {
-				fi.IsMultiColVO = true
-				fi.MultiColPrefix = dbCol
+		}
+
+		if dbCol != "" {
+			goTypeStr := f.Type().String()
+			if isPrimitiveType(goTypeStr) {
+				fi.LocalGoType = goTypeStr
+			} else {
+				fi.LocalGoType = localTypeName(f.Type())
+				if isScannerValuer(f.Type()) {
+					fi.IsVO = true
+				}
+				if isMultiColumnMapper(f.Type()) {
+					fi.IsMultiColVO = true
+					fi.MultiColPrefix = dbCol
+				}
 			}
 		}
 
 		fields = append(fields, fi)
 	}
 	return fields
+}
+
+func parseRelTagStructured(tag string) *RelationFieldInfo {
+	if tag == "" {
+		return nil
+	}
+	parts := strings.Split(tag, ",")
+	if len(parts) == 0 {
+		return nil
+	}
+	ri := &RelationFieldInfo{Type: parts[0]}
+	for _, part := range parts[1:] {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "fk":
+			ri.FK = kv[1]
+		case "join":
+			ri.JoinTable = kv[1]
+		}
+	}
+	return ri
 }
 
 func parseDBTag(rawTag string) string {

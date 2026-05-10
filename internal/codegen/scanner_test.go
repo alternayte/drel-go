@@ -174,3 +174,48 @@ type Post struct {
 	require.NoError(t, err)
 	assert.Len(t, models, 2)
 }
+
+func TestScanner_RelTagParsing(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/user.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Post struct {\n\tdrel.Model[int]\n\ttitle string " + "`db:\"title\"`" + "\n}\n\ntype User struct {\n\tdrel.Model[int]\n\tname  string " + "`db:\"name\"`" + "\n\tposts []Post " + "`rel:\"has_many,fk=user_id\"`" + "\n}\n",
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+
+	var user *ModelInfo
+	for i := range models {
+		if models[i].Name == "User" {
+			user = &models[i]
+			break
+		}
+	}
+	require.NotNil(t, user)
+	require.Len(t, user.Fields, 2)
+
+	postsField := user.Fields[1]
+	assert.Equal(t, "posts", postsField.Name)
+	assert.Equal(t, "", postsField.ColumnName)
+	require.NotNil(t, postsField.Relation)
+	assert.Equal(t, "has_many", postsField.Relation.Type)
+	assert.Equal(t, "user_id", postsField.Relation.FK)
+}
+
+func TestParseRelTagStructured(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want *RelationFieldInfo
+	}{
+		{"has_many,fk=user_id", &RelationFieldInfo{Type: "has_many", FK: "user_id"}},
+		{"has_one,fk=user_id", &RelationFieldInfo{Type: "has_one", FK: "user_id"}},
+		{"belongs_to,fk=user_id", &RelationFieldInfo{Type: "belongs_to", FK: "user_id"}},
+		{"many_to_many,join=user_tags", &RelationFieldInfo{Type: "many_to_many", JoinTable: "user_tags"}},
+		{"", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			got := parseRelTagStructured(tt.tag)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
