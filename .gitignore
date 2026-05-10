@@ -48,3 +48,4 @@ atlas.lock
 # Binary output
 /bin/
 /dist/
+/drel
