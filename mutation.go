@@ -30,6 +30,9 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
 		}
+		if te.meta.HasVersioned && te.meta.SetVersion != nil {
+			te.meta.SetVersion(te.entity, 1)
+		}
 	}
 
 	for _, te := range pc.Modified {
