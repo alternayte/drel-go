@@ -17,7 +17,7 @@ type testSnapshot struct {
 	Age  int
 }
 
-var testMeta = &modelMetaBase{
+var testMeta = &ModelMetaBase{
 	Table:    "test_entities",
 	Columns:  []string{"id", "name", "age"},
 	PKColumn: "id",

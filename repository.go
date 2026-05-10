@@ -17,10 +17,12 @@ type ModelMeta[T any] struct {
 	PKValue        func(*T) any
 	InsertColumns  func(*T) ([]string, []any)
 	ScanReturning  func(*T, Row) error
+	ColumnValue    func(*T, int) any
 }
 
-func toMetaBase[T any](meta *ModelMeta[T]) *modelMetaBase {
-	base := &modelMetaBase{
+// ToMetaBase converts a typed ModelMeta[T] to a type-erased ModelMetaBase.
+func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
+	base := &ModelMetaBase{
 		Table:    meta.Table,
 		Columns:  meta.Columns,
 		PKColumn: meta.PKColumn,
@@ -43,6 +45,11 @@ func toMetaBase[T any](meta *ModelMeta[T]) *modelMetaBase {
 	if meta.ScanReturning != nil {
 		base.ScanReturning = func(entity any, row Row) error {
 			return meta.ScanReturning(entity.(*T), row)
+		}
+	}
+	if meta.ColumnValue != nil {
+		base.ColumnValue = func(entity any, colIdx int) any {
+			return meta.ColumnValue(entity.(*T), colIdx)
 		}
 	}
 	return base

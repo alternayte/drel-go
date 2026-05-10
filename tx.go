@@ -23,7 +23,7 @@ func (tx *Tx) SaveChanges(ctx context.Context) error {
 type TxRepository[T any] struct {
 	tx   *Tx
 	meta ModelMeta[T]
-	base *modelMetaBase
+	base *ModelMetaBase
 }
 
 // NewTxRepository creates a new TxRepository for the given transaction and model metadata.
@@ -31,7 +31,7 @@ func NewTxRepository[T any](tx *Tx, meta ModelMeta[T]) *TxRepository[T] {
 	return &TxRepository[T]{
 		tx:   tx,
 		meta: meta,
-		base: toMetaBase(&meta),
+		base: ToMetaBase(&meta),
 	}
 }
 

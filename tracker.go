@@ -17,7 +17,9 @@ const (
 // ErrEntityNotTracked is returned when an operation requires a tracked entity but none is found.
 var ErrEntityNotTracked = errors.New("drel: entity is not tracked")
 
-type modelMetaBase struct {
+// ModelMetaBase is the type-erased version of ModelMeta[T], used internally
+// by the change tracker and relationship loading infrastructure.
+type ModelMetaBase struct {
 	Table          string
 	Columns        []string
 	PKColumn       string
@@ -27,13 +29,14 @@ type modelMetaBase struct {
 	InsertColumns  func(entity any) ([]string, []any)
 	ScanRow        func(Row) (any, error)
 	ScanReturning  func(entity any, row Row) error
+	ColumnValue    func(entity any, colIdx int) any
 }
 
 type trackedEntity struct {
 	entity   any
 	state    entityState
 	snapshot any
-	meta     *modelMetaBase
+	meta     *ModelMetaBase
 }
 
 type changeTracker struct {
@@ -47,7 +50,7 @@ func newChangeTracker() *changeTracker {
 	}
 }
 
-func (ct *changeTracker) Track(entity any, snapshot any, meta *modelMetaBase) {
+func (ct *changeTracker) Track(entity any, snapshot any, meta *ModelMetaBase) {
 	if _, exists := ct.index[entity]; exists {
 		return
 	}
@@ -61,7 +64,7 @@ func (ct *changeTracker) Track(entity any, snapshot any, meta *modelMetaBase) {
 	ct.index[entity] = te
 }
 
-func (ct *changeTracker) MarkAdded(entity any, meta *modelMetaBase) {
+func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
 	if _, exists := ct.index[entity]; exists {
 		return
 	}
