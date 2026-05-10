@@ -38,5 +38,6 @@ type Audit struct {
 	updatedBy string
 }
 
-func (a Audit) CreatedBy() string { return a.createdBy }
-func (a Audit) UpdatedBy() string { return a.updatedBy }
+func (a Audit) CreatedBy() string          { return a.createdBy }
+func (a Audit) UpdatedBy() string          { return a.updatedBy }
+func (a *Audit) AuditPtrs() (*string, *string) { return &a.createdBy, &a.updatedBy }
