@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/alternayte/drel/internal/driver"
 )
 
 // Migration represents a single versioned migration with up and down SQL.
@@ -112,4 +115,230 @@ func WriteMigration(dir, name, upSQL, downSQL string) (string, error) {
 func ChecksumContent(content string) string {
 	h := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(h[:])
+}
+
+// Runner executes migrations against a database using the driver interface.
+type Runner struct {
+	drv driver.Driver
+	dir string
+}
+
+// NewRunner creates a Runner that reads migration files from dir and executes
+// them against the provided driver.
+func NewRunner(drv driver.Driver, dir string) *Runner {
+	return &Runner{drv: drv, dir: dir}
+}
+
+func (r *Runner) ensureTable(ctx context.Context) error {
+	_, err := r.drv.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS drel_migrations (
+			version    VARCHAR(14) PRIMARY KEY,
+			name       TEXT NOT NULL,
+			checksum   TEXT NOT NULL,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate: create tracking table: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) appliedVersions(ctx context.Context) (map[string]string, error) {
+	rows, err := r.drv.Query(ctx, "SELECT version, checksum FROM drel_migrations ORDER BY version")
+	if err != nil {
+		return nil, fmt.Errorf("migrate: query applied: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string]string)
+	for rows.Next() {
+		var v, cs string
+		if err := rows.Scan(&v, &cs); err != nil {
+			return nil, err
+		}
+		applied[v] = cs
+	}
+	return applied, rows.Err()
+}
+
+// Up applies all pending migrations in version order. Each migration runs in
+// its own transaction. Returns the number of migrations applied.
+func (r *Runner) Up(ctx context.Context) (int, error) {
+	if err := r.ensureTable(ctx); err != nil {
+		return 0, err
+	}
+
+	migrations, err := ParseMigrationDir(r.dir)
+	if err != nil {
+		return 0, err
+	}
+
+	applied, err := r.appliedVersions(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, m := range migrations {
+		if _, ok := applied[m.Version]; ok {
+			continue
+		}
+
+		tx, err := r.drv.Begin(ctx)
+		if err != nil {
+			return count, fmt.Errorf("migrate: begin: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, m.UpSQL); err != nil {
+			_ = tx.Rollback(ctx)
+			return count, fmt.Errorf("migrate: apply %s_%s: %w", m.Version, m.Name, err)
+		}
+
+		checksum := ChecksumContent(m.UpSQL)
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO drel_migrations (version, name, checksum) VALUES ($1, $2, $3)",
+			m.Version, m.Name, checksum); err != nil {
+			_ = tx.Rollback(ctx)
+			return count, fmt.Errorf("migrate: record %s: %w", m.Version, err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return count, fmt.Errorf("migrate: commit %s: %w", m.Version, err)
+		}
+		count++
+	}
+
+	return count, nil
+}
+
+// Down rolls back the most recently applied migration.
+func (r *Runner) Down(ctx context.Context) error {
+	if err := r.ensureTable(ctx); err != nil {
+		return err
+	}
+
+	migrations, err := ParseMigrationDir(r.dir)
+	if err != nil {
+		return err
+	}
+
+	applied, err := r.appliedVersions(ctx)
+	if err != nil {
+		return err
+	}
+
+	var last *Migration
+	for i := len(migrations) - 1; i >= 0; i-- {
+		if _, ok := applied[migrations[i].Version]; ok {
+			last = &migrations[i]
+			break
+		}
+	}
+
+	if last == nil {
+		return fmt.Errorf("migrate: no migrations to roll back")
+	}
+
+	tx, err := r.drv.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate: begin: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, last.DownSQL); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("migrate: rollback %s_%s: %w", last.Version, last.Name, err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		"DELETE FROM drel_migrations WHERE version = $1",
+		last.Version); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("migrate: unrecord %s: %w", last.Version, err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// MigrationStatus represents the state of a single migration file.
+type MigrationStatus struct {
+	Version string
+	Name    string
+	Applied bool
+}
+
+// Status returns the status of all migration files, indicating which have been
+// applied to the database.
+func (r *Runner) Status(ctx context.Context) ([]MigrationStatus, error) {
+	if err := r.ensureTable(ctx); err != nil {
+		return nil, err
+	}
+
+	migrations, err := ParseMigrationDir(r.dir)
+	if err != nil {
+		return nil, err
+	}
+
+	applied, err := r.appliedVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var statuses []MigrationStatus
+	for _, m := range migrations {
+		_, isApplied := applied[m.Version]
+		statuses = append(statuses, MigrationStatus{
+			Version: m.Version,
+			Name:    m.Name,
+			Applied: isApplied,
+		})
+	}
+
+	return statuses, nil
+}
+
+// LintResult reports a migration file whose content has changed after it was
+// applied to the database.
+type LintResult struct {
+	Version  string
+	Name     string
+	Expected string
+	Actual   string
+}
+
+// Lint checks all applied migrations for checksum mismatches, detecting files
+// that were modified after being applied.
+func (r *Runner) Lint(ctx context.Context) ([]LintResult, error) {
+	if err := r.ensureTable(ctx); err != nil {
+		return nil, err
+	}
+
+	migrations, err := ParseMigrationDir(r.dir)
+	if err != nil {
+		return nil, err
+	}
+
+	applied, err := r.appliedVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var issues []LintResult
+	for _, m := range migrations {
+		storedChecksum, ok := applied[m.Version]
+		if !ok {
+			continue
+		}
+		currentChecksum := ChecksumContent(m.UpSQL)
+		if currentChecksum != storedChecksum {
+			issues = append(issues, LintResult{
+				Version:  m.Version,
+				Name:     m.Name,
+				Expected: storedChecksum,
+				Actual:   currentChecksum,
+			})
+		}
+	}
+
+	return issues, nil
 }
