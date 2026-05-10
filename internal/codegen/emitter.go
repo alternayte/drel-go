@@ -16,6 +16,15 @@ func exportName(name string) string {
 	return string(rs)
 }
 
+// fieldDisplayType returns the type name to use in generated code.
+// It prefers LocalGoType (unqualified, for same-package code) over GoType.
+func fieldDisplayType(f FieldInfo) string {
+	if f.LocalGoType != "" {
+		return f.LocalGoType
+	}
+	return f.GoType
+}
+
 // columnTypeName returns the drel column type for a Go type.
 func columnTypeName(goType string) string {
 	switch goType {
@@ -95,7 +104,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	// ID column - always present, derived from PKType
 	b.WriteString(fmt.Sprintf("\tID %s\n", columnTypeName(m.PKType)))
 	for _, f := range m.Fields {
-		b.WriteString(fmt.Sprintf("\t%s %s\n", exportName(f.Name), columnTypeName(f.GoType)))
+		b.WriteString(fmt.Sprintf("\t%s %s\n", exportName(f.Name), columnTypeName(fieldDisplayType(f))))
 	}
 	if m.HasSoftDelete {
 		b.WriteString("\tDeletedAt drel.Column[*time.Time]\n")
@@ -110,7 +119,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	// Struct literal values
 	b.WriteString(fmt.Sprintf("\tID: %s,\n", columnConstructor(m.PKType, "id")))
 	for _, f := range m.Fields {
-		b.WriteString(fmt.Sprintf("\t%s: %s,\n", exportName(f.Name), columnConstructor(f.GoType, f.ColumnName)))
+		b.WriteString(fmt.Sprintf("\t%s: %s,\n", exportName(f.Name), columnConstructor(fieldDisplayType(f), f.ColumnName)))
 	}
 	if m.HasSoftDelete {
 		b.WriteString("\tDeletedAt: drel.NewCol[*time.Time](\"deleted_at\"),\n")
@@ -167,7 +176,7 @@ func emitSnapshot(b *strings.Builder, m ModelInfo, lower string) {
 	// Snapshot struct
 	b.WriteString(fmt.Sprintf("type %sSnapshot struct {\n", lower))
 	for _, f := range m.Fields {
-		b.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, f.GoType))
+		b.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fieldDisplayType(f)))
 	}
 	b.WriteString("}\n\n")
 
