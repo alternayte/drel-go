@@ -33,6 +33,9 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.Output.DB == "" {
 		cfg.Output.DB = "./db/drel_gen.go"
 	}
+	if cfg.Output.Migrations == "" {
+		cfg.Output.Migrations = "./db/migrations"
+	}
 	if cfg.Dialect == "" {
 		cfg.Dialect = "postgres"
 	}

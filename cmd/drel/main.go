@@ -16,6 +16,8 @@ func main() {
 	switch os.Args[1] {
 	case "generate":
 		runGenerate()
+	case "migrate":
+		runMigrate()
 	case "version":
 		fmt.Println("drel v0.1.0")
 	default:
@@ -30,6 +32,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  generate    Generate code from model definitions")
+	fmt.Fprintln(os.Stderr, "  migrate     Manage database migrations")
 	fmt.Fprintln(os.Stderr, "  version     Print version")
 }
 

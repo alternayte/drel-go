@@ -1,0 +1,223 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/alternayte/drel/internal/codegen"
+	"github.com/alternayte/drel/internal/driver/pgxdriver"
+	"github.com/alternayte/drel/internal/migrate"
+)
+
+func runMigrate() {
+	if len(os.Args) < 3 {
+		printMigrateUsage()
+		os.Exit(1)
+	}
+
+	switch os.Args[2] {
+	case "new":
+		runMigrateNew()
+	case "up":
+		runMigrateUp()
+	case "down":
+		runMigrateDown()
+	case "status":
+		runMigrateStatus()
+	case "lint":
+		runMigrateLint()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown migrate command: %s\n", os.Args[2])
+		printMigrateUsage()
+		os.Exit(1)
+	}
+}
+
+func printMigrateUsage() {
+	fmt.Fprintln(os.Stderr, "Usage: drel migrate <command>")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  new <name>    Generate a new migration from model definitions")
+	fmt.Fprintln(os.Stderr, "  up            Apply all pending migrations")
+	fmt.Fprintln(os.Stderr, "  down          Rollback the last applied migration")
+	fmt.Fprintln(os.Stderr, "  status        Show migration status")
+	fmt.Fprintln(os.Stderr, "  lint          Validate migration file checksums")
+}
+
+func cfgPath() string {
+	p := "drel.yaml"
+	for i := 3; i < len(os.Args); i++ {
+		if os.Args[i] == "--config" && i+1 < len(os.Args) {
+			p = os.Args[i+1]
+			i++
+		}
+	}
+	return p
+}
+
+func resolveMigrationsDir(configPath string) string {
+	cfg, err := codegen.LoadConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate: %v\n", err)
+		os.Exit(1)
+	}
+	dir := cfg.Output.Migrations
+	if !filepath.IsAbs(dir) {
+		cfgDir, _ := filepath.Abs(filepath.Dir(configPath))
+		dir = filepath.Join(cfgDir, dir)
+	}
+	return dir
+}
+
+func requireDSN() string {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		fmt.Fprintln(os.Stderr, "drel migrate: DATABASE_URL environment variable is required")
+		os.Exit(1)
+	}
+	return dsn
+}
+
+func runMigrateNew() {
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "Usage: drel migrate new <name>")
+		os.Exit(1)
+	}
+	name := os.Args[3]
+	cp := cfgPath()
+	mDir := resolveMigrationsDir(cp)
+
+	cfg, err := codegen.LoadConfig(cp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfgDir, _ := filepath.Abs(filepath.Dir(cp))
+	models, err := codegen.ScanPackages(cfg.Packages, cfgDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+		os.Exit(1)
+	}
+	if len(models) == 0 {
+		fmt.Fprintln(os.Stderr, "drel migrate new: no models found")
+		os.Exit(1)
+	}
+
+	upSQL := codegen.GenerateSchema(models)
+	downSQL := codegen.GenerateDropSchema(models)
+
+	version, err := migrate.WriteMigration(mDir, name, upSQL, downSQL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("drel: created migration %s_%s\n", version, name)
+}
+
+func runMigrateUp() {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(cfgPath())
+	ctx := context.Background()
+
+	drv, err := pgxdriver.New(ctx, dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
+		os.Exit(1)
+	}
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, mDir)
+	count, err := runner.Up(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
+		os.Exit(1)
+	}
+	if count == 0 {
+		fmt.Println("drel: no pending migrations")
+	} else {
+		fmt.Printf("drel: applied %d migration(s)\n", count)
+	}
+}
+
+func runMigrateDown() {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(cfgPath())
+	ctx := context.Background()
+
+	drv, err := pgxdriver.New(ctx, dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
+		os.Exit(1)
+	}
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, mDir)
+	if err := runner.Down(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("drel: rolled back last migration")
+}
+
+func runMigrateStatus() {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(cfgPath())
+	ctx := context.Background()
+
+	drv, err := pgxdriver.New(ctx, dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
+		os.Exit(1)
+	}
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, mDir)
+	statuses, err := runner.Status(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
+		os.Exit(1)
+	}
+	if len(statuses) == 0 {
+		fmt.Println("No migrations found")
+		return
+	}
+	for _, s := range statuses {
+		marker := "[ ]"
+		if s.Applied {
+			marker = "[x]"
+		}
+		fmt.Printf("  %s  %s_%s\n", marker, s.Version, s.Name)
+	}
+}
+
+func runMigrateLint() {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(cfgPath())
+	ctx := context.Background()
+
+	drv, err := pgxdriver.New(ctx, dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
+		os.Exit(1)
+	}
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, mDir)
+	issues, err := runner.Lint(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
+		os.Exit(1)
+	}
+	if len(issues) == 0 {
+		fmt.Println("drel: all migration checksums valid")
+		return
+	}
+	for _, issue := range issues {
+		fmt.Fprintf(os.Stderr, "  MODIFIED  %s_%s (checksum mismatch)\n", issue.Version, issue.Name)
+	}
+	os.Exit(1)
+}
