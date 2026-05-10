@@ -14,9 +14,13 @@ type ModelInfo struct {
 }
 
 type FieldInfo struct {
-	Name       string
-	GoType     string
-	ColumnName string
-	IsExported bool
-	RelTag     string
+	Name           string
+	GoType         string
+	ColumnName     string
+	IsExported     bool
+	RelTag         string
+	IsVO           bool   // implements sql.Scanner + driver.Valuer (single-column VO)
+	IsMultiColVO   bool   // implements drel.MultiColumnMapper (multi-column VO)
+	MultiColPrefix string // db tag used as column prefix for multi-column VOs
+	LocalGoType    string // type name without package qualifier, for same-package generated code
 }
