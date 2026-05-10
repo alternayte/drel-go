@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"go/types"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -39,6 +40,12 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 	var models []ModelInfo
 	scope := pkg.Types.Scope()
 
+	// Determine the filesystem directory from the package's Go files.
+	var pkgDir string
+	if len(pkg.GoFiles) > 0 {
+		pkgDir = filepath.Dir(pkg.GoFiles[0])
+	}
+
 	for _, name := range scope.Names() {
 		obj := scope.Lookup(name)
 		tn, ok := obj.(*types.TypeName)
@@ -60,6 +67,7 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 			PkgPath: pkg.PkgPath,
 			PkgName: pkg.Name,
 			PKType:  pkType,
+			Dir:     pkgDir,
 		}
 
 		mi.TableName = inferTableName(tn.Name())

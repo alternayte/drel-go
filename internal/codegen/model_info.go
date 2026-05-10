@@ -10,6 +10,7 @@ type ModelInfo struct {
 	HasSoftDelete bool
 	HasVersioned  bool
 	HasAudit      bool
+	Dir           string // filesystem directory of the package
 }
 
 type FieldInfo struct {
