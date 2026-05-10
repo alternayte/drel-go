@@ -139,13 +139,30 @@ func extractFields(st *types.Struct) []FieldInfo {
 		if dbCol == "" {
 			continue
 		}
-		fields = append(fields, FieldInfo{
+
+		fi := FieldInfo{
 			Name:       f.Name(),
 			GoType:     f.Type().String(),
 			ColumnName: dbCol,
 			IsExported: f.Exported(),
 			RelTag:     parseRelTag(tag),
-		})
+		}
+
+		goTypeStr := f.Type().String()
+		if isPrimitiveType(goTypeStr) {
+			fi.LocalGoType = goTypeStr
+		} else {
+			fi.LocalGoType = localTypeName(f.Type())
+			if isScannerValuer(f.Type()) {
+				fi.IsVO = true
+			}
+			if isMultiColumnMapper(f.Type()) {
+				fi.IsMultiColVO = true
+				fi.MultiColPrefix = dbCol
+			}
+		}
+
+		fields = append(fields, fi)
 	}
 	return fields
 }
