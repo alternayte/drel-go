@@ -36,7 +36,10 @@ func Generate(configPath string) error {
 
 	// Emit per-model files.
 	for _, m := range models {
-		content := EmitModelFile(m)
+		content, err := EmitModelFileChecked(m)
+		if err != nil {
+			return err
+		}
 		outPath := filepath.Join(m.Dir, strings.ToLower(m.Name)+"_drel.go")
 		if err := writeFile(outPath, content); err != nil {
 			return fmt.Errorf("codegen: write model file %s: %w", outPath, err)
