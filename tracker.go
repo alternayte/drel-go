@@ -37,6 +37,7 @@ type ModelMetaBase struct {
 	SetVersion     func(entity any, v int)
 	AuditSetCreate func(entity any, actor string)
 	AuditSetUpdate func(entity any, actor string)
+	Filters        []NamedFilter
 }
 
 type trackedEntity struct {

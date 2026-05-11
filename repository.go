@@ -60,6 +60,7 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 			return meta.ColumnValue(entity.(*T), colIdx)
 		}
 	}
+	base.Filters = append([]NamedFilter(nil), meta.Filters...)
 	base.HasSoftDelete = meta.HasSoftDelete
 	base.HasVersioned = meta.HasVersioned
 	base.HasAudit = meta.HasAudit

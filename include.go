@@ -34,12 +34,19 @@ type RelationInfo struct {
 
 // IncludeSpec wraps a RelationInfo for use with Include queries.
 type IncludeSpec struct {
-	rel *RelationInfo
+	rel      *RelationInfo
+	unscoped bool
 }
 
 // NewIncludeSpec creates an IncludeSpec from a RelationInfo.
 func NewIncludeSpec(rel *RelationInfo) IncludeSpec {
 	return IncludeSpec{rel: rel}
+}
+
+// Unscoped returns a copy of the IncludeSpec that bypasses global filters
+// (e.g. soft delete) when loading the related entities.
+func (s IncludeSpec) Unscoped() IncludeSpec {
+	return IncludeSpec{rel: s.rel, unscoped: true}
 }
 
 // IncludableQuery constructs queries that eagerly load related entities.
@@ -108,27 +115,29 @@ type includeExecutor struct {
 
 func (ie *includeExecutor) loadRelations(ctx context.Context, parents []any, includes []IncludeSpec) error {
 	for _, inc := range includes {
-		if err := ie.loadRelation(ctx, parents, inc.rel); err != nil {
+		if err := ie.loadRelation(ctx, parents, inc); err != nil {
 			return fmt.Errorf("drel: include %s: %w", inc.rel.Name, err)
 		}
 	}
 	return nil
 }
 
-func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, rel *RelationInfo) error {
-	switch rel.Type {
+func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc IncludeSpec) error {
+	switch inc.rel.Type {
 	case HasMany, HasOne:
-		return ie.loadHasManyOrOne(ctx, parents, rel)
+		return ie.loadHasManyOrOne(ctx, parents, inc.rel, inc.unscoped)
 	case BelongsTo:
-		return ie.loadBelongsTo(ctx, parents, rel)
+		return ie.loadBelongsTo(ctx, parents, inc.rel, inc.unscoped)
+	case ManyToMany:
+		return ie.loadManyToMany(ctx, parents, inc.rel, inc.unscoped)
 	default:
-		return fmt.Errorf("unknown relation type %d", rel.Type)
+		return fmt.Errorf("unknown relation type %d", inc.rel.Type)
 	}
 }
 
 // loadHasManyOrOne executes: SELECT * FROM related_table WHERE fk_column IN (pk1, pk2, ...)
 // then groups results by the FK value and sets them on each parent.
-func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, rel *RelationInfo) error {
+func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
 	// Collect parent PK values.
 	pkValues := make([]any, len(parents))
 	for i, p := range parents {
@@ -136,7 +145,7 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 	}
 
 	// Query related entities.
-	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.FKColumn, pkValues)
+	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.FKColumn, pkValues, unscoped)
 	if err != nil {
 		return err
 	}
@@ -183,7 +192,7 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 
 // loadBelongsTo executes: SELECT * FROM related_table WHERE pk IN (fk1, fk2, ...)
 // Collects FK values from parents, then matches related entities by PK.
-func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel *RelationInfo) error {
+func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
 	// Find the FK column index in the parent meta.
 	fkIdx := findColumnIndex(ie.parentMeta.Columns, rel.FKColumn)
 	if fkIdx < 0 {
@@ -206,7 +215,7 @@ func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel
 	}
 
 	// Query related entities by their PK.
-	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, fkValues)
+	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, fkValues, unscoped)
 	if err != nil {
 		return err
 	}
@@ -233,7 +242,8 @@ const includeBatchSize = 1000
 
 // queryByColumn executes SELECT * FROM table WHERE column IN (values...)
 // batching the IN list to stay within Postgres parameter limits.
-func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBase, column string, values []any) ([]any, error) {
+// When unscoped is false, meta.Filters are applied to the query.
+func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBase, column string, values []any, unscoped bool) ([]any, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
@@ -246,17 +256,35 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 		}
 		batch := values[i:end]
 
+		inClause := ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: column,
+				Op:     ast.OpIn,
+				Values: batch,
+			},
+		}
+
+		var where *ast.WhereClause
+		if !unscoped && len(meta.Filters) > 0 {
+			allWheres := make([]ast.WhereClause, 0, len(meta.Filters)+1)
+			for _, f := range meta.Filters {
+				allWheres = append(allWheres, f.Clause)
+			}
+			allWheres = append(allWheres, inClause)
+			combined := ast.WhereClause{
+				LogicalOp: ast.LogicalAnd,
+				Children:  allWheres,
+			}
+			where = &combined
+		} else {
+			where = &inClause
+		}
+
 		node := ast.SelectNode{
 			Table:   meta.Table,
 			Columns: meta.Columns,
-			Where: &ast.WhereClause{
-				Comparison: &ast.ComparisonNode{
-					Column: column,
-					Op:     ast.OpIn,
-					Values: batch,
-				},
-			},
-			Type: ast.QuerySelect,
+			Where:   where,
+			Type:    ast.QuerySelect,
 		}
 
 		result := ie.engine.dialect().BuildSelect(node)
@@ -280,6 +308,11 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 		rows.Close()
 	}
 	return allItems, nil
+}
+
+// loadManyToMany is a stub for many-to-many relationship loading (not yet implemented).
+func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
+	return fmt.Errorf("many-to-many not yet implemented")
 }
 
 // findColumnIndex returns the index of the named column, or -1 if not found.
