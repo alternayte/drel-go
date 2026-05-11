@@ -57,6 +57,22 @@ func logentryPKValue(p *LogEntry) any {
 	return p.ID()
 }
 
+func logentryColumnValue(p *LogEntry, idx int) any {
+	switch idx {
+	case 0:
+		return p.ID()
+	case 1:
+		return p.Level
+	case 2:
+		return p.Message
+	case 3:
+		return p.CreatedAt()
+	case 4:
+		return p.UpdatedAt()
+	}
+	return nil
+}
+
 func logentryInsertColumns(p *LogEntry) ([]string, []any) {
 	return []string{"level", "message"}, []any{p.Level, p.Message}
 }
@@ -76,4 +92,5 @@ var LogEntryMeta = drel.ModelMeta[LogEntry]{
 	PKValue:       logentryPKValue,
 	InsertColumns: logentryInsertColumns,
 	ScanReturning: logentryScanReturning,
+	ColumnValue:   logentryColumnValue,
 }

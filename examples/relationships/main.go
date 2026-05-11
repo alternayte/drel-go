@@ -1,13 +1,18 @@
 // Example: relationships
 //
 // Demonstrates eager loading with Include using split queries:
-// has_many (Author → Books), has_one (Author → Profile),
-// and belongs_to (Book → Author).
+// has_many (Author -> Books), has_one (Author -> Profile),
+// and belongs_to (Book -> Author).
+//
+// Models are defined in the models/ package and use codegen-generated
+// metadata. Only the RelationInfo wiring is manual.
 //
 // Usage:
 //
+//	cd examples/relationships
+//	go run ../../cmd/drel generate   # generates models/*_drel.go + db/drel_gen.go
 //	export DATABASE_URL="postgres://localhost:5432/drelexample?sslmode=disable"
-//	go run ./examples/relationships/
+//	go run .
 package main
 
 import (
@@ -15,174 +20,75 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"github.com/alternayte/drel"
+	"github.com/alternayte/drel/examples/relationships/db"
+	"github.com/alternayte/drel/examples/relationships/models"
 )
 
-// --- Models ---
-
-type Author struct {
-	ID        int
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Books     []*Book
-	Profile   *AuthorProfile
-}
-
-type Book struct {
-	ID        int
-	Title     string
-	AuthorID  int
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Author    *Author
-}
-
-type AuthorProfile struct {
-	ID        int
-	Bio       string
-	AuthorID  int
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-// --- Metadata ---
-
-var AuthorMeta = drel.ModelMeta[Author]{
-	Table:    "authors",
-	Columns:  []string{"id", "name", "created_at", "updated_at"},
-	PKColumn: "id",
-	Scan: func(row drel.Row) (*Author, error) {
-		a := &Author{}
-		return a, row.Scan(&a.ID, &a.Name, &a.CreatedAt, &a.UpdatedAt)
-	},
-	PKValue: func(a *Author) any { return a.ID },
-	ColumnValue: func(a *Author, idx int) any {
-		switch idx {
-		case 0:
-			return a.ID
-		case 1:
-			return a.Name
-		}
-		return nil
-	},
-}
-
-var BookMeta = drel.ModelMeta[Book]{
-	Table:    "books",
-	Columns:  []string{"id", "title", "author_id", "created_at", "updated_at"},
-	PKColumn: "id",
-	Scan: func(row drel.Row) (*Book, error) {
-		b := &Book{}
-		return b, row.Scan(&b.ID, &b.Title, &b.AuthorID, &b.CreatedAt, &b.UpdatedAt)
-	},
-	PKValue: func(b *Book) any { return b.ID },
-	ColumnValue: func(b *Book, idx int) any {
-		switch idx {
-		case 0:
-			return b.ID
-		case 1:
-			return b.Title
-		case 2:
-			return b.AuthorID
-		}
-		return nil
-	},
-}
-
-var ProfileMeta = drel.ModelMeta[AuthorProfile]{
-	Table:    "author_profiles",
-	Columns:  []string{"id", "bio", "author_id", "created_at", "updated_at"},
-	PKColumn: "id",
-	Scan: func(row drel.Row) (*AuthorProfile, error) {
-		p := &AuthorProfile{}
-		return p, row.Scan(&p.ID, &p.Bio, &p.AuthorID, &p.CreatedAt, &p.UpdatedAt)
-	},
-	PKValue: func(p *AuthorProfile) any { return p.ID },
-	ColumnValue: func(p *AuthorProfile, idx int) any {
-		switch idx {
-		case 0:
-			return p.ID
-		case 2:
-			return p.AuthorID
-		}
-		return nil
-	},
-}
-
-// --- Relationship definitions ---
+// --- Relationship definitions (manual — codegen doesn't emit these) ---
 
 var booksRelation = drel.RelationInfo{
-	Name:     "books",
-	Type:     drel.HasMany,
-	FKColumn: "author_id",
+	Name:        "books",
+	Type:        drel.HasMany,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.BookMeta),
 	FieldSetter: func(parent any, related any) {
-		a := parent.(*Author)
+		a := parent.(*models.Author)
 		if items, ok := related.([]any); ok {
-			a.Books = make([]*Book, len(items))
+			a.Books = make([]*models.Book, len(items))
 			for i, item := range items {
-				a.Books[i] = item.(*Book)
+				a.Books[i] = item.(*models.Book)
 			}
 		}
 	},
 }
 
 var profileRelation = drel.RelationInfo{
-	Name:     "profile",
-	Type:     drel.HasOne,
-	FKColumn: "author_id",
+	Name:        "profile",
+	Type:        drel.HasOne,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.AuthorProfileMeta),
 	FieldSetter: func(parent any, related any) {
-		a := parent.(*Author)
-		if p, ok := related.(*AuthorProfile); ok {
+		a := parent.(*models.Author)
+		if p, ok := related.(*models.AuthorProfile); ok {
 			a.Profile = p
 		}
 	},
 }
 
 var authorRelation = drel.RelationInfo{
-	Name:     "author",
-	Type:     drel.BelongsTo,
-	FKColumn: "author_id",
+	Name:        "author",
+	Type:        drel.BelongsTo,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.AuthorMeta),
 	FieldSetter: func(parent any, related any) {
-		b := parent.(*Book)
-		if a, ok := related.(*Author); ok {
+		b := parent.(*models.Book)
+		if a, ok := related.(*models.Author); ok {
 			b.Author = a
 		}
 	},
 }
 
-func initRelations() {
-	booksRelation.RelatedMeta = drel.ToMetaBase(&BookMeta)
-	profileRelation.RelatedMeta = drel.ToMetaBase(&ProfileMeta)
-	authorRelation.RelatedMeta = drel.ToMetaBase(&AuthorMeta)
-}
-
 func main() {
-	initRelations()
-
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://localhost:5432/drelexample?sslmode=disable"
 	}
 
 	ctx := context.Background()
-	engine, err := drel.NewEngine(dsn, drel.WithContext(ctx))
+	database, err := db.Open(dsn, drel.WithContext(ctx))
 	if err != nil {
 		log.Fatalf("connect: %v", err)
 	}
-	defer engine.Close()
+	defer database.Close()
 
-	setup(ctx, engine)
-	defer teardown(ctx, engine)
+	setup(ctx, database)
+	defer teardown(ctx, database)
 
-	authors := drel.NewRepository(engine, AuthorMeta)
-	books := drel.NewRepository(engine, BookMeta)
-
-	// === has_many: Author → Books ===
+	// === has_many: Author -> Books ===
 	fmt.Println("=== Author with Books (has_many) ===")
-	alice, err := authors.Include(drel.NewIncludeSpec(&booksRelation)).Find(ctx, 1)
+	alice, err := database.Authors.Include(drel.NewIncludeSpec(&booksRelation)).Find(ctx, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -191,9 +97,9 @@ func main() {
 		fmt.Printf("    - %s\n", b.Title)
 	}
 
-	// === has_one: Author → Profile ===
+	// === has_one: Author -> Profile ===
 	fmt.Println("\n=== Author with Profile (has_one) ===")
-	bob, err := authors.Include(drel.NewIncludeSpec(&profileRelation)).Find(ctx, 2)
+	bob, err := database.Authors.Include(drel.NewIncludeSpec(&profileRelation)).Find(ctx, 2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -201,9 +107,9 @@ func main() {
 		fmt.Printf("  %s's bio: %s\n", bob.Name, bob.Profile.Bio)
 	}
 
-	// === belongs_to: Book → Author ===
+	// === belongs_to: Book -> Author ===
 	fmt.Println("\n=== Book with Author (belongs_to) ===")
-	book, err := books.Include(drel.NewIncludeSpec(&authorRelation)).Find(ctx, 1)
+	book, err := database.Books.Include(drel.NewIncludeSpec(&authorRelation)).Find(ctx, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -213,7 +119,7 @@ func main() {
 
 	// === All authors with books ===
 	fmt.Println("\n=== All Authors with Books ===")
-	allAuthors, err := authors.Include(drel.NewIncludeSpec(&booksRelation)).All(ctx)
+	allAuthors, err := database.Authors.Include(drel.NewIncludeSpec(&booksRelation)).All(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -222,8 +128,8 @@ func main() {
 	}
 }
 
-func setup(ctx context.Context, engine *drel.Engine) {
-	drv := engine.Driver()
+func setup(ctx context.Context, database *db.DB) {
+	drv := database.Driver()
 	drv.Exec(ctx, `DROP TABLE IF EXISTS books`)
 	drv.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
 	drv.Exec(ctx, `DROP TABLE IF EXISTS authors`)
@@ -259,8 +165,8 @@ func setup(ctx context.Context, engine *drel.Engine) {
 	drv.Exec(ctx, `INSERT INTO author_profiles (bio, author_id) VALUES ('Go expert and author', 1), ('Polyglot programmer', 2)`)
 }
 
-func teardown(ctx context.Context, engine *drel.Engine) {
-	drv := engine.Driver()
+func teardown(ctx context.Context, database *db.DB) {
+	drv := database.Driver()
 	drv.Exec(ctx, `DROP TABLE IF EXISTS books`)
 	drv.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
 	drv.Exec(ctx, `DROP TABLE IF EXISTS authors`)

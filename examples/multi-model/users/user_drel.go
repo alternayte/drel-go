@@ -57,6 +57,22 @@ func userPKValue(p *User) any {
 	return p.ID()
 }
 
+func userColumnValue(p *User, idx int) any {
+	switch idx {
+	case 0:
+		return p.ID()
+	case 1:
+		return p.name
+	case 2:
+		return p.balance
+	case 3:
+		return p.CreatedAt()
+	case 4:
+		return p.UpdatedAt()
+	}
+	return nil
+}
+
 func userInsertColumns(p *User) ([]string, []any) {
 	return []string{"name", "balance"}, []any{p.name, p.balance}
 }
@@ -76,4 +92,5 @@ var UserMeta = drel.ModelMeta[User]{
 	PKValue:       userPKValue,
 	InsertColumns: userInsertColumns,
 	ScanReturning: userScanReturning,
+	ColumnValue:   userColumnValue,
 }

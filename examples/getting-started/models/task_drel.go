@@ -63,6 +63,24 @@ func taskPKValue(p *Task) any {
 	return p.ID()
 }
 
+func taskColumnValue(p *Task, idx int) any {
+	switch idx {
+	case 0:
+		return p.ID()
+	case 1:
+		return p.Title
+	case 2:
+		return p.Done
+	case 3:
+		return p.Priority
+	case 4:
+		return p.CreatedAt()
+	case 5:
+		return p.UpdatedAt()
+	}
+	return nil
+}
+
 func taskInsertColumns(p *Task) ([]string, []any) {
 	return []string{"title", "done", "priority"}, []any{p.Title, p.Done, p.Priority}
 }
@@ -82,4 +100,5 @@ var TaskMeta = drel.ModelMeta[Task]{
 	PKValue:       taskPKValue,
 	InsertColumns: taskInsertColumns,
 	ScanReturning: taskScanReturning,
+	ColumnValue:   taskColumnValue,
 }

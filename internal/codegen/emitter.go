@@ -97,6 +97,9 @@ func EmitModelFile(m ModelInfo) string {
 	// --- PK value ---
 	b.WriteString(fmt.Sprintf("func %sPKValue(p *%s) any {\n\treturn p.ID()\n}\n\n", lower, m.Name))
 
+	// --- Column value ---
+	emitColumnValue(&b, m, lower, allCols)
+
 	// --- Insert columns ---
 	emitInsertColumns(&b, m, lower)
 
@@ -124,6 +127,10 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	if m.HasVersioned {
 		b.WriteString("\tVersion drel.OrderedColumn[int]\n")
 	}
+	if m.HasAudit {
+		b.WriteString("\tCreatedBy drel.StringColumn\n")
+		b.WriteString("\tUpdatedBy drel.StringColumn\n")
+	}
 	b.WriteString("\tCreatedAt drel.Column[time.Time]\n")
 	b.WriteString("\tUpdatedAt drel.Column[time.Time]\n")
 	b.WriteString("}{\n")
@@ -138,6 +145,10 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string) {
 	}
 	if m.HasVersioned {
 		b.WriteString("\tVersion: drel.NewOrderedCol[int](\"version\"),\n")
+	}
+	if m.HasAudit {
+		b.WriteString("\tCreatedBy: drel.NewStringCol(\"created_by\"),\n")
+		b.WriteString("\tUpdatedBy: drel.NewStringCol(\"updated_by\"),\n")
 	}
 	b.WriteString("\tCreatedAt: drel.NewCol[time.Time](\"created_at\"),\n")
 	b.WriteString("\tUpdatedAt: drel.NewCol[time.Time](\"updated_at\"),\n")
@@ -156,6 +167,9 @@ func allColumns(m ModelInfo) []string {
 	if m.HasVersioned {
 		cols = append(cols, "version")
 	}
+	if m.HasAudit {
+		cols = append(cols, "created_by", "updated_by")
+	}
 	cols = append(cols, "created_at", "updated_at")
 	return cols
 }
@@ -164,6 +178,9 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 	b.WriteString(fmt.Sprintf("func scan%s(row drel.Row) (*%s, error) {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\tp := &%s{}\n", m.Name))
 	b.WriteString("\tidPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
+	if m.HasAudit {
+		b.WriteString("\tcreatedByPtr, updatedByPtr := p.AuditPtrs()\n")
+	}
 
 	// Build scan args
 	var scanArgs []string
@@ -176,6 +193,9 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 	}
 	if m.HasVersioned {
 		scanArgs = append(scanArgs, "p.VersionPtr()")
+	}
+	if m.HasAudit {
+		scanArgs = append(scanArgs, "createdByPtr", "updatedByPtr")
 	}
 	scanArgs = append(scanArgs, "createdAtPtr", "updatedAtPtr")
 
@@ -217,6 +237,45 @@ func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString("\treturn changes\n}\n\n")
 }
 
+func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []string) {
+	b.WriteString(fmt.Sprintf("func %sColumnValue(p *%s, idx int) any {\n", lower, m.Name))
+	b.WriteString("\tswitch idx {\n")
+
+	idx := 0
+	// id (index 0)
+	b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.ID()\n", idx))
+	idx++
+
+	// User-defined columns
+	for _, f := range columnFields(m.Fields) {
+		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.%s\n", idx, f.Name))
+		idx++
+	}
+
+	// Optional embeds
+	if m.HasSoftDelete {
+		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.DeletedAt()\n", idx))
+		idx++
+	}
+	if m.HasVersioned {
+		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.Version()\n", idx))
+		idx++
+	}
+	if m.HasAudit {
+		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.CreatedBy()\n", idx))
+		idx++
+		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.UpdatedBy()\n", idx))
+		idx++
+	}
+
+	// created_at, updated_at
+	b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.CreatedAt()\n", idx))
+	idx++
+	b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.UpdatedAt()\n", idx))
+
+	b.WriteString("\t}\n\treturn nil\n}\n\n")
+}
+
 func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString(fmt.Sprintf("func %sInsertColumns(p *%s) ([]string, []any) {\n", lower, m.Name))
 	var colNames []string
@@ -224,6 +283,10 @@ func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 	for _, f := range columnFields(m.Fields) {
 		colNames = append(colNames, fmt.Sprintf("%q", f.ColumnName))
 		colVals = append(colVals, fmt.Sprintf("p.%s", f.Name))
+	}
+	if m.HasAudit {
+		colNames = append(colNames, `"created_by"`, `"updated_by"`)
+		colVals = append(colVals, "p.CreatedBy()", "p.UpdatedBy()")
 	}
 	b.WriteString(fmt.Sprintf("\treturn []string{%s}, []any{%s}\n", strings.Join(colNames, ", "), strings.Join(colVals, ", ")))
 	b.WriteString("}\n\n")
@@ -252,6 +315,7 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString(fmt.Sprintf("\tPKValue:       %sPKValue,\n", lower))
 	b.WriteString(fmt.Sprintf("\tInsertColumns: %sInsertColumns,\n", lower))
 	b.WriteString(fmt.Sprintf("\tScanReturning: %sScanReturning,\n", lower))
+	b.WriteString(fmt.Sprintf("\tColumnValue:   %sColumnValue,\n", lower))
 
 	if m.HasSoftDelete {
 		b.WriteString("\tHasSoftDelete: true,\n")
