@@ -155,3 +155,15 @@ func (c BoolColumn) Desc() OrderExpr      { return c.col.Desc() }
 
 func (c BoolColumn) IsTrue() Predicate  { return c.col.Eq(true) }
 func (c BoolColumn) IsFalse() Predicate { return c.col.Eq(false) }
+
+// ColRef returns a ColumnRef for use with Select projections and aggregates.
+func (c Column[T]) ColRef() ColumnRef { return ColumnRef{name: c.name} }
+
+// ColRef returns a ColumnRef for use with Select projections and aggregates.
+func (c OrderedColumn[T]) ColRef() ColumnRef { return ColumnRef{name: c.col.name} }
+
+// ColRef returns a ColumnRef for use with Select projections and aggregates.
+func (c StringColumn) ColRef() ColumnRef { return ColumnRef{name: c.col.name} }
+
+// ColRef returns a ColumnRef for use with Select projections and aggregates.
+func (c BoolColumn) ColRef() ColumnRef { return ColumnRef{name: c.col.name} }
