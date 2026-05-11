@@ -14,6 +14,8 @@ func New() *Postgres { return &Postgres{} }
 
 func (p *Postgres) SupportsReturning() bool { return true }
 
+func (p *Postgres) Now() string { return "NOW()" }
+
 func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 	var b strings.Builder
 	var args []any

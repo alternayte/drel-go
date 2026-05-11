@@ -14,6 +14,8 @@ func New() *SQLite { return &SQLite{} }
 
 func (s *SQLite) SupportsReturning() bool { return false }
 
+func (s *SQLite) Now() string { return "CURRENT_TIMESTAMP" }
+
 func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 	var b strings.Builder
 	var args []any

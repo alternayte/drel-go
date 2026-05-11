@@ -2,10 +2,10 @@ package drel
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
+	"strings"
 
 	"github.com/alternayte/drel/internal/dialect"
 )
@@ -13,6 +13,24 @@ import (
 type txExec interface {
 	execInternal(ctx context.Context, sql string, args ...any) (int64, error)
 	queryRowInternal(ctx context.Context, sql string, args ...any) Row
+}
+
+// isNoRows returns true if err represents a "no rows in result set" error.
+// This handles both database/sql's sql.ErrNoRows and pgx's own ErrNoRows
+// (whose message is "no rows in result set") without importing pgx.
+func isNoRows(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	return err.Error() == "no rows in result set"
+}
+
+// quoteIdentMutation quotes a SQL identifier for use in mutation readback queries.
+func quoteIdentMutation(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
@@ -25,18 +43,49 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 			te.meta.AuditSetCreate(te.entity, actor)
 		}
 		cols, vals := te.meta.InsertColumns(te.entity)
-		result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
-		row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-		if te.meta.ScanReturning != nil {
-			if err := te.meta.ScanReturning(te.entity, row); err != nil {
-				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
+
+		if d.SupportsReturning() {
+			// Postgres path: INSERT ... RETURNING id, created_at, updated_at
+			result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
+			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+			if te.meta.ScanReturning != nil {
+				if err := te.meta.ScanReturning(te.entity, row); err != nil {
+					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
+				}
+			} else {
+				var discard any
+				if err := row.Scan(&discard, &discard, &discard); err != nil {
+					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
+				}
 			}
 		} else {
-			var discard any
-			if err := row.Scan(&discard, &discard, &discard); err != nil {
+			// SQLite path: INSERT without RETURNING, then read back the generated columns.
+			result := d.BuildInsert(te.meta.Table, cols, vals, nil)
+			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
+			if err != nil {
 				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
+			// Read back id, created_at, updated_at using last_insert_rowid().
+			readbackSQL := fmt.Sprintf(
+				`SELECT %s, %s, %s FROM %s WHERE rowid = last_insert_rowid()`,
+				quoteIdentMutation("id"),
+				quoteIdentMutation("created_at"),
+				quoteIdentMutation("updated_at"),
+				quoteIdentMutation(te.meta.Table),
+			)
+			row := exec.queryRowInternal(ctx, readbackSQL)
+			if te.meta.ScanReturning != nil {
+				if err := te.meta.ScanReturning(te.entity, row); err != nil {
+					return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+				}
+			} else {
+				var discard any
+				if err := row.Scan(&discard, &discard, &discard); err != nil {
+					return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+				}
+			}
 		}
+
 		if te.meta.HasVersioned && te.meta.SetVersion != nil {
 			te.meta.SetVersion(te.entity, 1)
 		}
@@ -51,7 +100,7 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 		if len(changes) == 0 {
 			continue
 		}
-		changes = append(changes, FieldChange{Column: "updated_at", Value: RawExpr{SQL: "NOW()"}})
+		changes = append(changes, FieldChange{Column: "updated_at", Value: RawExpr{SQL: d.Now()}})
 		if te.meta.HasAudit {
 			actor := ActorFromContext(ctx)
 			changes = append(changes, FieldChange{Column: "updated_by", Value: actor})
@@ -69,15 +118,30 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 		if te.meta.HasVersioned && te.meta.VersionValue != nil {
 			currentVersion := te.meta.VersionValue(te.entity)
 			result := d.BuildUpdateVersioned(te.meta.Table, cvs, te.meta.PKColumn, pkVal, "version", currentVersion)
-			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-			var newVersion int
-			if err := row.Scan(&newVersion); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
+
+			if d.SupportsReturning() {
+				// Postgres path: UPDATE ... RETURNING version
+				row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+				var newVersion int
+				if err := row.Scan(&newVersion); err != nil {
+					if isNoRows(err) {
+						return nil, ErrConcurrencyConflict
+					}
+					return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
+				}
+				te.meta.SetVersion(te.entity, newVersion)
+			} else {
+				// SQLite path: UPDATE without RETURNING, check affected rows.
+				affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
+				if err != nil {
+					return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
+				}
+				if affected == 0 {
 					return nil, ErrConcurrencyConflict
 				}
-				return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
+				// Version was incremented in the UPDATE SET clause (version = version + 1).
+				te.meta.SetVersion(te.entity, currentVersion+1)
 			}
-			te.meta.SetVersion(te.entity, newVersion)
 		} else {
 			result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
 			affected, err := exec.execInternal(ctx, result.SQL, result.Args...)

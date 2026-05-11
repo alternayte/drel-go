@@ -23,6 +23,9 @@ type RawExpr struct {
 // Dialect generates SQL for a specific database backend.
 type Dialect interface {
 	SupportsReturning() bool
+	// Now returns the SQL expression for the current timestamp.
+	// Postgres returns "NOW()", SQLite returns "CURRENT_TIMESTAMP".
+	Now() string
 	BuildSelect(node ast.SelectNode) Result
 	BuildInsert(table string, columns []string, values []any, returningCols []string) Result
 	BuildUpdate(table string, changes []ColumnValue, pkColumn string, pkValue any) Result

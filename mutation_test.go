@@ -5,6 +5,7 @@ import (
 
 	"github.com/alternayte/drel/internal/dialect"
 	"github.com/alternayte/drel/internal/dialect/postgres"
+	dialectsqlite "github.com/alternayte/drel/internal/dialect/sqlite"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,4 +42,65 @@ func TestPostgres_BuildDelete(t *testing.T) {
 	result := pg.BuildDelete("users", "id", 99)
 	assert.Equal(t, `DELETE FROM "users" WHERE "id" = $1`, result.SQL)
 	assert.Equal(t, []any{99}, result.Args)
+}
+
+// ─── Dialect Now() integration with mutation updated_at ──────────────────────
+
+func TestDialect_Now_Postgres(t *testing.T) {
+	pg := postgres.New()
+	assert.Equal(t, "NOW()", pg.Now())
+}
+
+func TestDialect_Now_SQLite(t *testing.T) {
+	sq := dialectsqlite.New()
+	assert.Equal(t, "CURRENT_TIMESTAMP", sq.Now())
+}
+
+// ─── SQLite dialect mutation SQL shapes ─────────────────────────────────────
+
+func TestSQLite_BuildInsert_IgnoresReturning(t *testing.T) {
+	sq := dialectsqlite.New()
+	result := sq.BuildInsert("users", []string{"name", "email"}, []any{"Alice", "alice@test.com"}, []string{"id", "created_at", "updated_at"})
+	assert.NotContains(t, result.SQL, "RETURNING")
+	assert.Equal(t, `INSERT INTO "users" ("name", "email") VALUES (?, ?)`, result.SQL)
+}
+
+func TestSQLite_BuildUpdateVersioned_NoReturning(t *testing.T) {
+	sq := dialectsqlite.New()
+	result := sq.BuildUpdateVersioned("items",
+		[]dialect.ColumnValue{{Column: "name", Value: "Widget"}},
+		"id", 3, "version", 2,
+	)
+	assert.NotContains(t, result.SQL, "RETURNING")
+	assert.Equal(t,
+		`UPDATE "items" SET "name" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		result.SQL,
+	)
+	assert.Equal(t, []any{"Widget", 3, 2}, result.Args)
+}
+
+func TestSQLite_BuildUpdate_WithRawExpr_UsesCurrentTimestamp(t *testing.T) {
+	sq := dialectsqlite.New()
+	result := sq.BuildUpdate("users",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "Bob"},
+			{Column: "updated_at", Value: dialect.RawExpr{SQL: sq.Now()}},
+		},
+		"id", 1,
+	)
+	assert.Contains(t, result.SQL, "CURRENT_TIMESTAMP")
+	assert.NotContains(t, result.SQL, "NOW()")
+}
+
+func TestPostgres_BuildUpdate_WithRawExpr_UsesNow(t *testing.T) {
+	pg := postgres.New()
+	result := pg.BuildUpdate("users",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "Bob"},
+			{Column: "updated_at", Value: dialect.RawExpr{SQL: pg.Now()}},
+		},
+		"id", 1,
+	)
+	assert.Contains(t, result.SQL, "NOW()")
+	assert.NotContains(t, result.SQL, "CURRENT_TIMESTAMP")
 }

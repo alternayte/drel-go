@@ -16,6 +16,12 @@ func TestSQLite_SupportsReturning(t *testing.T) {
 	assert.False(t, New().SupportsReturning())
 }
 
+// ─── Now ─────────────────────────────────────────────────────────────────────
+
+func TestSQLite_Now(t *testing.T) {
+	assert.Equal(t, "CURRENT_TIMESTAMP", New().Now())
+}
+
 // ─── BuildSelect ─────────────────────────────────────────────────────────────
 
 func TestSQLite_BuildSelect(t *testing.T) {

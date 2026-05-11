@@ -523,6 +523,14 @@ func buildRawWhere(sql string, args ...any) dialect.Result {
 	return p.BuildSelect(node)
 }
 
+func TestPostgres_Now(t *testing.T) {
+	assert.Equal(t, "NOW()", New().Now())
+}
+
+func TestPostgres_SupportsReturning(t *testing.T) {
+	assert.True(t, New().SupportsReturning())
+}
+
 func TestRawPlaceholder_Basic(t *testing.T) {
 	r := buildRawWhere("age > ? AND name = ?", 18, "alice")
 	assert.Equal(t, `SELECT "id" FROM "test" WHERE age > $1 AND name = $2`, r.SQL)
