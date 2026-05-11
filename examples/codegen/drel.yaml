@@ -1,7 +1,0 @@
-packages:
-  - ./models
-
-output:
-  db: ./db/drel_gen.go
-
-dialect: postgres
