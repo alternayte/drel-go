@@ -17,6 +17,8 @@ const (
 	HasOne
 	// BelongsTo indicates the entity references a parent via a foreign key.
 	BelongsTo
+	// ManyToMany indicates a many-to-many relationship via a pivot table.
+	ManyToMany
 )
 
 // RelationInfo describes a relationship between two models.
@@ -24,6 +26,8 @@ type RelationInfo struct {
 	Name        string
 	Type        RelationType
 	FKColumn    string
+	JoinTable   string // pivot table name (many-to-many only)
+	RefColumn   string // target FK column in pivot table (many-to-many only)
 	RelatedMeta *ModelMetaBase
 	FieldSetter func(parent any, related any)
 }
@@ -225,40 +229,57 @@ func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel
 	return nil
 }
 
+const includeBatchSize = 1000
+
 // queryByColumn executes SELECT * FROM table WHERE column IN (values...)
+// batching the IN list to stay within Postgres parameter limits.
 func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBase, column string, values []any) ([]any, error) {
-	node := ast.SelectNode{
-		Table:   meta.Table,
-		Columns: meta.Columns,
-		Where: &ast.WhereClause{
-			Comparison: &ast.ComparisonNode{
-				Column: column,
-				Op:     ast.OpIn,
-				Values: values,
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	var allItems []any
+	for i := 0; i < len(values); i += includeBatchSize {
+		end := i + includeBatchSize
+		if end > len(values) {
+			end = len(values)
+		}
+		batch := values[i:end]
+
+		node := ast.SelectNode{
+			Table:   meta.Table,
+			Columns: meta.Columns,
+			Where: &ast.WhereClause{
+				Comparison: &ast.ComparisonNode{
+					Column: column,
+					Op:     ast.OpIn,
+					Values: batch,
+				},
 			},
-		},
-		Type: ast.QuerySelect,
-	}
+			Type: ast.QuerySelect,
+		}
 
-	result := ie.engine.Dialect().BuildSelect(node)
-	rows, err := ie.engine.Driver().Query(ctx, result.SQL, result.Args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []any
-	for rows.Next() {
-		item, err := meta.ScanRow(rows)
+		result := ie.engine.dialect().BuildSelect(node)
+		rows, err := ie.engine.queryInternal(ctx, result.SQL, result.Args...)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+
+		for rows.Next() {
+			item, err := meta.ScanRow(rows)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			allItems = append(allItems, item)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return allItems, nil
 }
 
 // findColumnIndex returns the index of the named column, or -1 if not found.
