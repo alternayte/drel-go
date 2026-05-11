@@ -9,9 +9,15 @@ type Result struct {
 }
 
 // ColumnValue pairs a column name with its new value for mutation queries.
+// If Value is a RawExpr, the dialect should embed it as literal SQL instead of a parameter.
 type ColumnValue struct {
 	Column string
 	Value  any
+}
+
+// RawExpr represents a raw SQL expression to embed inline (e.g., NOW()).
+type RawExpr struct {
+	SQL string
 }
 
 // Dialect generates SQL for a specific database backend.

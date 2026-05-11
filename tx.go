@@ -2,6 +2,7 @@ package drel
 
 import (
 	"context"
+	"time"
 
 	"github.com/alternayte/drel/internal/ast"
 	"github.com/alternayte/drel/internal/driver"
@@ -17,7 +18,7 @@ type Tx struct {
 
 // SaveChanges flushes all tracked changes within this transaction.
 func (tx *Tx) SaveChanges(ctx context.Context) error {
-	events, err := flushChanges(ctx, tx.dbTx, tx.engine.Dialect(), tx.tracker)
+	events, err := flushChanges(ctx, tx, tx.engine.dialect(), tx.tracker)
 	if err != nil {
 		return err
 	}
@@ -25,17 +26,35 @@ func (tx *Tx) SaveChanges(ctx context.Context) error {
 	return nil
 }
 
-// Exec executes a raw SQL statement within the transaction and returns the
-// number of rows affected. Use this for INSERT, UPDATE, DELETE, or DDL
-// statements that don't return rows.
+// Exec executes a raw SQL statement within the transaction.
 func (tx *Tx) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
-	return tx.dbTx.Exec(ctx, sql, args...)
+	return tx.execInternal(ctx, sql, args...)
 }
 
-// QueryRow executes a raw SQL query within the transaction that is expected
-// to return at most one row. Use row.Scan to read the result.
+// QueryRow executes a raw SQL query within the transaction that returns at most one row.
 func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...any) Row {
-	return tx.dbTx.QueryRow(ctx, sql, args...)
+	return tx.queryRowInternal(ctx, sql, args...)
+}
+
+func (tx *Tx) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
+	start := time.Now()
+	n, err := tx.dbTx.Exec(ctx, sql, args...)
+	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
+	return n, err
+}
+
+func (tx *Tx) queryInternal(ctx context.Context, sql string, args ...any) (driver.Rows, error) {
+	start := time.Now()
+	rows, err := tx.dbTx.Query(ctx, sql, args...)
+	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
+	return rows, err
+}
+
+func (tx *Tx) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
+	start := time.Now()
+	row := tx.dbTx.QueryRow(ctx, sql, args...)
+	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
+	return row
 }
 
 // HardRemove marks a tracked entity for permanent (hard) deletion on the next
@@ -161,6 +180,13 @@ func (q *TxQueryBuilder[T]) Limit(n int) *TxQueryBuilder[T] {
 	return c
 }
 
+// Skip sets the offset for the query (number of rows to skip).
+func (q *TxQueryBuilder[T]) Skip(n int) *TxQueryBuilder[T] {
+	c := q.clone()
+	c.offset = &n
+	return c
+}
+
 func (q *TxQueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 	node := ast.SelectNode{
 		Table:   q.meta.Table,
@@ -209,8 +235,8 @@ func (q *TxQueryBuilder[T]) WithoutFilter(name string) *TxQueryBuilder[T] {
 // All executes the query and returns all matching results.
 func (q *TxQueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 	node := q.buildAST(ast.QuerySelect)
-	result := q.tx.engine.Dialect().BuildSelect(node)
-	rows, err := q.tx.dbTx.Query(ctx, result.SQL, result.Args...)
+	result := q.tx.engine.dialect().BuildSelect(node)
+	rows, err := q.tx.queryInternal(ctx, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -242,14 +268,39 @@ func (q *TxQueryBuilder[T]) First(ctx context.Context) (*T, error) {
 	return items[0], nil
 }
 
+// FirstOrNil returns the first matching result or nil if none exist.
+func (q *TxQueryBuilder[T]) FirstOrNil(ctx context.Context) (*T, error) {
+	limited := q.Limit(1)
+	items, err := limited.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
 // Count returns the number of matching rows.
 func (q *TxQueryBuilder[T]) Count(ctx context.Context) (int, error) {
 	node := q.buildAST(ast.QueryCount)
-	result := q.tx.engine.Dialect().BuildSelect(node)
-	row := q.tx.dbTx.QueryRow(ctx, result.SQL, result.Args...)
+	result := q.tx.engine.dialect().BuildSelect(node)
+	row := q.tx.queryRowInternal(ctx, result.SQL, result.Args...)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+// Exists returns true if at least one matching row exists.
+func (q *TxQueryBuilder[T]) Exists(ctx context.Context) (bool, error) {
+	node := q.buildAST(ast.QueryExists)
+	result := q.tx.engine.dialect().BuildSelect(node)
+	row := q.tx.queryRowInternal(ctx, result.SQL, result.Args...)
+	var exists bool
+	if err := row.Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }

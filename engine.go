@@ -3,6 +3,7 @@ package drel
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/alternayte/drel/internal/dialect"
 	"github.com/alternayte/drel/internal/dialect/postgres"
@@ -13,9 +14,10 @@ import (
 // Engine holds a database driver and dialect for executing queries.
 type Engine struct {
 	drv               driver.Driver
-	dialect           dialect.Dialect
+	dia               dialect.Dialect
 	beforeCommitHooks []BeforeCommitHook
 	afterCommitHooks  []AfterCommitHook
+	queryHooks        []QueryHook
 }
 
 // Option configures Engine creation.
@@ -40,8 +42,8 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	}
 
 	return &Engine{
-		drv:     drv,
-		dialect: postgres.New(),
+		drv: drv,
+		dia: postgres.New(),
 	}, nil
 }
 
@@ -57,14 +59,49 @@ func (e *Engine) Close() {
 	e.drv.Close()
 }
 
-// Driver returns the underlying database driver.
-func (e *Engine) Driver() driver.Driver {
+// Exec executes a raw SQL statement and returns the number of rows affected.
+func (e *Engine) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	return e.execInternal(ctx, sql, args...)
+}
+
+// Query executes a raw SQL query and returns the result rows.
+// The caller must close the returned Rows when done.
+func (e *Engine) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return e.queryInternal(ctx, sql, args...)
+}
+
+// QueryRow executes a raw SQL query that is expected to return at most one row.
+func (e *Engine) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	return e.queryRowInternal(ctx, sql, args...)
+}
+
+func (e *Engine) driver() driver.Driver {
 	return e.drv
 }
 
-// Dialect returns the SQL dialect used by this engine.
-func (e *Engine) Dialect() dialect.Dialect {
-	return e.dialect
+func (e *Engine) dialect() dialect.Dialect {
+	return e.dia
+}
+
+func (e *Engine) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
+	start := time.Now()
+	n, err := e.drv.Exec(ctx, sql, args...)
+	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
+	return n, err
+}
+
+func (e *Engine) queryInternal(ctx context.Context, sql string, args ...any) (Rows, error) {
+	start := time.Now()
+	rows, err := e.drv.Query(ctx, sql, args...)
+	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
+	return rows, err
+}
+
+func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
+	start := time.Now()
+	row := e.drv.QueryRow(ctx, sql, args...)
+	e.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
+	return row
 }
 
 func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {

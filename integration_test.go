@@ -45,9 +45,7 @@ func setupTestDB(t *testing.T) *drel.Engine {
 	require.NoError(t, err)
 	t.Cleanup(func() { engine.Close() })
 
-	drv := engine.Driver()
-
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		CREATE TABLE products (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -65,8 +63,6 @@ func setupTestDB(t *testing.T) *drel.Engine {
 func seedProducts(t *testing.T, engine *drel.Engine) {
 	t.Helper()
 	ctx := context.Background()
-	drv := engine.Driver()
-
 	products := []struct {
 		name    string
 		price   int
@@ -80,7 +76,7 @@ func seedProducts(t *testing.T, engine *drel.Engine) {
 	}
 
 	for _, p := range products {
-		_, err := drv.Exec(ctx,
+		_, err := engine.Exec(ctx,
 			"INSERT INTO products (name, price, in_stock) VALUES ($1, $2, $3)",
 			p.name, p.price, p.inStock,
 		)

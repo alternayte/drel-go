@@ -115,10 +115,9 @@ func TestIntegration_BulkDelete_SoftDeleteModel(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert two sd_products via raw SQL
-	drv := engine.Driver()
-	_, err := drv.Exec(ctx, "INSERT INTO sd_products (name, price) VALUES ('A', 100)")
+	_, err := engine.Exec(ctx, "INSERT INTO sd_products (name, price) VALUES ('A', 100)")
 	require.NoError(t, err)
-	_, err = drv.Exec(ctx, "INSERT INTO sd_products (name, price) VALUES ('B', 200)")
+	_, err = engine.Exec(ctx, "INSERT INTO sd_products (name, price) VALUES ('B', 200)")
 	require.NoError(t, err)
 
 	repo := drel.NewRepository(engine, testmodels.SoftDeleteProductMeta)
@@ -130,13 +129,13 @@ func TestIntegration_BulkDelete_SoftDeleteModel(t *testing.T) {
 	assert.Equal(t, 1, affected)
 
 	// Verify deleted_at IS NOT NULL for product A
-	row := drv.QueryRow(ctx, "SELECT deleted_at IS NOT NULL FROM sd_products WHERE name = 'A'")
+	row := engine.QueryRow(ctx, "SELECT deleted_at IS NOT NULL FROM sd_products WHERE name = 'A'")
 	var hasDeletedAt bool
 	require.NoError(t, row.Scan(&hasDeletedAt))
 	assert.True(t, hasDeletedAt, "deleted_at should be set for soft-deleted product")
 
 	// Verify product B is untouched
-	row = drv.QueryRow(ctx, "SELECT deleted_at IS NULL FROM sd_products WHERE name = 'B'")
+	row = engine.QueryRow(ctx, "SELECT deleted_at IS NULL FROM sd_products WHERE name = 'B'")
 	var bIsNull bool
 	require.NoError(t, row.Scan(&bIsNull))
 	assert.True(t, bIsNull, "product B should not have deleted_at set")

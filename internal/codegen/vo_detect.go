@@ -21,11 +21,34 @@ func hasMethod(t types.Type, name string) bool {
 }
 
 func localTypeName(t types.Type) string {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
 	named, ok := t.(*types.Named)
 	if !ok {
 		return t.String()
 	}
 	return named.Obj().Name()
+}
+
+func typePkgPath(t types.Type) string {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return ""
+	}
+	pkg := named.Obj().Pkg()
+	if pkg == nil {
+		return ""
+	}
+	return pkg.Path()
+}
+
+func isPointerType(t types.Type) bool {
+	_, ok := t.(*types.Pointer)
+	return ok
 }
 
 func isPrimitiveType(goType string) bool {

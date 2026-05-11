@@ -40,6 +40,14 @@ func (c Column[T]) In(vs ...T) Predicate {
 	return newInComparison(c.name, vals)
 }
 
+func (c Column[T]) NotIn(vs ...T) Predicate {
+	vals := make([]any, len(vs))
+	for i, v := range vs {
+		vals[i] = v
+	}
+	return newNotInComparison(c.name, vals)
+}
+
 func (c Column[T]) Asc() OrderExpr {
 	return OrderExpr{column: c.name, direction: ast.Asc}
 }
@@ -56,14 +64,19 @@ func NewOrderedCol[T cmp.Ordered](name string) OrderedColumn[T] {
 	return OrderedColumn[T]{col: NewCol[T](name)}
 }
 
-func (c OrderedColumn[T]) Name() string        { return c.col.name }
-func (c OrderedColumn[T]) Eq(v T) Predicate    { return c.col.Eq(v) }
-func (c OrderedColumn[T]) NEQ(v T) Predicate   { return c.col.NEQ(v) }
-func (c OrderedColumn[T]) IsNull() Predicate   { return c.col.IsNull() }
-func (c OrderedColumn[T]) IsNotNull() Predicate { return c.col.IsNotNull() }
-func (c OrderedColumn[T]) In(vs ...T) Predicate { return c.col.In(vs...) }
-func (c OrderedColumn[T]) Asc() OrderExpr      { return c.col.Asc() }
-func (c OrderedColumn[T]) Desc() OrderExpr     { return c.col.Desc() }
+func (c OrderedColumn[T]) Name() string          { return c.col.name }
+func (c OrderedColumn[T]) Eq(v T) Predicate      { return c.col.Eq(v) }
+func (c OrderedColumn[T]) NEQ(v T) Predicate     { return c.col.NEQ(v) }
+func (c OrderedColumn[T]) IsNull() Predicate     { return c.col.IsNull() }
+func (c OrderedColumn[T]) IsNotNull() Predicate  { return c.col.IsNotNull() }
+func (c OrderedColumn[T]) In(vs ...T) Predicate  { return c.col.In(vs...) }
+func (c OrderedColumn[T]) NotIn(vs ...T) Predicate { return c.col.NotIn(vs...) }
+func (c OrderedColumn[T]) Asc() OrderExpr        { return c.col.Asc() }
+func (c OrderedColumn[T]) Desc() OrderExpr       { return c.col.Desc() }
+
+func (c OrderedColumn[T]) Between(low, high T) Predicate {
+	return newBetweenComparison(c.col.name, low, high)
+}
 
 func (c OrderedColumn[T]) GT(v T) Predicate {
 	return newComparison(c.col.name, ast.OpGT, v)
@@ -89,17 +102,22 @@ func NewStringCol(name string) StringColumn {
 	return StringColumn{col: NewCol[string](name)}
 }
 
-func (c StringColumn) Name() string             { return c.col.name }
-func (c StringColumn) Eq(v string) Predicate    { return c.col.Eq(v) }
-func (c StringColumn) NEQ(v string) Predicate   { return c.col.NEQ(v) }
-func (c StringColumn) IsNull() Predicate        { return c.col.IsNull() }
-func (c StringColumn) IsNotNull() Predicate     { return c.col.IsNotNull() }
-func (c StringColumn) In(vs ...string) Predicate { return c.col.In(vs...) }
-func (c StringColumn) Asc() OrderExpr           { return c.col.Asc() }
-func (c StringColumn) Desc() OrderExpr          { return c.col.Desc() }
+func (c StringColumn) Name() string               { return c.col.name }
+func (c StringColumn) Eq(v string) Predicate      { return c.col.Eq(v) }
+func (c StringColumn) NEQ(v string) Predicate     { return c.col.NEQ(v) }
+func (c StringColumn) IsNull() Predicate          { return c.col.IsNull() }
+func (c StringColumn) IsNotNull() Predicate       { return c.col.IsNotNull() }
+func (c StringColumn) In(vs ...string) Predicate  { return c.col.In(vs...) }
+func (c StringColumn) NotIn(vs ...string) Predicate { return c.col.NotIn(vs...) }
+func (c StringColumn) Asc() OrderExpr             { return c.col.Asc() }
+func (c StringColumn) Desc() OrderExpr            { return c.col.Desc() }
 
 func (c StringColumn) Like(pattern string) Predicate {
 	return newComparison(c.col.name, ast.OpLike, pattern)
+}
+
+func (c StringColumn) ILike(pattern string) Predicate {
+	return newComparison(c.col.name, ast.OpILike, pattern)
 }
 
 func (c StringColumn) Contains(substr string) Predicate {

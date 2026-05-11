@@ -2,6 +2,22 @@ package driver
 
 import "context"
 
+// IsolationLevel represents a transaction isolation level.
+type IsolationLevel int
+
+const (
+	IsoDefault IsolationLevel = iota
+	IsoReadCommitted
+	IsoRepeatableRead
+	IsoSerializable
+)
+
+// TxOptions configures transaction behaviour.
+type TxOptions struct {
+	Isolation IsolationLevel
+	ReadOnly  bool
+}
+
 // Row represents a single database row that can scan values into destinations.
 type Row interface {
 	Scan(dest ...any) error
@@ -30,5 +46,6 @@ type Driver interface {
 	Query(ctx context.Context, sql string, args ...any) (Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (int64, error)
 	Begin(ctx context.Context) (Tx, error)
+	BeginTx(ctx context.Context, opts TxOptions) (Tx, error)
 	Close()
 }

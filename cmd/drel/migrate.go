@@ -109,6 +109,15 @@ func runMigrateNew() {
 	upSQL := codegen.GenerateSchema(models)
 	downSQL := codegen.GenerateDropSchema(models)
 
+	// If there are existing migrations, add a warning comment to the generated SQL
+	// since the new migration contains the full schema (no diffing yet).
+	existing, _ := migrate.ParseMigrationDir(mDir)
+	if len(existing) > 0 {
+		warning := "-- WARNING: This migration was auto-generated and may need manual review.\n"
+		upSQL = warning + upSQL
+		downSQL = warning + downSQL
+	}
+
 	version, err := migrate.WriteMigration(mDir, name, upSQL, downSQL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
@@ -186,11 +195,21 @@ func runMigrateStatus() {
 		return
 	}
 	for _, s := range statuses {
-		marker := "[ ]"
-		if s.Applied {
+		var marker string
+		switch s.State {
+		case migrate.StateApplied:
 			marker = "[x]"
+		case migrate.StatePending:
+			marker = "[ ]"
+		case migrate.StateModified:
+			marker = "[!]"
+		case migrate.StateMissing:
+			marker = "[?]"
+		default:
+			marker = "[ ]"
 		}
-		fmt.Printf("  %s  %s_%s\n", marker, s.Version, s.Name)
+		label := string(s.State)
+		fmt.Printf("  %s  %s_%s  (%s)\n", marker, s.Version, s.Name, label)
 	}
 }
 

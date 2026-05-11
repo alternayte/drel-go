@@ -1,6 +1,10 @@
 package drel
 
-import "github.com/alternayte/drel/internal/ast"
+import (
+	"fmt"
+
+	"github.com/alternayte/drel/internal/ast"
+)
 
 type Predicate struct {
 	clause ast.WhereClause
@@ -25,6 +29,30 @@ func newInComparison(column string, values []any) Predicate {
 				Column: column,
 				Op:     ast.OpIn,
 				Values: values,
+			},
+		},
+	}
+}
+
+func newNotInComparison(column string, values []any) Predicate {
+	return Predicate{
+		clause: ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: column,
+				Op:     ast.OpNotIn,
+				Values: values,
+			},
+		},
+	}
+}
+
+func newBetweenComparison[T any](column string, low, high T) Predicate {
+	return Predicate{
+		clause: ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: column,
+				Op:     ast.OpBetween,
+				Values: []any{low, high},
 			},
 		},
 	}
@@ -76,6 +104,27 @@ func Not(pred Predicate) Predicate {
 		clause: ast.WhereClause{
 			LogicalOp: ast.LogicalNot,
 			Children:  []ast.WhereClause{pred.clause},
+		},
+	}
+}
+
+// Raw creates a predicate from a raw SQL expression with bound arguments.
+// Use ? as placeholder for each argument; they are rewritten to $N for Postgres.
+// Panics if the number of ? placeholders does not match the number of arguments.
+func Raw(sql string, args ...any) Predicate {
+	count := 0
+	for _, c := range sql {
+		if c == '?' {
+			count++
+		}
+	}
+	if count != len(args) {
+		panic(fmt.Sprintf("drel.Raw: %d placeholder(s) but %d argument(s)", count, len(args)))
+	}
+	return Predicate{
+		clause: ast.WhereClause{
+			Raw:     &sql,
+			RawArgs: args,
 		},
 	}
 }

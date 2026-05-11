@@ -3,6 +3,7 @@ package drel
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // SetClause pairs a column name with a value for use in bulk updates and upserts.
@@ -51,13 +52,14 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		return 0, nil
 	}
 
-	drv := r.engine.Driver()
-	d := r.engine.Dialect()
+	drv := r.engine.driver()
+	d := r.engine.dialect()
 
 	tx, err := drv.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("drel: bulk insert begin: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	total := 0
 	for i := 0; i < len(entities); i += bulkBatchSize {
@@ -78,9 +80,10 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		}
 
 		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
+		start := time.Now()
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
+		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
-			_ = tx.Rollback(ctx)
 			return total, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, execErr)
 		}
 		total += int(affected)
@@ -96,6 +99,9 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 // BulkUpsert inserts or updates multiple entities based on conflict resolution.
 // It bypasses change tracking and executes directly against the database.
 // Returns the total number of rows affected.
+// ErrBulkDeleteRequiresFilter is returned when BulkDelete is called without any WHERE predicates or filters.
+var ErrBulkDeleteRequiresFilter = fmt.Errorf("drel: BulkDelete requires at least one Where predicate to prevent accidental full-table deletes")
+
 func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...UpsertOption) (int, error) {
 	if len(entities) == 0 {
 		return 0, nil
@@ -105,24 +111,53 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
-	d := r.engine.Dialect()
-
-	var columns []string
-	var rows [][]any
-	for i, entity := range entities {
-		cols, vals := r.meta.InsertColumns(entity)
-		if i == 0 {
-			columns = cols
-		}
-		rows = append(rows, vals)
+	if len(cfg.conflictCols) == 0 {
+		return 0, fmt.Errorf("drel: bulk upsert %s: ConflictColumns is required", r.meta.Table)
+	}
+	if len(cfg.updateCols) == 0 {
+		return 0, fmt.Errorf("drel: bulk upsert %s: UpdateOnConflict is required", r.meta.Table)
 	}
 
-	result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols)
-	affected, err := r.engine.Driver().Exec(ctx, result.SQL, result.Args...)
+	drv := r.engine.driver()
+	d := r.engine.dialect()
+
+	tx, err := drv.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, err)
+		return 0, fmt.Errorf("drel: bulk upsert begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	total := 0
+	for i := 0; i < len(entities); i += bulkBatchSize {
+		end := i + bulkBatchSize
+		if end > len(entities) {
+			end = len(entities)
+		}
+		batch := entities[i:end]
+
+		var columns []string
+		var rows [][]any
+		for j, entity := range batch {
+			cols, vals := r.meta.InsertColumns(entity)
+			if j == 0 {
+				columns = cols
+			}
+			rows = append(rows, vals)
+		}
+
+		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols)
+		start := time.Now()
+		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
+		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
+		if execErr != nil {
+			return total, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, execErr)
+		}
+		total += int(affected)
 	}
 
-	return int(affected), nil
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("drel: bulk upsert commit: %w", err)
+	}
+
+	return total, nil
 }

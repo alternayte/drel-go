@@ -10,7 +10,10 @@ const (
 	OpLT
 	OpLTE
 	OpLike
+	OpILike
 	OpIn
+	OpNotIn
+	OpBetween
 	OpIsNull
 	OpIsNotNull
 )
@@ -49,6 +52,8 @@ type WhereClause struct {
 	Comparison *ComparisonNode
 	LogicalOp  LogicalOp
 	Children   []WhereClause
+	Raw        *string
+	RawArgs    []any
 }
 
 type OrderByExpr struct {

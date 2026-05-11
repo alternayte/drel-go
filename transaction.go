@@ -3,6 +3,8 @@ package drel
 import (
 	"context"
 	"fmt"
+
+	"github.com/alternayte/drel/internal/driver"
 )
 
 // IsolationLevel represents the transaction isolation level.
@@ -40,7 +42,22 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		opt(cfg)
 	}
 
-	dbTx, err := e.drv.Begin(ctx)
+	var dbTx driver.Tx
+	var err error
+	if cfg.isolation != nil {
+		drvIso := driver.IsoDefault
+		switch *cfg.isolation {
+		case ReadCommitted:
+			drvIso = driver.IsoReadCommitted
+		case RepeatableRead:
+			drvIso = driver.IsoRepeatableRead
+		case Serializable:
+			drvIso = driver.IsoSerializable
+		}
+		dbTx, err = e.drv.BeginTx(ctx, driver.TxOptions{Isolation: drvIso})
+	} else {
+		dbTx, err = e.drv.Begin(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("drel: begin transaction: %w", err)
 	}
@@ -65,7 +82,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		return err
 	}
 
-	events, err := flushChanges(ctx, dbTx, e.Dialect(), tx.tracker)
+	events, err := flushChanges(ctx, tx, e.dialect(), tx.tracker)
 	if err != nil {
 		return err
 	}
@@ -77,7 +94,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		}
 	}
 
-	if err := flushHookChanges(ctx, dbTx, e.Dialect(), tx.tracker); err != nil {
+	if err := flushHookChanges(ctx, tx, e.dialect(), tx.tracker); err != nil {
 		return err
 	}
 

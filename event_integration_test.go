@@ -24,7 +24,7 @@ func setupEventTestDB(t *testing.T) *drel.Engine {
 	t.Helper()
 	engine := setupTestDB(t)
 	ctx := context.Background()
-	_, err := engine.Driver().Exec(ctx, `
+	_, err := engine.Exec(ctx, `
 		CREATE TABLE event_users (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -210,9 +210,7 @@ func setupBeforeCommitTestDB(t *testing.T) *drel.Engine {
 	require.NoError(t, err)
 	t.Cleanup(func() { engine.Close() })
 
-	drv := engine.Driver()
-
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		CREATE TABLE event_users (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -223,7 +221,7 @@ func setupBeforeCommitTestDB(t *testing.T) *drel.Engine {
 	`)
 	require.NoError(t, err)
 
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		CREATE TABLE hook_log (
 			id         SERIAL PRIMARY KEY,
 			event_type TEXT NOT NULL,
@@ -260,7 +258,7 @@ func TestIntegration_BeforeCommit_ExecWritesWithinTx(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	row := engine.Driver().QueryRow(ctx, "SELECT COUNT(*) FROM hook_log")
+	row := engine.QueryRow(ctx, "SELECT COUNT(*) FROM hook_log")
 	var count int
 	require.NoError(t, row.Scan(&count))
 	assert.Equal(t, 1, count)
@@ -291,7 +289,7 @@ func TestIntegration_BeforeCommit_ErrorRollsBack(t *testing.T) {
 
 	assert.False(t, afterCommitCalled)
 
-	row := engine.Driver().QueryRow(ctx, "SELECT COUNT(*) FROM event_users")
+	row := engine.QueryRow(ctx, "SELECT COUNT(*) FROM event_users")
 	var count int
 	require.NoError(t, row.Scan(&count))
 	assert.Equal(t, 0, count)
@@ -315,7 +313,7 @@ func TestIntegration_BeforeCommit_RollbackUndoesHookWrites(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	row := engine.Driver().QueryRow(ctx, "SELECT COUNT(*) FROM hook_log")
+	row := engine.QueryRow(ctx, "SELECT COUNT(*) FROM hook_log")
 	var count int
 	require.NoError(t, row.Scan(&count))
 	assert.Equal(t, 0, count)
@@ -341,7 +339,7 @@ func TestIntegration_BeforeCommit_TxRepoAddsEntity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	row := engine.Driver().QueryRow(ctx, "SELECT COUNT(*) FROM event_users")
+	row := engine.QueryRow(ctx, "SELECT COUNT(*) FROM event_users")
 	var count int
 	require.NoError(t, row.Scan(&count))
 	assert.Equal(t, 2, count)

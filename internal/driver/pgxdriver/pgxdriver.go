@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/alternayte/drel/internal/driver"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,9 +50,32 @@ func (d *PgxDriver) Exec(ctx context.Context, sql string, args ...any) (int64, e
 	return tag.RowsAffected(), nil
 }
 
-// Begin starts a new database transaction.
+// Begin starts a new database transaction with default options.
 func (d *PgxDriver) Begin(ctx context.Context) (driver.Tx, error) {
 	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &pgxTx{tx: tx}, nil
+}
+
+// BeginTx starts a new database transaction with the given options.
+func (d *PgxDriver) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	pgxOpts := pgx.TxOptions{
+		AccessMode: pgx.ReadWrite,
+	}
+	if opts.ReadOnly {
+		pgxOpts.AccessMode = pgx.ReadOnly
+	}
+	switch opts.Isolation {
+	case driver.IsoReadCommitted:
+		pgxOpts.IsoLevel = pgx.ReadCommitted
+	case driver.IsoRepeatableRead:
+		pgxOpts.IsoLevel = pgx.RepeatableRead
+	case driver.IsoSerializable:
+		pgxOpts.IsoLevel = pgx.Serializable
+	}
+	tx, err := d.pool.BeginTx(ctx, pgxOpts)
 	if err != nil {
 		return nil, err
 	}

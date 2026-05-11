@@ -16,7 +16,7 @@ func setupVersionedTestDB(t *testing.T) *drel.Engine {
 	t.Helper()
 	engine := setupTestDB(t)
 	ctx := context.Background()
-	_, err := engine.Driver().Exec(ctx, `
+	_, err := engine.Exec(ctx, `
 		CREATE TABLE v_products (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -57,7 +57,7 @@ func TestIntegration_Versioned_UpdateIncrementsVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify version was incremented in the database.
-	row := engine.Driver().QueryRow(ctx, "SELECT version, name FROM v_products WHERE id = $1", product.ID())
+	row := engine.QueryRow(ctx, "SELECT version, name FROM v_products WHERE id = $1", product.ID())
 	var dbVersion int
 	var dbName string
 	require.NoError(t, row.Scan(&dbVersion, &dbName))
@@ -89,7 +89,7 @@ func TestIntegration_Versioned_ConcurrencyConflict(t *testing.T) {
 		}
 
 		// Simulate another transaction updating the row externally.
-		_, err = engine.Driver().Exec(ctx,
+		_, err = engine.Exec(ctx,
 			"UPDATE v_products SET version = 2, name = 'ExternalUpdate' WHERE id = $1",
 			product.ID(),
 		)
@@ -107,7 +107,7 @@ func TestIntegration_Versioned_ConcurrencyConflict(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrConcurrencyConflict)
 
 	// Verify the external update's value is still in the database (not overwritten).
-	row := engine.Driver().QueryRow(ctx, "SELECT version, name FROM v_products WHERE id = $1", product.ID())
+	row := engine.QueryRow(ctx, "SELECT version, name FROM v_products WHERE id = $1", product.ID())
 	var dbVersion int
 	var dbName string
 	require.NoError(t, row.Scan(&dbVersion, &dbName))

@@ -2,13 +2,20 @@ package drel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/alternayte/drel/internal/dialect"
-	"github.com/alternayte/drel/internal/driver"
 )
 
-func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
+type txExec interface {
+	execInternal(ctx context.Context, sql string, args ...any) (int64, error)
+	queryRowInternal(ctx context.Context, sql string, args ...any) Row
+}
+
+func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
 	tracker.DetectChanges()
 	pc := tracker.GetPendingChanges()
 
@@ -19,7 +26,7 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		}
 		cols, vals := te.meta.InsertColumns(te.entity)
 		result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
-		row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
+		row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
 		if te.meta.ScanReturning != nil {
 			if err := te.meta.ScanReturning(te.entity, row); err != nil {
 				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
@@ -44,28 +51,36 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		if len(changes) == 0 {
 			continue
 		}
+		changes = append(changes, FieldChange{Column: "updated_at", Value: RawExpr{SQL: "NOW()"}})
 		if te.meta.HasAudit {
 			actor := ActorFromContext(ctx)
 			changes = append(changes, FieldChange{Column: "updated_by", Value: actor})
 		}
 		cvs := make([]dialect.ColumnValue, len(changes))
 		for i, c := range changes {
-			cvs[i] = dialect.ColumnValue{Column: c.Column, Value: c.Value}
+			val := c.Value
+			if raw, ok := val.(RawExpr); ok {
+				val = dialect.RawExpr{SQL: raw.SQL}
+			}
+			cvs[i] = dialect.ColumnValue{Column: c.Column, Value: val}
 		}
 		pkVal := te.meta.PKValue(te.entity)
 
 		if te.meta.HasVersioned && te.meta.VersionValue != nil {
 			currentVersion := te.meta.VersionValue(te.entity)
 			result := d.BuildUpdateVersioned(te.meta.Table, cvs, te.meta.PKColumn, pkVal, "version", currentVersion)
-			row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
+			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
 			var newVersion int
 			if err := row.Scan(&newVersion); err != nil {
-				return nil, ErrConcurrencyConflict
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil, ErrConcurrencyConflict
+				}
+				return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
 			}
 			te.meta.SetVersion(te.entity, newVersion)
 		} else {
 			result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
-			affected, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
 			if err != nil {
 				return nil, fmt.Errorf("drel: update %s: %w", te.meta.Table, err)
 			}
@@ -79,13 +94,13 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 		pkVal := te.meta.PKValue(te.entity)
 		if te.meta.HasSoftDelete && !te.hardDelete {
 			result := d.BuildSoftDelete(te.meta.Table, te.meta.PKColumn, pkVal)
-			_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
 			if err != nil {
 				return nil, fmt.Errorf("drel: soft delete %s: %w", te.meta.Table, err)
 			}
 		} else {
 			result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
-			_, err := dbTx.Exec(ctx, result.SQL, result.Args...)
+			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
 			if err != nil {
 				return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
 			}
@@ -97,28 +112,9 @@ func flushChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracke
 	return events, nil
 }
 
-func flushHookChanges(ctx context.Context, dbTx driver.Tx, d dialect.Dialect, tracker *changeTracker) error {
-	tracker.DetectChanges()
-	pc := tracker.GetPendingChanges()
-
-	for _, te := range pc.Added {
-		cols, vals := te.meta.InsertColumns(te.entity)
-		result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
-		row := dbTx.QueryRow(ctx, result.SQL, result.Args...)
-		if te.meta.ScanReturning != nil {
-			if err := te.meta.ScanReturning(te.entity, row); err != nil {
-				return fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
-			}
-		} else {
-			var discard any
-			if err := row.Scan(&discard, &discard, &discard); err != nil {
-				return fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
-			}
-		}
-	}
-
-	tracker.PostFlush()
-	return nil
+func flushHookChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) error {
+	_, err := flushChanges(ctx, exec, d, tracker)
+	return err
 }
 
 func collectPendingEvents(tracker *changeTracker) []any {

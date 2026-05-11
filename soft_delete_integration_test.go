@@ -16,7 +16,7 @@ func setupSoftDeleteTestDB(t *testing.T) *drel.Engine {
 	t.Helper()
 	engine := setupTestDB(t)
 	ctx := context.Background()
-	_, err := engine.Driver().Exec(ctx, `
+	_, err := engine.Exec(ctx, `
 		CREATE TABLE sd_products (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -51,7 +51,7 @@ func TestIntegration_SoftDelete_RemoveSetsDeletedAt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify deleted_at is set via raw SQL
-	row := engine.Driver().QueryRow(ctx,
+	row := engine.QueryRow(ctx,
 		"SELECT deleted_at IS NOT NULL FROM sd_products WHERE id = $1", productID)
 	var hasDeletedAt bool
 	require.NoError(t, row.Scan(&hasDeletedAt))
@@ -139,7 +139,7 @@ func TestIntegration_SoftDelete_HardRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	// Row should be completely gone — even unscoped won't find it
-	row := engine.Driver().QueryRow(ctx,
+	row := engine.QueryRow(ctx,
 		"SELECT COUNT(*) FROM sd_products WHERE id = $1", productID)
 	var count int
 	require.NoError(t, row.Scan(&count))

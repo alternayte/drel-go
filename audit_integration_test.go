@@ -16,7 +16,7 @@ func setupAuditTestDB(t *testing.T) *drel.Engine {
 	t.Helper()
 	engine := setupTestDB(t)
 	ctx := context.Background()
-	_, err := engine.Driver().Exec(ctx, `
+	_, err := engine.Exec(ctx, `
 		CREATE TABLE a_products (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -46,7 +46,7 @@ func TestIntegration_Audit_CreateWithActor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read back via raw SQL to verify audit columns
-	row := engine.Driver().QueryRow(ctx,
+	row := engine.QueryRow(ctx,
 		"SELECT created_by, updated_by FROM a_products WHERE name = $1", "Widget")
 	var createdBy, updatedBy string
 	require.NoError(t, row.Scan(&createdBy, &updatedBy))
@@ -87,7 +87,7 @@ func TestIntegration_Audit_UpdateWithActor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify created_by unchanged, updated_by changed
-	row := engine.Driver().QueryRow(ctx,
+	row := engine.QueryRow(ctx,
 		"SELECT created_by, updated_by FROM a_products WHERE id = $1", productID)
 	var createdBy, updatedBy string
 	require.NoError(t, row.Scan(&createdBy, &updatedBy))
@@ -109,7 +109,7 @@ func TestIntegration_Audit_NoActorInContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify created_by is empty string (not an error)
-	row := engine.Driver().QueryRow(ctx,
+	row := engine.QueryRow(ctx,
 		"SELECT created_by, updated_by FROM a_products WHERE name = $1", "NoActor")
 	var createdBy, updatedBy string
 	require.NoError(t, row.Scan(&createdBy, &updatedBy))
