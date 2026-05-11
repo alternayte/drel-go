@@ -7,6 +7,11 @@ import (
 	"github.com/alternayte/drel/internal/codegen"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -19,7 +24,7 @@ func main() {
 	case "migrate":
 		runMigrate()
 	case "version":
-		fmt.Println("drel v0.1.0")
+		fmt.Printf("drel %s (%s)\n", version, commit)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
