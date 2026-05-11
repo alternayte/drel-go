@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/constant"
 	"go/types"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -59,29 +60,59 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 			continue
 		}
 
-		pkType, hasModel := findModelEmbed(st)
+		pkInfo, hasModel := findModelEmbed(st)
 		if !hasModel {
 			continue
 		}
 
 		mi := ModelInfo{
-			Name:    tn.Name(),
-			PkgPath: pkg.PkgPath,
-			PkgName: pkg.Name,
-			PKType:  pkType,
-			Dir:     pkgDir,
+			Name:      tn.Name(),
+			PkgPath:   pkg.PkgPath,
+			PkgName:   pkg.Name,
+			PKType:    pkInfo.Display,
+			PKTypeFull: pkInfo.Full,
+			PKTypePkg: pkInfo.PkgPath,
+			Dir:       pkgDir,
 		}
 
 		mi.TableName = inferTableName(tn.Name())
 		mi.HasSoftDelete, mi.HasVersioned, mi.HasAudit = detectEmbeds(st)
-		mi.Fields = extractFields(st)
+		mi.Fields = extractFields(st, pkg.PkgPath)
+
+		// Populate m2m convention defaults for relationship fields.
+		for j := range mi.Fields {
+			f := &mi.Fields[j]
+			if f.Relation != nil && f.Relation.Type == "many_to_many" {
+				sourceTable := inferTableName(tn.Name())
+				targetTable := inferTableName(f.Relation.TargetModel)
+				if f.Relation.JoinTable == "" {
+					a, b := sourceTable, targetTable
+					if a > b {
+						a, b = b, a
+					}
+					f.Relation.JoinTable = singularize(a) + "_" + singularize(b)
+				}
+				if f.Relation.FK == "" {
+					f.Relation.FK = singularize(sourceTable) + "_id"
+				}
+				if f.Relation.RefColumn == "" {
+					f.Relation.RefColumn = singularize(targetTable) + "_id"
+				}
+			}
+		}
 
 		models = append(models, mi)
 	}
 	return models, nil
 }
 
-func findModelEmbed(st *types.Struct) (pkType string, found bool) {
+type pkTypeInfo struct {
+	Display string // short name for generated code (e.g., "int", "uuid.UUID")
+	Full    string // fully qualified (e.g., "github.com/google/uuid.UUID")
+	PkgPath string // import path (empty for primitives)
+}
+
+func findModelEmbed(st *types.Struct) (info pkTypeInfo, found bool) {
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
 		if !f.Embedded() {
@@ -102,9 +133,22 @@ func findModelEmbed(st *types.Struct) (pkType string, found bool) {
 		if targs == nil || targs.Len() != 1 {
 			continue
 		}
-		return targs.At(0).String(), true
+		t := targs.At(0)
+		full := t.String()
+		display := full
+		pkgPath := ""
+		if n, ok := t.(*types.Named); ok {
+			display = localTypeName(t)
+			if p := n.Obj().Pkg(); p != nil {
+				pkgPath = p.Path()
+				if pkgPath != "" {
+					display = path.Base(pkgPath) + "." + display
+				}
+			}
+		}
+		return pkTypeInfo{Display: display, Full: full, PkgPath: pkgPath}, true
 	}
-	return "", false
+	return pkTypeInfo{}, false
 }
 
 func detectEmbeds(st *types.Struct) (softDelete, versioned, audit bool) {
@@ -129,7 +173,7 @@ func detectEmbeds(st *types.Struct) (softDelete, versioned, audit bool) {
 	return
 }
 
-func extractFields(st *types.Struct) []FieldInfo {
+func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 	var fields []FieldInfo
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
@@ -154,7 +198,7 @@ func extractFields(st *types.Struct) []FieldInfo {
 		if relTag != "" {
 			fi.Relation = parseRelTagStructured(relTag)
 			fi.LocalGoType = localTypeName(f.Type())
-			if fi.Relation != nil && fi.Relation.Type == "belongs_to" {
+			if fi.Relation != nil {
 				fi.Relation.TargetModel = targetModelName(f.Type())
 			}
 		}
@@ -165,6 +209,11 @@ func extractFields(st *types.Struct) []FieldInfo {
 				fi.LocalGoType = goTypeStr
 			} else {
 				fi.LocalGoType = localTypeName(f.Type())
+				fieldPkg := typePkgPath(f.Type())
+				if fieldPkg != ownerPkgPath {
+					fi.TypePkgPath = fieldPkg
+				}
+				fi.IsPointer = isPointerType(f.Type())
 				if isScannerValuer(f.Type()) {
 					fi.IsVO = true
 				}
@@ -206,6 +255,8 @@ func parseRelTagStructured(tag string) *RelationFieldInfo {
 			ri.FK = kv[1]
 		case "join":
 			ri.JoinTable = kv[1]
+		case "ref":
+			ri.RefColumn = kv[1]
 		}
 	}
 	return ri
@@ -273,6 +324,10 @@ func isIntegerBasicKind(k types.BasicKind) bool {
 }
 
 func targetModelName(t types.Type) string {
+	// Unwrap slice for has_many relations (e.g. []Post or []*Post).
+	if sl, ok := t.(*types.Slice); ok {
+		t = sl.Elem()
+	}
 	if ptr, ok := t.(*types.Pointer); ok {
 		t = ptr.Elem()
 	}

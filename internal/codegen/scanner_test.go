@@ -219,3 +219,19 @@ func TestParseRelTagStructured(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRelTag_ManyToManyConventionDefaults(t *testing.T) {
+	ri := parseRelTagStructured("many_to_many")
+	assert.Equal(t, "many_to_many", ri.Type)
+	assert.Empty(t, ri.FK)
+	assert.Empty(t, ri.JoinTable)
+	assert.Empty(t, ri.RefColumn)
+}
+
+func TestParseRelTag_ManyToManyWithRef(t *testing.T) {
+	ri := parseRelTagStructured("many_to_many,join=taggings,fk=writer_id,ref=label_id")
+	assert.Equal(t, "many_to_many", ri.Type)
+	assert.Equal(t, "taggings", ri.JoinTable)
+	assert.Equal(t, "writer_id", ri.FK)
+	assert.Equal(t, "label_id", ri.RefColumn)
+}

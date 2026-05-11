@@ -4,7 +4,9 @@ type ModelInfo struct {
 	Name          string
 	PkgPath       string
 	PkgName       string
-	PKType        string
+	PKType        string // display type for generated code (e.g., "int", "uuid.UUID")
+	PKTypeFull    string // fully qualified (e.g., "github.com/google/uuid.UUID")
+	PKTypePkg     string // import path for external PK types (empty for primitives)
 	TableName     string
 	Fields        []FieldInfo
 	HasSoftDelete bool
@@ -24,6 +26,8 @@ type FieldInfo struct {
 	IsMultiColVO   bool   // implements drel.MultiColumnMapper (multi-column VO)
 	MultiColPrefix string // db tag used as column prefix for multi-column VOs
 	LocalGoType    string // type name without package qualifier, for same-package generated code
+	TypePkgPath    string // import path of the field type's package (empty for primitives/same-package)
+	IsPointer      bool   // whether the field is a pointer type
 	IsEnum         bool
 	EnumValues     []string
 }
@@ -33,5 +37,6 @@ type RelationFieldInfo struct {
 	Type        string // "has_many", "has_one", "belongs_to", "many_to_many"
 	FK          string // foreign key column
 	JoinTable   string // for many_to_many
+	RefColumn   string // target FK column in pivot table (many-to-many)
 	TargetModel string // target model name for foreign key resolution
 }
