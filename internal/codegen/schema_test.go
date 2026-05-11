@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// ---------------------------------------------------------------------------
+// GoTypeToSQL — Postgres (existing behavior preserved)
+// ---------------------------------------------------------------------------
+
 func TestGoTypeToSQL(t *testing.T) {
 	tests := []struct {
 		goType  string
@@ -27,19 +31,66 @@ func TestGoTypeToSQL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.goType, func(t *testing.T) {
-			assert.Equal(t, tt.sqlType, GoTypeToSQL(tt.goType))
+			assert.Equal(t, tt.sqlType, GoTypeToSQL(tt.goType, "postgres"))
 		})
 	}
 }
 
 func TestGoTypeToSQL_Pointer(t *testing.T) {
-	assert.Equal(t, "text", GoTypeToSQL("*string"))
-	assert.Equal(t, "integer", GoTypeToSQL("*int"))
+	assert.Equal(t, "text", GoTypeToSQL("*string", "postgres"))
+	assert.Equal(t, "integer", GoTypeToSQL("*int", "postgres"))
 }
 
 func TestGoTypeToSQL_Unknown(t *testing.T) {
-	assert.Equal(t, "text", GoTypeToSQL("custom.Type"))
+	assert.Equal(t, "text", GoTypeToSQL("custom.Type", "postgres"))
 }
+
+// ---------------------------------------------------------------------------
+// GoTypeToSQL — SQLite
+// ---------------------------------------------------------------------------
+
+func TestGoTypeToSQL_SQLite(t *testing.T) {
+	tests := []struct {
+		goType  string
+		sqlType string
+	}{
+		{"int", "INTEGER"},
+		{"int8", "INTEGER"},
+		{"int16", "INTEGER"},
+		{"int32", "INTEGER"},
+		{"int64", "INTEGER"},
+		{"uint", "INTEGER"},
+		{"uint8", "INTEGER"},
+		{"uint16", "INTEGER"},
+		{"uint32", "INTEGER"},
+		{"uint64", "INTEGER"},
+		{"string", "TEXT"},
+		{"bool", "INTEGER"},
+		{"float32", "REAL"},
+		{"float64", "REAL"},
+		{"time.Time", "DATETIME"},
+		{"github.com/google/uuid.UUID", "TEXT"},
+		{"uuid.UUID", "TEXT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goType, func(t *testing.T) {
+			assert.Equal(t, tt.sqlType, GoTypeToSQL(tt.goType, "sqlite"))
+		})
+	}
+}
+
+func TestGoTypeToSQL_SQLite_Pointer(t *testing.T) {
+	assert.Equal(t, "TEXT", GoTypeToSQL("*string", "sqlite"))
+	assert.Equal(t, "INTEGER", GoTypeToSQL("*int", "sqlite"))
+}
+
+func TestGoTypeToSQL_SQLite_Unknown(t *testing.T) {
+	assert.Equal(t, "TEXT", GoTypeToSQL("custom.Type", "sqlite"))
+}
+
+// ---------------------------------------------------------------------------
+// GenerateCreateTable — Postgres
+// ---------------------------------------------------------------------------
 
 func TestGenerateCreateTable_BasicModel(t *testing.T) {
 	m := ModelInfo{
@@ -49,7 +100,7 @@ func TestGenerateCreateTable_BasicModel(t *testing.T) {
 			{Name: "email", GoType: "string", ColumnName: "email"},
 		},
 	}
-	sql := GenerateCreateTable(m, nil)
+	sql := GenerateCreateTable(m, nil, "postgres")
 
 	assert.Contains(t, sql, `CREATE TABLE "users" (`)
 	assert.Contains(t, sql, `"id" SERIAL PRIMARY KEY`)
@@ -62,7 +113,7 @@ func TestGenerateCreateTable_BasicModel(t *testing.T) {
 func TestGenerateCreateTable_BigintPK(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int64", TableName: "posts",
 		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}}}
-	sql := GenerateCreateTable(m, nil)
+	sql := GenerateCreateTable(m, nil, "postgres")
 	assert.Contains(t, sql, `"id" BIGSERIAL PRIMARY KEY`)
 }
 
@@ -70,7 +121,7 @@ func TestGenerateCreateTable_Traits(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts",
 		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
 		HasSoftDelete: true, HasVersioned: true, HasAudit: true}
-	sql := GenerateCreateTable(m, nil)
+	sql := GenerateCreateTable(m, nil, "postgres")
 
 	assert.Contains(t, sql, `"deleted_at" timestamptz`)
 	assert.NotContains(t, sql, `"deleted_at" timestamptz NOT NULL`)
@@ -82,11 +133,80 @@ func TestGenerateCreateTable_Traits(t *testing.T) {
 func TestGenerateCreateTable_Nullable(t *testing.T) {
 	m := ModelInfo{Name: "Profile", PKType: "int", TableName: "profiles",
 		Fields: []FieldInfo{{Name: "bio", GoType: "*string", ColumnName: "bio"}}}
-	sql := GenerateCreateTable(m, nil)
+	sql := GenerateCreateTable(m, nil, "postgres")
 
 	assert.Contains(t, sql, `"bio" text`)
 	assert.NotContains(t, sql, `"bio" text NOT NULL`)
 }
+
+// ---------------------------------------------------------------------------
+// GenerateCreateTable — SQLite
+// ---------------------------------------------------------------------------
+
+func TestGenerateCreateTable_SQLite_BasicModel(t *testing.T) {
+	m := ModelInfo{
+		Name: "User", PkgName: "users", PKType: "int", TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "email", GoType: "string", ColumnName: "email"},
+		},
+	}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+
+	assert.Contains(t, sql, `CREATE TABLE "users" (`)
+	assert.Contains(t, sql, `"id" INTEGER PRIMARY KEY AUTOINCREMENT`)
+	assert.Contains(t, sql, `"name" TEXT NOT NULL`)
+	assert.Contains(t, sql, `"email" TEXT NOT NULL`)
+	assert.Contains(t, sql, `"created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`)
+	assert.Contains(t, sql, `"updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`)
+	assert.NotContains(t, sql, "NOW()")
+	assert.NotContains(t, sql, "timestamptz")
+}
+
+func TestGenerateCreateTable_SQLite_BigintPK(t *testing.T) {
+	m := ModelInfo{Name: "Post", PKType: "int64", TableName: "posts",
+		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}}}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+	// SQLite uses INTEGER PRIMARY KEY AUTOINCREMENT for all integer types.
+	assert.Contains(t, sql, `"id" INTEGER PRIMARY KEY AUTOINCREMENT`)
+	assert.NotContains(t, sql, "BIGSERIAL")
+}
+
+func TestGenerateCreateTable_SQLite_Traits(t *testing.T) {
+	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts",
+		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
+		HasSoftDelete: true, HasVersioned: true, HasAudit: true}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+
+	assert.Contains(t, sql, `"deleted_at" DATETIME`)
+	assert.NotContains(t, sql, `"deleted_at" DATETIME NOT NULL`)
+	assert.Contains(t, sql, `"version" INTEGER NOT NULL DEFAULT 1`)
+	assert.Contains(t, sql, `"created_by" TEXT`)
+	assert.Contains(t, sql, `"updated_by" TEXT`)
+}
+
+func TestGenerateCreateTable_SQLite_UUIDPK(t *testing.T) {
+	m := ModelInfo{Name: "Widget", PKType: "uuid.UUID", TableName: "widgets",
+		Fields: []FieldInfo{{Name: "name", GoType: "string", ColumnName: "name"}}}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+	assert.Contains(t, sql, `"id" TEXT PRIMARY KEY`)
+	assert.NotContains(t, sql, "AUTOINCREMENT")
+}
+
+func TestGenerateCreateTable_SQLite_Enum(t *testing.T) {
+	m := ModelInfo{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+		{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+			IsEnum: true, EnumValues: []string{"admin", "user"}},
+	}}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+
+	assert.Contains(t, sql, `"role" TEXT NOT NULL CHECK("role" IN ('admin', 'user'))`)
+	assert.NotContains(t, sql, "CREATE TYPE")
+}
+
+// ---------------------------------------------------------------------------
+// GenerateSchema — Postgres
+// ---------------------------------------------------------------------------
 
 func TestGenerateSchema_MultipleModels(t *testing.T) {
 	models := []ModelInfo{
@@ -95,7 +215,7 @@ func TestGenerateSchema_MultipleModels(t *testing.T) {
 		{Name: "Post", PKType: "int", TableName: "posts",
 			Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}}},
 	}
-	sql := GenerateSchema(models)
+	sql := GenerateSchema(models, "postgres")
 	assert.Contains(t, sql, `CREATE TABLE "users"`)
 	assert.Contains(t, sql, `CREATE TABLE "posts"`)
 }
@@ -108,7 +228,7 @@ func TestGenerateSchema_WithEnum(t *testing.T) {
 				IsEnum: true, EnumValues: []string{"admin", "user"}},
 		}},
 	}
-	sql := GenerateSchema(models)
+	sql := GenerateSchema(models, "postgres")
 
 	assert.Contains(t, sql, `CREATE TYPE "role" AS ENUM ('admin', 'user');`)
 	assert.Contains(t, sql, `"role" "role" NOT NULL`)
@@ -126,7 +246,7 @@ func TestGenerateSchema_BelongsToFK(t *testing.T) {
 				Relation: &RelationFieldInfo{Type: "belongs_to", FK: "author_id", TargetModel: "User"}},
 		}},
 	}
-	sql := GenerateSchema(models)
+	sql := GenerateSchema(models, "postgres")
 
 	assert.Contains(t, sql, `"author_id" integer NOT NULL REFERENCES "users"("id")`)
 }
@@ -135,7 +255,7 @@ func TestGenerateCreateTable_NoFK_WhenNilMap(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts", Fields: []FieldInfo{
 		{Name: "authorID", GoType: "int", ColumnName: "author_id"},
 	}}
-	sql := GenerateCreateTable(m, nil)
+	sql := GenerateCreateTable(m, nil, "postgres")
 
 	assert.Contains(t, sql, `"author_id" integer NOT NULL`)
 	assert.NotContains(t, sql, "REFERENCES")
@@ -162,7 +282,7 @@ func TestGenerateSchema_EnumEscaping(t *testing.T) {
 				IsEnum: true, EnumValues: []string{"it's", "normal"}},
 		}},
 	}
-	sql := GenerateSchema(models)
+	sql := GenerateSchema(models, "postgres")
 	assert.Contains(t, sql, "'it''s'")
 }
 
@@ -186,7 +306,7 @@ func TestGenerateSchema_ManyToManyPivotTable(t *testing.T) {
 		},
 	}
 
-	schema := GenerateSchema(models)
+	schema := GenerateSchema(models, "postgres")
 
 	assert.Contains(t, schema, `CREATE TABLE "author_tags"`)
 	assert.Contains(t, schema, `"author_id" integer NOT NULL REFERENCES "authors"("id")`)
@@ -216,8 +336,298 @@ func TestGenerateSchema_ManyToManyDeduplication(t *testing.T) {
 		},
 	}
 
-	schema := GenerateSchema(models)
+	schema := GenerateSchema(models, "postgres")
 
 	count := strings.Count(schema, `CREATE TABLE "author_tags"`)
 	assert.Equal(t, 1, count)
+}
+
+// ---------------------------------------------------------------------------
+// GenerateSchema — SQLite
+// ---------------------------------------------------------------------------
+
+func TestGenerateSchema_SQLite_NoCreateType(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumValues: []string{"admin", "user"}},
+		}},
+	}
+	sql := GenerateSchema(models, "sqlite")
+
+	// No CREATE TYPE for SQLite.
+	assert.NotContains(t, sql, "CREATE TYPE")
+	// Enum handled via CHECK constraint.
+	assert.Contains(t, sql, `CHECK("role" IN ('admin', 'user'))`)
+}
+
+func TestGenerateSchema_SQLite_FullSchema(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "email", GoType: "string", ColumnName: "email"},
+		}},
+		{Name: "Post", PKType: "int64", TableName: "posts", Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title"},
+			{Name: "views", GoType: "int", ColumnName: "views"},
+		}},
+	}
+	sql := GenerateSchema(models, "sqlite")
+
+	assert.Contains(t, sql, `"id" INTEGER PRIMARY KEY AUTOINCREMENT`)
+	assert.Contains(t, sql, `"name" TEXT NOT NULL`)
+	assert.Contains(t, sql, `"views" INTEGER NOT NULL`)
+	assert.Contains(t, sql, `CURRENT_TIMESTAMP`)
+	assert.NotContains(t, sql, "NOW()")
+	assert.NotContains(t, sql, "SERIAL")
+	assert.NotContains(t, sql, "timestamptz")
+}
+
+func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "Author", PkgName: "models", PKType: "int", TableName: "authors",
+			Fields: []FieldInfo{
+				{Name: "name", GoType: "string", ColumnName: "name"},
+				{Name: "tags", GoType: "[]*Tag", Relation: &RelationFieldInfo{
+					Type: "many_to_many", FK: "author_id", JoinTable: "author_tags",
+					RefColumn: "tag_id", TargetModel: "Tag",
+				}},
+			}},
+		{Name: "Tag", PkgName: "models", PKType: "int", TableName: "tags",
+			Fields: []FieldInfo{
+				{Name: "name", GoType: "string", ColumnName: "name"},
+			}},
+	}
+	sql := GenerateSchema(models, "sqlite")
+
+	assert.Contains(t, sql, `CREATE TABLE "author_tags"`)
+	assert.Contains(t, sql, `"author_id" INTEGER NOT NULL REFERENCES "authors"("id")`)
+	assert.Contains(t, sql, `"tag_id" INTEGER NOT NULL REFERENCES "tags"("id")`)
+}
+
+// ---------------------------------------------------------------------------
+// DiffSchema
+// ---------------------------------------------------------------------------
+
+func TestDiffSchema_NewTable(t *testing.T) {
+	existing := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+		}},
+		{Name: "Post", PKType: "int", TableName: "posts", Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title"},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "postgres")
+
+	assert.Contains(t, upSQL, `CREATE TABLE "posts"`)
+	assert.NotContains(t, upSQL, `CREATE TABLE "users"`)
+	assert.Contains(t, downSQL, `DROP TABLE IF EXISTS "posts"`)
+	assert.NotContains(t, downSQL, `DROP TABLE IF EXISTS "users"`)
+}
+
+func TestDiffSchema_NewColumn(t *testing.T) {
+	existing := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "email", GoType: "string", ColumnName: "email"},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "postgres")
+
+	assert.Contains(t, upSQL, `ALTER TABLE "users" ADD COLUMN "email" text NOT NULL`)
+	assert.Contains(t, downSQL, `ALTER TABLE "users" DROP COLUMN "email"`)
+	assert.NotContains(t, upSQL, "CREATE TABLE")
+}
+
+func TestDiffSchema_NoChanges(t *testing.T) {
+	existing := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "postgres")
+	assert.Equal(t, "", upSQL)
+	assert.Equal(t, "", downSQL)
+}
+
+func TestDiffSchema_NewPivotTable(t *testing.T) {
+	existing := `CREATE TABLE "authors" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE "tags" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "Author", PKType: "int", TableName: "authors", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "tags", GoType: "[]*Tag", Relation: &RelationFieldInfo{
+				Type: "many_to_many", FK: "author_id", JoinTable: "author_tags",
+				RefColumn: "tag_id", TargetModel: "Tag",
+			}},
+		}},
+		{Name: "Tag", PKType: "int", TableName: "tags", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "postgres")
+
+	assert.Contains(t, upSQL, `CREATE TABLE "author_tags"`)
+	assert.Contains(t, downSQL, `DROP TABLE IF EXISTS "author_tags"`)
+}
+
+func TestDiffSchema_SQLite_NewTable(t *testing.T) {
+	existing := `CREATE TABLE "users" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "name" TEXT NOT NULL,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+		}},
+		{Name: "Post", PKType: "int", TableName: "posts", Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title"},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "sqlite")
+
+	assert.Contains(t, upSQL, `CREATE TABLE "posts"`)
+	assert.Contains(t, upSQL, `INTEGER PRIMARY KEY AUTOINCREMENT`)
+	assert.Contains(t, upSQL, `CURRENT_TIMESTAMP`)
+	assert.NotContains(t, upSQL, "NOW()")
+	assert.Contains(t, downSQL, `DROP TABLE IF EXISTS "posts"`)
+}
+
+func TestDiffSchema_NewEnum(t *testing.T) {
+	existing := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumValues: []string{"admin", "user"}},
+		}},
+	}
+
+	upSQL, _ := DiffSchema(models, existing, "postgres")
+
+	assert.Contains(t, upSQL, `CREATE TYPE "role" AS ENUM ('admin', 'user');`)
+	assert.Contains(t, upSQL, `ALTER TABLE "users" ADD COLUMN "role"`)
+}
+
+func TestDiffSchema_ExistingEnumNotRepeated(t *testing.T) {
+	existing := `CREATE TYPE "role" AS ENUM ('admin', 'user');
+
+CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "role" "role" NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name"},
+			{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumValues: []string{"admin", "user"}},
+		}},
+	}
+
+	upSQL, downSQL := DiffSchema(models, existing, "postgres")
+	assert.Equal(t, "", upSQL)
+	assert.Equal(t, "", downSQL)
+}
+
+// ---------------------------------------------------------------------------
+// parseExistingSchema
+// ---------------------------------------------------------------------------
+
+func TestParseExistingSchema(t *testing.T) {
+	sql := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL,
+    "email" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE "posts" (
+    "id" SERIAL PRIMARY KEY,
+    "title" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT NOW(),
+    "updated_at" timestamptz NOT NULL DEFAULT NOW()
+);`
+
+	tables, columns := parseExistingSchema(sql)
+
+	assert.True(t, tables["users"])
+	assert.True(t, tables["posts"])
+	assert.False(t, tables["comments"])
+
+	assert.True(t, columns["users"]["id"])
+	assert.True(t, columns["users"]["name"])
+	assert.True(t, columns["users"]["email"])
+	assert.True(t, columns["users"]["created_at"])
+
+	assert.True(t, columns["posts"]["id"])
+	assert.True(t, columns["posts"]["title"])
+}
+
+func TestParseExistingSchema_AlterTable(t *testing.T) {
+	sql := `CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "name" text NOT NULL
+);
+
+ALTER TABLE "users" ADD COLUMN "email" text NOT NULL;`
+
+	tables, columns := parseExistingSchema(sql)
+
+	assert.True(t, tables["users"])
+	assert.True(t, columns["users"]["name"])
+	assert.True(t, columns["users"]["email"])
 }

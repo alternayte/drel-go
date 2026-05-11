@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alternayte/drel/internal/codegen"
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
@@ -106,16 +107,28 @@ func runMigrateNew() {
 		os.Exit(1)
 	}
 
-	upSQL := codegen.GenerateSchema(models)
-	downSQL := codegen.GenerateDropSchema(models)
+	dialect := cfg.Dialect
 
-	// If there are existing migrations, add a warning comment to the generated SQL
-	// since the new migration contains the full schema (no diffing yet).
+	// Parse existing migrations to determine if we should do a full dump or an incremental diff.
 	existing, _ := migrate.ParseMigrationDir(mDir)
-	if len(existing) > 0 {
-		warning := "-- WARNING: This migration was auto-generated and may need manual review.\n"
-		upSQL = warning + upSQL
-		downSQL = warning + downSQL
+
+	var upSQL, downSQL string
+	if len(existing) == 0 {
+		// First migration: emit the full schema.
+		upSQL = codegen.GenerateSchema(models, dialect)
+		downSQL = codegen.GenerateDropSchema(models)
+	} else {
+		// Incremental migration: diff desired schema against existing migrations.
+		var existingUpSQL strings.Builder
+		for _, m := range existing {
+			existingUpSQL.WriteString(m.UpSQL)
+			existingUpSQL.WriteString("\n")
+		}
+		upSQL, downSQL = codegen.DiffSchema(models, existingUpSQL.String(), dialect)
+		if upSQL == "" && downSQL == "" {
+			fmt.Println("drel: no schema changes detected")
+			return
+		}
 	}
 
 	version, err := migrate.WriteMigration(mDir, name, upSQL, downSQL)
