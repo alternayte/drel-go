@@ -220,9 +220,6 @@ func EmitModelFile(m ModelInfo) string {
 	// --- ModelMeta ---
 	emitMeta(&b, m, lower, varPlural, allCols)
 
-	// --- Relations ---
-	emitRelations(&b, m)
-
 	return b.String()
 }
 
@@ -457,88 +454,3 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString("}\n")
 }
 
-// relationType maps rel tag type strings to the drel.RelationType constant names.
-func relationType(relType string) string {
-	switch relType {
-	case "has_many":
-		return "drel.HasMany"
-	case "has_one":
-		return "drel.HasOne"
-	case "belongs_to":
-		return "drel.BelongsTo"
-	default:
-		return ""
-	}
-}
-
-// isSliceOfPointers returns true if the Go type string represents a slice of pointers (e.g. "[]*Post").
-func isSliceOfPointers(goType string) bool {
-	return strings.HasPrefix(goType, "[]*")
-}
-
-func emitRelations(b *strings.Builder, m ModelInfo) {
-	for _, f := range m.Fields {
-		if f.Relation == nil {
-			continue
-		}
-		// Skip many_to_many — runtime doesn't support it yet.
-		if f.Relation.Type == "many_to_many" {
-			continue
-		}
-
-		drelType := relationType(f.Relation.Type)
-		if drelType == "" {
-			continue
-		}
-
-		target := f.Relation.TargetModel
-		if target == "" {
-			continue
-		}
-
-		exportedField := exportName(f.Name)
-		varName := m.Name + exportedField + "Rel"
-
-		b.WriteString(fmt.Sprintf("\nvar %s = drel.RelationInfo{\n", varName))
-		b.WriteString(fmt.Sprintf("\tName:        %q,\n", exportedField))
-		b.WriteString(fmt.Sprintf("\tType:        %s,\n", drelType))
-		b.WriteString(fmt.Sprintf("\tFKColumn:    %q,\n", f.Relation.FK))
-		b.WriteString(fmt.Sprintf("\tRelatedMeta: drel.ToMetaBase(&%sMeta),\n", target))
-
-		switch f.Relation.Type {
-		case "has_many":
-			// FieldSetter receives []any from the runtime, must convert to the field's slice type.
-			b.WriteString(fmt.Sprintf("\tFieldSetter: func(parent any, related any) {\n"))
-			b.WriteString(fmt.Sprintf("\t\tp := parent.(*%s)\n", m.Name))
-			b.WriteString(fmt.Sprintf("\t\titems := related.([]any)\n"))
-			if isSliceOfPointers(f.GoType) {
-				// Field is []*Target — items are already *Target from scan.
-				b.WriteString(fmt.Sprintf("\t\tresult := make([]*%s, len(items))\n", target))
-				b.WriteString(fmt.Sprintf("\t\tfor i, item := range items {\n"))
-				b.WriteString(fmt.Sprintf("\t\t\tresult[i] = item.(*%s)\n", target))
-				b.WriteString(fmt.Sprintf("\t\t}\n"))
-			} else {
-				// Field is []Target — dereference each *Target.
-				b.WriteString(fmt.Sprintf("\t\tresult := make([]%s, len(items))\n", target))
-				b.WriteString(fmt.Sprintf("\t\tfor i, item := range items {\n"))
-				b.WriteString(fmt.Sprintf("\t\t\tresult[i] = *item.(*%s)\n", target))
-				b.WriteString(fmt.Sprintf("\t\t}\n"))
-			}
-			b.WriteString(fmt.Sprintf("\t\tp.%s = result\n", f.Name))
-			b.WriteString(fmt.Sprintf("\t},\n"))
-
-		case "has_one", "belongs_to":
-			// FieldSetter receives a single entity (already *Target from scan).
-			b.WriteString(fmt.Sprintf("\tFieldSetter: func(parent any, related any) {\n"))
-			b.WriteString(fmt.Sprintf("\t\tp := parent.(*%s)\n", m.Name))
-			b.WriteString(fmt.Sprintf("\t\tp.%s = related.(*%s)\n", f.Name, target))
-			b.WriteString(fmt.Sprintf("\t},\n"))
-		}
-
-		b.WriteString("}\n")
-
-		// Convenience IncludeSpec.
-		includeVarName := m.Name + "Include" + exportedField
-		b.WriteString(fmt.Sprintf("\nvar %s = drel.NewIncludeSpec(&%s)\n", includeVarName, varName))
-	}
-}
