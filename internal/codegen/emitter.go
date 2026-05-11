@@ -240,7 +240,6 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString(fmt.Sprintf("var %sMeta = drel.ModelMeta[%s]{\n", m.Name, m.Name))
 	b.WriteString(fmt.Sprintf("\tTable:   %q,\n", m.TableName))
 
-	// Columns
 	quoted := make([]string, len(allCols))
 	for i, c := range allCols {
 		quoted[i] = fmt.Sprintf("%q", c)
@@ -253,5 +252,28 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString(fmt.Sprintf("\tPKValue:       %sPKValue,\n", lower))
 	b.WriteString(fmt.Sprintf("\tInsertColumns: %sInsertColumns,\n", lower))
 	b.WriteString(fmt.Sprintf("\tScanReturning: %sScanReturning,\n", lower))
+
+	if m.HasSoftDelete {
+		b.WriteString("\tHasSoftDelete: true,\n")
+		b.WriteString("\tFilters: []drel.NamedFilter{drel.SoftDeleteFilter},\n")
+	}
+	if m.HasVersioned {
+		b.WriteString("\tHasVersioned: true,\n")
+		b.WriteString(fmt.Sprintf("\tVersionValue: func(p *%s) int { return p.Version() },\n", m.Name))
+		b.WriteString(fmt.Sprintf("\tSetVersion:   func(p *%s, v int) { *p.VersionPtr() = v },\n", m.Name))
+	}
+	if m.HasAudit {
+		b.WriteString("\tHasAudit: true,\n")
+		b.WriteString(fmt.Sprintf("\tAuditSetCreate: func(p *%s, actor string) {\n", m.Name))
+		b.WriteString("\t\tcreatedByPtr, updatedByPtr := p.AuditPtrs()\n")
+		b.WriteString("\t\t*createdByPtr = actor\n")
+		b.WriteString("\t\t*updatedByPtr = actor\n")
+		b.WriteString("\t},\n")
+		b.WriteString(fmt.Sprintf("\tAuditSetUpdate: func(p *%s, actor string) {\n", m.Name))
+		b.WriteString("\t\t_, updatedByPtr := p.AuditPtrs()\n")
+		b.WriteString("\t\t*updatedByPtr = actor\n")
+		b.WriteString("\t},\n")
+	}
+
 	b.WriteString("}\n")
 }

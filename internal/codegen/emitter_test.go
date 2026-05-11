@@ -283,6 +283,53 @@ func TestEmitModelFile_MultiColVOTreatedAsColumn(t *testing.T) {
 	assert.Contains(t, output, "&p.balance")
 }
 
+func TestEmitModelFile_SoftDeleteMeta(t *testing.T) {
+	m := ModelInfo{
+		Name: "Article", PkgName: "models", PKType: "int", TableName: "articles",
+		HasSoftDelete: true,
+		Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
+		},
+	}
+	out := EmitModelFile(m)
+
+	assert.Contains(t, out, "HasSoftDelete: true,")
+	assert.Contains(t, out, "Filters: []drel.NamedFilter{drel.SoftDeleteFilter},")
+}
+
+func TestEmitModelFile_VersionedMeta(t *testing.T) {
+	m := ModelInfo{
+		Name: "Article", PkgName: "models", PKType: "int", TableName: "articles",
+		HasVersioned: true,
+		Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
+		},
+	}
+	out := EmitModelFile(m)
+
+	assert.Contains(t, out, "HasVersioned: true,")
+	assert.Contains(t, out, "VersionValue:")
+	assert.Contains(t, out, "p.Version()")
+	assert.Contains(t, out, "SetVersion:")
+	assert.Contains(t, out, "*p.VersionPtr() = v")
+}
+
+func TestEmitModelFile_AuditMeta(t *testing.T) {
+	m := ModelInfo{
+		Name: "Article", PkgName: "models", PKType: "int", TableName: "articles",
+		HasAudit: true,
+		Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
+		},
+	}
+	out := EmitModelFile(m)
+
+	assert.Contains(t, out, "HasAudit: true,")
+	assert.Contains(t, out, "AuditSetCreate:")
+	assert.Contains(t, out, "AuditPtrs()")
+	assert.Contains(t, out, "AuditSetUpdate:")
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {
