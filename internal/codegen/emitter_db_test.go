@@ -44,6 +44,23 @@ func TestEmitDBFile_WithRelations(t *testing.T) {
 	assert.Contains(t, out, "var PostIncludeAuthor = drel.NewIncludeSpec(&PostAuthorRel)")
 }
 
+func TestEmitDBFile_TypedRepositories(t *testing.T) {
+	models := []ModelInfo{
+		{
+			Name: "User", PkgPath: "app/models/users", PkgName: "users",
+			PKType: "int", TableName: "users",
+			Fields: []FieldInfo{
+				{Name: "name", GoType: "string", ColumnName: "name"},
+			},
+		},
+	}
+
+	out := EmitDBFile(models, "db")
+
+	assert.Contains(t, out, "Users *users.UserRepository")
+	assert.Contains(t, out, "&users.UserRepository{Repository: drel.NewRepository(engine, users.UserMeta)}")
+}
+
 func TestEmitDBFile_ManyToManyRelation(t *testing.T) {
 	models := []ModelInfo{
 		{

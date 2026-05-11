@@ -221,14 +221,14 @@ func TestEmitDBFile(t *testing.T) {
 	// DB struct
 	assert.Contains(t, out, "type DB struct {")
 	assert.Contains(t, out, "*drel.Engine")
-	assert.Contains(t, out, "Users *drel.Repository[users.User]")
-	assert.Contains(t, out, "Posts *drel.Repository[posts.Post]")
+	assert.Contains(t, out, "Users *users.UserRepository")
+	assert.Contains(t, out, "Posts *posts.PostRepository")
 
 	// Open function
 	assert.Contains(t, out, "func Open(dsn string, opts ...drel.Option) (*DB, error)")
 	assert.Contains(t, out, "drel.NewEngine(dsn, opts...)")
-	assert.Contains(t, out, "Users: drel.NewRepository(engine, users.UserMeta)")
-	assert.Contains(t, out, "Posts: drel.NewRepository(engine, posts.PostMeta)")
+	assert.Contains(t, out, "&users.UserRepository{Repository: drel.NewRepository(engine, users.UserMeta)}")
+	assert.Contains(t, out, "&posts.PostRepository{Repository: drel.NewRepository(engine, posts.PostMeta)}")
 }
 
 func TestEmitDBFile_DedupImports(t *testing.T) {
@@ -347,6 +347,46 @@ func TestEmitModelFile_NoRelationsInPerModelFile(t *testing.T) {
 	out := EmitModelFile(m)
 	assert.NotContains(t, out, "RelationInfo")
 	assert.NotContains(t, out, "IncludeSpec")
+}
+
+func TestEmitModelFile_TypedRepository(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	assert.Contains(t, out, "type UserRepository struct {")
+	assert.Contains(t, out, "*drel.Repository[User]")
+	assert.Contains(t, out, "func (r *UserRepository) FindByID(ctx context.Context, id int) (*User, error) {")
+	assert.Contains(t, out, "return r.Find(ctx, id)")
+
+	assert.Contains(t, out, "type TxUserRepository struct {")
+	assert.Contains(t, out, "*drel.TxRepository[User]")
+	assert.Contains(t, out, "func (r *TxUserRepository) FindByID(ctx context.Context, id int) (*User, error) {")
+}
+
+func TestEmitModelFile_TypedRepository_UUIDKey(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Account",
+		PkgName:   "models",
+		PKType:    "uuid.UUID",
+		PKTypePkg: "github.com/google/uuid",
+		TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	assert.Contains(t, out, "func (r *AccountRepository) FindByID(ctx context.Context, id uuid.UUID) (*Account, error) {")
 }
 
 // extractLine returns the first line in s that contains substr.

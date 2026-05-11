@@ -120,7 +120,7 @@ func buildModelImportAliases(m ModelInfo) map[string]string {
 }
 
 func emitImports(b *strings.Builder, m ModelInfo, extAliases map[string]string) {
-	stdImports := map[string]bool{"time": true}
+	stdImports := map[string]bool{"context": true, "time": true}
 
 	if m.PKTypePkg == "time" {
 		stdImports["time"] = true
@@ -219,6 +219,9 @@ func EmitModelFile(m ModelInfo) string {
 
 	// --- ModelMeta ---
 	emitMeta(&b, m, lower, varPlural, allCols)
+
+	// --- Typed repository wrappers ---
+	emitTypedRepos(&b, m)
 
 	return b.String()
 }
@@ -409,6 +412,26 @@ func emitScanReturning(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString("\tidPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
 	b.WriteString("\treturn row.Scan(idPtr, createdAtPtr, updatedAtPtr)\n")
 	b.WriteString("}\n\n")
+}
+
+func emitTypedRepos(b *strings.Builder, m ModelInfo) {
+	pkType := m.PKType
+
+	b.WriteString(fmt.Sprintf("\ntype %sRepository struct {\n", m.Name))
+	b.WriteString(fmt.Sprintf("\t*drel.Repository[%s]\n", m.Name))
+	b.WriteString("}\n\n")
+
+	b.WriteString(fmt.Sprintf("func (r *%sRepository) FindByID(ctx context.Context, id %s) (*%s, error) {\n", m.Name, pkType, m.Name))
+	b.WriteString("\treturn r.Find(ctx, id)\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString(fmt.Sprintf("type Tx%sRepository struct {\n", m.Name))
+	b.WriteString(fmt.Sprintf("\t*drel.TxRepository[%s]\n", m.Name))
+	b.WriteString("}\n\n")
+
+	b.WriteString(fmt.Sprintf("func (r *Tx%sRepository) FindByID(ctx context.Context, id %s) (*%s, error) {\n", m.Name, pkType, m.Name))
+	b.WriteString("\treturn r.Find(ctx, id)\n")
+	b.WriteString("}\n")
 }
 
 func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols []string) {

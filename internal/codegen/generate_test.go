@@ -96,7 +96,7 @@ output:
 	dbStr := string(dbContent)
 
 	assert.Contains(t, dbStr, "type DB struct {")
-	assert.Contains(t, dbStr, "Products *drel.Repository[models.Product]")
+	assert.Contains(t, dbStr, "Products *models.ProductRepository")
 
 	// Run go mod tidy and go build to verify generated code compiles.
 	tidy := exec.Command("go", "mod", "tidy")
@@ -164,8 +164,8 @@ output:
 	dbStr := string(dbContent)
 
 	assert.Contains(t, dbStr, "type DB struct {")
-	assert.Contains(t, dbStr, "Users *drel.Repository[models.User]")
-	assert.Contains(t, dbStr, "Posts *drel.Repository[models.Post]")
+	assert.Contains(t, dbStr, "Users *models.UserRepository")
+	assert.Contains(t, dbStr, "Posts *models.PostRepository")
 
 	// Run go mod tidy and go build to verify generated code compiles.
 	tidy := exec.Command("go", "mod", "tidy")

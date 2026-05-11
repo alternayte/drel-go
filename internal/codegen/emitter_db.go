@@ -37,7 +37,7 @@ func EmitDBFile(models []ModelInfo, dbPkgName string) string {
 	for _, m := range models {
 		alias := aliases[m.PkgPath]
 		fieldName := pluralize(m.Name)
-		b.WriteString(fmt.Sprintf("\t%s *drel.Repository[%s.%s]\n", fieldName, alias, m.Name))
+		b.WriteString(fmt.Sprintf("\t%s *%s.%sRepository\n", fieldName, alias, m.Name))
 	}
 	b.WriteString("}\n\n")
 
@@ -50,7 +50,7 @@ func EmitDBFile(models []ModelInfo, dbPkgName string) string {
 	for _, m := range models {
 		alias := aliases[m.PkgPath]
 		fieldName := pluralize(m.Name)
-		b.WriteString(fmt.Sprintf("\t\t%s: drel.NewRepository(engine, %s.%sMeta),\n", fieldName, alias, m.Name))
+		b.WriteString(fmt.Sprintf("\t\t%s: &%s.%sRepository{Repository: drel.NewRepository(engine, %s.%sMeta)},\n", fieldName, alias, m.Name, alias, m.Name))
 	}
 	b.WriteString("\t}, nil\n")
 	b.WriteString("}\n")
