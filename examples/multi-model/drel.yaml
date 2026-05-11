@@ -1,0 +1,5 @@
+packages:
+  - ./users
+
+output:
+  db: ./db/drel_gen.go
