@@ -3,6 +3,7 @@
 package models
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -85,4 +86,20 @@ var AuthorMeta = drel.ModelMeta[Author]{
 	InsertColumns: authorInsertColumns,
 	ScanReturning: authorScanReturning,
 	ColumnValue:   authorColumnValue,
+}
+
+type AuthorRepository struct {
+	*drel.Repository[Author]
+}
+
+func (r *AuthorRepository) FindByID(ctx context.Context, id int) (*Author, error) {
+	return r.Find(ctx, id)
+}
+
+type TxAuthorRepository struct {
+	*drel.TxRepository[Author]
+}
+
+func (r *TxAuthorRepository) FindByID(ctx context.Context, id int) (*Author, error) {
+	return r.Find(ctx, id)
 }

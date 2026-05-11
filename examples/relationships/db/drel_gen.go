@@ -9,9 +9,9 @@ import (
 
 type DB struct {
 	*drel.Engine
-	Authors *drel.Repository[models.Author]
-	AuthorProfiles *drel.Repository[models.AuthorProfile]
-	Books *drel.Repository[models.Book]
+	Authors *models.AuthorRepository
+	AuthorProfiles *models.AuthorProfileRepository
+	Books *models.BookRepository
 }
 
 func Open(dsn string, opts ...drel.Option) (*DB, error) {
@@ -21,8 +21,52 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}
 	return &DB{
 		Engine: engine,
-		Authors: drel.NewRepository(engine, models.AuthorMeta),
-		AuthorProfiles: drel.NewRepository(engine, models.AuthorProfileMeta),
-		Books: drel.NewRepository(engine, models.BookMeta),
+		Authors: &models.AuthorRepository{Repository: drel.NewRepository(engine, models.AuthorMeta)},
+		AuthorProfiles: &models.AuthorProfileRepository{Repository: drel.NewRepository(engine, models.AuthorProfileMeta)},
+		Books: &models.BookRepository{Repository: drel.NewRepository(engine, models.BookMeta)},
 	}, nil
 }
+
+var AuthorBooksRel = drel.RelationInfo{
+	Name:        "Books",
+	Type:        drel.HasMany,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.BookMeta),
+	FieldSetter: func(parent any, related any) {
+		p := parent.(*models.Author)
+		items := related.([]any)
+		result := make([]*models.Book, len(items))
+		for i, item := range items {
+			result[i] = item.(*models.Book)
+		}
+		p.Books = result
+	},
+}
+
+var AuthorIncludeBooks = drel.NewIncludeSpec(&AuthorBooksRel)
+
+var AuthorProfileRel = drel.RelationInfo{
+	Name:        "Profile",
+	Type:        drel.HasOne,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.AuthorProfileMeta),
+	FieldSetter: func(parent any, related any) {
+		p := parent.(*models.Author)
+		p.Profile = related.(*models.AuthorProfile)
+	},
+}
+
+var AuthorIncludeProfile = drel.NewIncludeSpec(&AuthorProfileRel)
+
+var BookAuthorRel = drel.RelationInfo{
+	Name:        "Author",
+	Type:        drel.BelongsTo,
+	FKColumn:    "author_id",
+	RelatedMeta: drel.ToMetaBase(&models.AuthorMeta),
+	FieldSetter: func(parent any, related any) {
+		p := parent.(*models.Book)
+		p.Author = related.(*models.Author)
+	},
+}
+
+var BookIncludeAuthor = drel.NewIncludeSpec(&BookAuthorRel)

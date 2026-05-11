@@ -3,6 +3,7 @@
 package models
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -93,4 +94,20 @@ var BookMeta = drel.ModelMeta[Book]{
 	InsertColumns: bookInsertColumns,
 	ScanReturning: bookScanReturning,
 	ColumnValue:   bookColumnValue,
+}
+
+type BookRepository struct {
+	*drel.Repository[Book]
+}
+
+func (r *BookRepository) FindByID(ctx context.Context, id int) (*Book, error) {
+	return r.Find(ctx, id)
+}
+
+type TxBookRepository struct {
+	*drel.TxRepository[Book]
+}
+
+func (r *TxBookRepository) FindByID(ctx context.Context, id int) (*Book, error) {
+	return r.Find(ctx, id)
 }

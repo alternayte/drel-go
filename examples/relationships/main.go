@@ -4,13 +4,13 @@
 // has_many (Author -> Books), has_one (Author -> Profile),
 // and belongs_to (Book -> Author).
 //
-// Models are defined in the models/ package and use codegen-generated
-// metadata. Only the RelationInfo wiring is manual.
+// Models use `rel` struct tags, and `drel generate` emits RelationInfo
+// and IncludeSpec variables in the db/ package for cross-package support.
 //
 // Usage:
 //
 //	cd examples/relationships
-//	go run ../../cmd/drel generate   # generates models/*_drel.go + db/drel_gen.go
+//	go run ../../cmd/drel generate
 //	export DATABASE_URL="postgres://localhost:5432/drelexample?sslmode=disable"
 //	go run .
 package main
@@ -23,52 +23,7 @@ import (
 
 	"github.com/alternayte/drel"
 	"github.com/alternayte/drel/examples/relationships/db"
-	"github.com/alternayte/drel/examples/relationships/models"
 )
-
-// --- Relationship definitions (manual — codegen doesn't emit these) ---
-
-var booksRelation = drel.RelationInfo{
-	Name:        "books",
-	Type:        drel.HasMany,
-	FKColumn:    "author_id",
-	RelatedMeta: drel.ToMetaBase(&models.BookMeta),
-	FieldSetter: func(parent any, related any) {
-		a := parent.(*models.Author)
-		if items, ok := related.([]any); ok {
-			a.Books = make([]*models.Book, len(items))
-			for i, item := range items {
-				a.Books[i] = item.(*models.Book)
-			}
-		}
-	},
-}
-
-var profileRelation = drel.RelationInfo{
-	Name:        "profile",
-	Type:        drel.HasOne,
-	FKColumn:    "author_id",
-	RelatedMeta: drel.ToMetaBase(&models.AuthorProfileMeta),
-	FieldSetter: func(parent any, related any) {
-		a := parent.(*models.Author)
-		if p, ok := related.(*models.AuthorProfile); ok {
-			a.Profile = p
-		}
-	},
-}
-
-var authorRelation = drel.RelationInfo{
-	Name:        "author",
-	Type:        drel.BelongsTo,
-	FKColumn:    "author_id",
-	RelatedMeta: drel.ToMetaBase(&models.AuthorMeta),
-	FieldSetter: func(parent any, related any) {
-		b := parent.(*models.Book)
-		if a, ok := related.(*models.Author); ok {
-			b.Author = a
-		}
-	},
-}
 
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
@@ -88,7 +43,7 @@ func main() {
 
 	// === has_many: Author -> Books ===
 	fmt.Println("=== Author with Books (has_many) ===")
-	alice, err := database.Authors.Include(drel.NewIncludeSpec(&booksRelation)).Find(ctx, 1)
+	alice, err := database.Authors.Include(db.AuthorIncludeBooks).Find(ctx, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -99,7 +54,7 @@ func main() {
 
 	// === has_one: Author -> Profile ===
 	fmt.Println("\n=== Author with Profile (has_one) ===")
-	bob, err := database.Authors.Include(drel.NewIncludeSpec(&profileRelation)).Find(ctx, 2)
+	bob, err := database.Authors.Include(db.AuthorIncludeProfile).Find(ctx, 2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -109,7 +64,7 @@ func main() {
 
 	// === belongs_to: Book -> Author ===
 	fmt.Println("\n=== Book with Author (belongs_to) ===")
-	book, err := database.Books.Include(drel.NewIncludeSpec(&authorRelation)).Find(ctx, 1)
+	book, err := database.Books.Include(db.BookIncludeAuthor).Find(ctx, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +74,7 @@ func main() {
 
 	// === All authors with books ===
 	fmt.Println("\n=== All Authors with Books ===")
-	allAuthors, err := database.Authors.Include(drel.NewIncludeSpec(&booksRelation)).All(ctx)
+	allAuthors, err := database.Authors.Include(db.AuthorIncludeBooks).All(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -129,11 +84,10 @@ func main() {
 }
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS books`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS authors`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS books`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS authors`)
+	database.Exec(ctx, `
 		CREATE TABLE authors (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -141,7 +95,7 @@ func setup(ctx context.Context, database *db.DB) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `
 		CREATE TABLE books (
 			id SERIAL PRIMARY KEY,
 			title TEXT NOT NULL,
@@ -150,7 +104,7 @@ func setup(ctx context.Context, database *db.DB) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `
 		CREATE TABLE author_profiles (
 			id SERIAL PRIMARY KEY,
 			bio TEXT NOT NULL,
@@ -160,14 +114,13 @@ func setup(ctx context.Context, database *db.DB) {
 		)
 	`)
 
-	drv.Exec(ctx, `INSERT INTO authors (name) VALUES ('Alice'), ('Bob'), ('Carol')`)
-	drv.Exec(ctx, `INSERT INTO books (title, author_id) VALUES ('Go in Practice', 1), ('Advanced Go', 1), ('Learning Go', 1), ('Python Basics', 2)`)
-	drv.Exec(ctx, `INSERT INTO author_profiles (bio, author_id) VALUES ('Go expert and author', 1), ('Polyglot programmer', 2)`)
+	database.Exec(ctx, `INSERT INTO authors (name) VALUES ('Alice'), ('Bob'), ('Carol')`)
+	database.Exec(ctx, `INSERT INTO books (title, author_id) VALUES ('Go in Practice', 1), ('Advanced Go', 1), ('Learning Go', 1), ('Python Basics', 2)`)
+	database.Exec(ctx, `INSERT INTO author_profiles (bio, author_id) VALUES ('Go expert and author', 1), ('Polyglot programmer', 2)`)
 }
 
 func teardown(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS books`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS authors`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS books`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS author_profiles`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS authors`)
 }
