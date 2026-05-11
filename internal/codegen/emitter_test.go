@@ -265,7 +265,7 @@ func TestEmitModelFile_WithSingleColVO(t *testing.T) {
 	assert.Contains(t, output, "p.email != s.email") // diff
 }
 
-func TestEmitModelFile_MultiColVOTreatedAsColumn(t *testing.T) {
+func TestEmitModelFile_MultiColVOReturnsError(t *testing.T) {
 	m := ModelInfo{
 		Name:      "Product",
 		PkgName:   "models",
@@ -277,10 +277,10 @@ func TestEmitModelFile_MultiColVOTreatedAsColumn(t *testing.T) {
 		},
 	}
 
-	output := EmitModelFile(m)
-
-	assert.Contains(t, output, "drel.Column[Money]")
-	assert.Contains(t, output, "&p.balance")
+	_, err := EmitModelFileChecked(m)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "MultiColumnMapper")
+	assert.Contains(t, err.Error(), "balance")
 }
 
 func TestEmitModelFile_SoftDeleteMeta(t *testing.T) {
@@ -328,6 +328,160 @@ func TestEmitModelFile_AuditMeta(t *testing.T) {
 	assert.Contains(t, out, "AuditSetCreate:")
 	assert.Contains(t, out, "AuditPtrs()")
 	assert.Contains(t, out, "AuditSetUpdate:")
+}
+
+func TestEmitModelFile_HasManyRelation(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "posts", GoType: "[]*models.Post", Relation: &RelationFieldInfo{
+				Type: "has_many", FK: "user_id", TargetModel: "Post",
+			}},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// RelationInfo variable
+	assert.Contains(t, out, "var UserPostsRel = drel.RelationInfo{")
+	assert.Contains(t, out, `Name:        "Posts"`)
+	assert.Contains(t, out, "Type:        drel.HasMany")
+	assert.Contains(t, out, `FKColumn:    "user_id"`)
+	assert.Contains(t, out, "RelatedMeta: drel.ToMetaBase(&PostMeta)")
+
+	// FieldSetter for has_many with pointer slice
+	assert.Contains(t, out, "items := related.([]any)")
+	assert.Contains(t, out, "result := make([]*Post, len(items))")
+	assert.Contains(t, out, "result[i] = item.(*Post)")
+	assert.Contains(t, out, "p.posts = result")
+
+	// Include convenience var
+	assert.Contains(t, out, "var UserIncludePosts = drel.NewIncludeSpec(&UserPostsRel)")
+}
+
+func TestEmitModelFile_HasManyNonPointerSlice(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "posts", GoType: "[]models.Post", Relation: &RelationFieldInfo{
+				Type: "has_many", FK: "user_id", TargetModel: "Post",
+			}},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// Non-pointer slice: dereference each item
+	assert.Contains(t, out, "result := make([]Post, len(items))")
+	assert.Contains(t, out, "result[i] = *item.(*Post)")
+}
+
+func TestEmitModelFile_HasOneRelation(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "profile", GoType: "*models.Profile", Relation: &RelationFieldInfo{
+				Type: "has_one", FK: "user_id", TargetModel: "Profile",
+			}},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// RelationInfo variable
+	assert.Contains(t, out, "var UserProfileRel = drel.RelationInfo{")
+	assert.Contains(t, out, `Name:        "Profile"`)
+	assert.Contains(t, out, "Type:        drel.HasOne")
+	assert.Contains(t, out, `FKColumn:    "user_id"`)
+	assert.Contains(t, out, "RelatedMeta: drel.ToMetaBase(&ProfileMeta)")
+
+	// FieldSetter for has_one: direct cast
+	assert.Contains(t, out, "p.profile = related.(*Profile)")
+
+	// Include convenience var
+	assert.Contains(t, out, "var UserIncludeProfile = drel.NewIncludeSpec(&UserProfileRel)")
+}
+
+func TestEmitModelFile_BelongsToRelation(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Post",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "posts",
+		Fields: []FieldInfo{
+			{Name: "title", GoType: "string", ColumnName: "title", LocalGoType: "string"},
+			{Name: "authorID", GoType: "int", ColumnName: "author_id", LocalGoType: "int"},
+			{Name: "author", GoType: "*models.User", Relation: &RelationFieldInfo{
+				Type: "belongs_to", FK: "author_id", TargetModel: "User",
+			}},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// RelationInfo variable
+	assert.Contains(t, out, "var PostAuthorRel = drel.RelationInfo{")
+	assert.Contains(t, out, `Name:        "Author"`)
+	assert.Contains(t, out, "Type:        drel.BelongsTo")
+	assert.Contains(t, out, `FKColumn:    "author_id"`)
+	assert.Contains(t, out, "RelatedMeta: drel.ToMetaBase(&UserMeta)")
+
+	// FieldSetter for belongs_to: direct cast
+	assert.Contains(t, out, "p.author = related.(*User)")
+
+	// Include convenience var
+	assert.Contains(t, out, "var PostIncludeAuthor = drel.NewIncludeSpec(&PostAuthorRel)")
+}
+
+func TestEmitModelFile_ManyToManySkipped(t *testing.T) {
+	m := ModelInfo{
+		Name:      "User",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "tags", GoType: "[]models.Tag", Relation: &RelationFieldInfo{
+				Type: "many_to_many", JoinTable: "user_tags", TargetModel: "Tag",
+			}},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// many_to_many should not generate any relation code
+	assert.NotContains(t, out, "UserTagsRel")
+	assert.NotContains(t, out, "UserIncludeTags")
+}
+
+func TestEmitModelFile_NoRelations(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Product",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "products",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// No RelationInfo should be generated
+	assert.NotContains(t, out, "RelationInfo")
+	assert.NotContains(t, out, "IncludeSpec")
 }
 
 // extractLine returns the first line in s that contains substr.
