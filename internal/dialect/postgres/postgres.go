@@ -74,6 +74,72 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 }
 
 func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramIdx int) int {
+	if clause.Raw != nil {
+		raw := *clause.Raw
+		argIdx := 0
+		placeholderCount := 0
+		state := 0 // 0=normal, 1=single-quote, 2=double-quote, 3=dollar-quote
+		for i := 0; i < len(raw); i++ {
+			ch := raw[i]
+			switch state {
+			case 0: // normal
+				if ch == '\'' {
+					state = 1
+					b.WriteByte(ch)
+				} else if ch == '"' {
+					state = 2
+					b.WriteByte(ch)
+				} else if ch == '$' && i+1 < len(raw) && raw[i+1] == '$' {
+					state = 3
+					b.WriteByte(ch)
+					i++
+					b.WriteByte(raw[i])
+				} else if ch == '?' {
+					placeholderCount++
+					if argIdx < len(clause.RawArgs) {
+						b.WriteString(fmt.Sprintf("$%d", paramIdx))
+						*args = append(*args, clause.RawArgs[argIdx])
+						argIdx++
+						paramIdx++
+					} else {
+						b.WriteByte(ch)
+					}
+				} else {
+					b.WriteByte(ch)
+				}
+			case 1: // single-quoted string
+				b.WriteByte(ch)
+				if ch == '\'' {
+					if i+1 < len(raw) && raw[i+1] == '\'' {
+						// escaped quote ''
+						i++
+						b.WriteByte(raw[i])
+					} else {
+						state = 0
+					}
+				}
+			case 2: // double-quoted identifier
+				b.WriteByte(ch)
+				if ch == '"' {
+					state = 0
+				}
+			case 3: // dollar-quoted string
+				b.WriteByte(ch)
+				if ch == '$' && i+1 < len(raw) && raw[i+1] == '$' {
+					i++
+					b.WriteByte(raw[i])
+					state = 0
+				}
+			}
+		}
+		// Defense-in-depth: validate placeholder count matches args.
+		if placeholderCount != len(clause.RawArgs) {
+			b.Reset()
+			b.WriteString(fmt.Sprintf("ERROR: raw predicate has %d placeholder(s) but %d argument(s)", placeholderCount, len(clause.RawArgs)))
+		}
+		return paramIdx
+	}
+
 	if clause.Comparison != nil {
 		return writeComparison(b, args, *clause.Comparison, paramIdx)
 	}
@@ -120,6 +186,21 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, pa
 			paramIdx++
 		}
 		b.WriteString(")")
+	case ast.OpNotIn:
+		b.WriteString(col + " NOT IN (")
+		for i, v := range cmp.Values {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("$%d", paramIdx))
+			*args = append(*args, v)
+			paramIdx++
+		}
+		b.WriteString(")")
+	case ast.OpBetween:
+		b.WriteString(fmt.Sprintf("%s BETWEEN $%d AND $%d", col, paramIdx, paramIdx+1))
+		*args = append(*args, cmp.Values[0], cmp.Values[1])
+		paramIdx += 2
 	default:
 		op := operatorToSQL(cmp.Op)
 		b.WriteString(fmt.Sprintf("%s %s $%d", col, op, paramIdx))
@@ -146,6 +227,8 @@ func operatorToSQL(op ast.Operator) string {
 		return "<="
 	case ast.OpLike:
 		return "LIKE"
+	case ast.OpILike:
+		return "ILIKE"
 	default:
 		return "="
 	}
@@ -193,9 +276,13 @@ func (p *Postgres) BuildUpdate(table string, changes []dialect.ColumnValue, pkCo
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
-		args = append(args, cv.Value)
-		paramIdx++
+		if raw, ok := cv.Value.(dialect.RawExpr); ok {
+			b.WriteString(fmt.Sprintf("%s = %s", quoteIdent(cv.Column), raw.SQL))
+		} else {
+			b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+			args = append(args, cv.Value)
+			paramIdx++
+		}
 	}
 	b.WriteString(fmt.Sprintf(" WHERE %s = $%d", quoteIdent(pkColumn), paramIdx))
 	args = append(args, pkValue)
@@ -228,9 +315,13 @@ func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnVa
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
-		args = append(args, cv.Value)
-		paramIdx++
+		if raw, ok := cv.Value.(dialect.RawExpr); ok {
+			b.WriteString(fmt.Sprintf("%s = %s", quoteIdent(cv.Column), raw.SQL))
+		} else {
+			b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+			args = append(args, cv.Value)
+			paramIdx++
+		}
 	}
 
 	b.WriteString(fmt.Sprintf(", %s = %s + 1", quoteIdent(versionCol), quoteIdent(versionCol)))
@@ -368,5 +459,5 @@ func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any,
 }
 
 func quoteIdent(name string) string {
-	return `"` + name + `"`
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

@@ -508,3 +508,63 @@ func TestPostgres_BuildSelect(t *testing.T) {
 		})
 	}
 }
+
+func buildRawWhere(sql string, args ...any) dialect.Result {
+	p := New()
+	node := ast.SelectNode{
+		Table:   "test",
+		Columns: []string{"id"},
+		Where: &ast.WhereClause{
+			Raw:     &sql,
+			RawArgs: args,
+		},
+		Type: ast.QuerySelect,
+	}
+	return p.BuildSelect(node)
+}
+
+func TestRawPlaceholder_Basic(t *testing.T) {
+	r := buildRawWhere("age > ? AND name = ?", 18, "alice")
+	assert.Equal(t, `SELECT "id" FROM "test" WHERE age > $1 AND name = $2`, r.SQL)
+	assert.Equal(t, []any{18, "alice"}, r.Args)
+}
+
+func TestRawPlaceholder_InsideSingleQuotedString(t *testing.T) {
+	r := buildRawWhere("name = '?' AND age > ?", 18)
+	assert.Equal(t, `SELECT "id" FROM "test" WHERE name = '?' AND age > $1`, r.SQL)
+	assert.Equal(t, []any{18}, r.Args)
+}
+
+func TestRawPlaceholder_InsideDoubleQuotedIdentifier(t *testing.T) {
+	r := buildRawWhere(`"col?" = ?`, 42)
+	assert.Equal(t, `SELECT "id" FROM "test" WHERE "col?" = $1`, r.SQL)
+	assert.Equal(t, []any{42}, r.Args)
+}
+
+func TestRawPlaceholder_InsideDollarQuotedString(t *testing.T) {
+	r := buildRawWhere("body = $$hello ? world$$ AND id = ?", 1)
+	assert.Equal(t, `SELECT "id" FROM "test" WHERE body = $$hello ? world$$ AND id = $1`, r.SQL)
+	assert.Equal(t, []any{1}, r.Args)
+}
+
+func TestRawPlaceholder_EscapedSingleQuote(t *testing.T) {
+	r := buildRawWhere("name = 'it''s a ?' AND id = ?", 1)
+	assert.Equal(t, `SELECT "id" FROM "test" WHERE name = 'it''s a ?' AND id = $1`, r.SQL)
+	assert.Equal(t, []any{1}, r.Args)
+}
+
+func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
+	p := New()
+	sql := "a = ? AND b = ?"
+	node := ast.SelectNode{
+		Table:   "test",
+		Columns: []string{"id"},
+		Where: &ast.WhereClause{
+			Raw:     &sql,
+			RawArgs: []any{1}, // only 1 arg for 2 placeholders
+		},
+		Type: ast.QuerySelect,
+	}
+	r := p.BuildSelect(node)
+	assert.Contains(t, r.SQL, "ERROR")
+}
