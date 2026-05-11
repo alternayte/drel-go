@@ -22,6 +22,7 @@ type RawExpr struct {
 
 // Dialect generates SQL for a specific database backend.
 type Dialect interface {
+	SupportsReturning() bool
 	BuildSelect(node ast.SelectNode) Result
 	BuildInsert(table string, columns []string, values []any, returningCols []string) Result
 	BuildUpdate(table string, changes []ColumnValue, pkColumn string, pkValue any) Result

@@ -1,4 +1,4 @@
-package postgres
+package sqlite
 
 import (
 	"fmt"
@@ -8,16 +8,15 @@ import (
 	"github.com/alternayte/drel/internal/dialect"
 )
 
-type Postgres struct{}
+type SQLite struct{}
 
-func New() *Postgres { return &Postgres{} }
+func New() *SQLite { return &SQLite{} }
 
-func (p *Postgres) SupportsReturning() bool { return true }
+func (s *SQLite) SupportsReturning() bool { return false }
 
-func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
+func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	switch node.Type {
 	case ast.QueryCount:
@@ -40,7 +39,7 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 
 	if node.Where != nil {
 		b.WriteString(" WHERE ")
-		paramIdx = writeWhere(&b, &args, *node.Where, paramIdx)
+		writeWhere(&b, &args, *node.Where)
 	}
 
 	if node.Type == ast.QueryExists {
@@ -75,12 +74,14 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramIdx int) int {
+// writeWhere writes a WHERE clause for SQLite.
+// SQLite uses ? as native placeholder so Raw predicates pass through unchanged.
+func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause) {
 	if clause.Raw != nil {
 		raw := *clause.Raw
 		argIdx := 0
 		placeholderCount := 0
-		state := 0 // 0=normal, 1=single-quote, 2=double-quote, 3=dollar-quote
+		state := 0 // 0=normal, 1=single-quote, 2=double-quote
 		for i := 0; i < len(raw); i++ {
 			ch := raw[i]
 			switch state {
@@ -91,18 +92,12 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 				} else if ch == '"' {
 					state = 2
 					b.WriteByte(ch)
-				} else if ch == '$' && i+1 < len(raw) && raw[i+1] == '$' {
-					state = 3
-					b.WriteByte(ch)
-					i++
-					b.WriteByte(raw[i])
 				} else if ch == '?' {
 					placeholderCount++
 					if argIdx < len(clause.RawArgs) {
-						b.WriteString(fmt.Sprintf("$%d", paramIdx))
+						b.WriteByte('?')
 						*args = append(*args, clause.RawArgs[argIdx])
 						argIdx++
-						paramIdx++
 					} else {
 						b.WriteByte(ch)
 					}
@@ -125,13 +120,6 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 				if ch == '"' {
 					state = 0
 				}
-			case 3: // dollar-quoted string
-				b.WriteByte(ch)
-				if ch == '$' && i+1 < len(raw) && raw[i+1] == '$' {
-					i++
-					b.WriteByte(raw[i])
-					state = 0
-				}
 			}
 		}
 		// Defense-in-depth: validate placeholder count matches args.
@@ -139,17 +127,18 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 			b.Reset()
 			b.WriteString(fmt.Sprintf("ERROR: raw predicate has %d placeholder(s) but %d argument(s)", placeholderCount, len(clause.RawArgs)))
 		}
-		return paramIdx
+		return
 	}
 
 	if clause.Comparison != nil {
-		return writeComparison(b, args, *clause.Comparison, paramIdx)
+		writeComparison(b, args, *clause.Comparison)
+		return
 	}
 
 	switch clause.LogicalOp {
 	case ast.LogicalNot:
 		b.WriteString("NOT (")
-		paramIdx = writeWhere(b, args, clause.Children[0], paramIdx)
+		writeWhere(b, args, clause.Children[0])
 		b.WriteString(")")
 	case ast.LogicalAnd, ast.LogicalOr:
 		sep := " AND "
@@ -161,15 +150,13 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 			if i > 0 {
 				b.WriteString(sep)
 			}
-			paramIdx = writeWhere(b, args, child, paramIdx)
+			writeWhere(b, args, child)
 		}
 		b.WriteString(")")
 	}
-
-	return paramIdx
 }
 
-func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, paramIdx int) int {
+func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode) {
 	col := quoteIdent(cmp.Column)
 
 	switch cmp.Op {
@@ -183,9 +170,8 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, pa
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("$%d", paramIdx))
+			b.WriteString("?")
 			*args = append(*args, v)
-			paramIdx++
 		}
 		b.WriteString(")")
 	case ast.OpNotIn:
@@ -194,25 +180,22 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, pa
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("$%d", paramIdx))
+			b.WriteString("?")
 			*args = append(*args, v)
-			paramIdx++
 		}
 		b.WriteString(")")
 	case ast.OpBetween:
-		b.WriteString(fmt.Sprintf("%s BETWEEN $%d AND $%d", col, paramIdx, paramIdx+1))
+		b.WriteString(fmt.Sprintf("%s BETWEEN ? AND ?", col))
 		*args = append(*args, cmp.Values[0], cmp.Values[1])
-		paramIdx += 2
 	default:
 		op := operatorToSQL(cmp.Op)
-		b.WriteString(fmt.Sprintf("%s %s $%d", col, op, paramIdx))
+		b.WriteString(fmt.Sprintf("%s %s ?", col, op))
 		*args = append(*args, cmp.Value)
-		paramIdx++
 	}
-
-	return paramIdx
 }
 
+// operatorToSQL maps AST operators to SQLite SQL operator strings.
+// ILIKE maps to LIKE because SQLite LIKE is case-insensitive for ASCII by default.
 func operatorToSQL(op ast.Operator) string {
 	switch op {
 	case ast.OpEq:
@@ -230,13 +213,14 @@ func operatorToSQL(op ast.Operator) string {
 	case ast.OpLike:
 		return "LIKE"
 	case ast.OpILike:
-		return "ILIKE"
+		// SQLite LIKE is case-insensitive for ASCII; no ILIKE keyword.
+		return "LIKE"
 	default:
 		return "="
 	}
 }
 
-func (p *Postgres) BuildInsert(table string, columns []string, values []any, returningCols []string) dialect.Result {
+func (s *SQLite) BuildInsert(table string, columns []string, values []any, _ []string) dialect.Result {
 	var b strings.Builder
 	b.WriteString("INSERT INTO ")
 	b.WriteString(quoteIdent(table))
@@ -252,25 +236,16 @@ func (p *Postgres) BuildInsert(table string, columns []string, values []any, ret
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("$%d", i+1))
+		b.WriteString("?")
 	}
 	b.WriteString(")")
-	if len(returningCols) > 0 {
-		b.WriteString(" RETURNING ")
-		for i, col := range returningCols {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(quoteIdent(col))
-		}
-	}
+	// SQLite does not support RETURNING; returningCols is ignored.
 	return dialect.Result{SQL: b.String(), Args: values}
 }
 
-func (p *Postgres) BuildUpdate(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any) dialect.Result {
+func (s *SQLite) BuildUpdate(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 	b.WriteString("UPDATE ")
 	b.WriteString(quoteIdent(table))
 	b.WriteString(" SET ")
@@ -281,33 +256,34 @@ func (p *Postgres) BuildUpdate(table string, changes []dialect.ColumnValue, pkCo
 		if raw, ok := cv.Value.(dialect.RawExpr); ok {
 			b.WriteString(fmt.Sprintf("%s = %s", quoteIdent(cv.Column), raw.SQL))
 		} else {
-			b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+			b.WriteString(fmt.Sprintf("%s = ?", quoteIdent(cv.Column)))
 			args = append(args, cv.Value)
-			paramIdx++
 		}
 	}
-	b.WriteString(fmt.Sprintf(" WHERE %s = $%d", quoteIdent(pkColumn), paramIdx))
+	b.WriteString(fmt.Sprintf(" WHERE %s = ?", quoteIdent(pkColumn)))
 	args = append(args, pkValue)
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildDelete(table string, pkColumn string, pkValue any) dialect.Result {
-	sql := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", quoteIdent(table), quoteIdent(pkColumn))
+func (s *SQLite) BuildDelete(table string, pkColumn string, pkValue any) dialect.Result {
+	sql := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoteIdent(table), quoteIdent(pkColumn))
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
-func (p *Postgres) BuildSoftDelete(table string, pkColumn string, pkValue any) dialect.Result {
+func (s *SQLite) BuildSoftDelete(table string, pkColumn string, pkValue any) dialect.Result {
 	sql := fmt.Sprintf(
-		"UPDATE %s SET %s = NOW() WHERE %s = $1",
+		"UPDATE %s SET %s = CURRENT_TIMESTAMP WHERE %s = ?",
 		quoteIdent(table), quoteIdent("deleted_at"), quoteIdent(pkColumn),
 	)
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
-func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+// BuildUpdateVersioned generates a versioned UPDATE for SQLite.
+// SQLite does not support RETURNING, so the new version cannot be retrieved
+// from the statement itself; the caller must increment the version client-side.
+func (s *SQLite) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	b.WriteString("UPDATE ")
 	b.WriteString(quoteIdent(table))
@@ -320,30 +296,26 @@ func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnVa
 		if raw, ok := cv.Value.(dialect.RawExpr); ok {
 			b.WriteString(fmt.Sprintf("%s = %s", quoteIdent(cv.Column), raw.SQL))
 		} else {
-			b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+			b.WriteString(fmt.Sprintf("%s = ?", quoteIdent(cv.Column)))
 			args = append(args, cv.Value)
-			paramIdx++
 		}
 	}
 
 	b.WriteString(fmt.Sprintf(", %s = %s + 1", quoteIdent(versionCol), quoteIdent(versionCol)))
 
-	b.WriteString(fmt.Sprintf(" WHERE %s = $%d", quoteIdent(pkColumn), paramIdx))
+	b.WriteString(fmt.Sprintf(" WHERE %s = ?", quoteIdent(pkColumn)))
 	args = append(args, pkValue)
-	paramIdx++
 
-	b.WriteString(fmt.Sprintf(" AND %s = $%d", quoteIdent(versionCol), paramIdx))
+	b.WriteString(fmt.Sprintf(" AND %s = ?", quoteIdent(versionCol)))
 	args = append(args, currentVersion)
 
-	b.WriteString(fmt.Sprintf(" RETURNING %s", quoteIdent(versionCol)))
-
+	// No RETURNING clause — SQLite does not support it.
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkInsert(table string, columns []string, rows [][]any) dialect.Result {
+func (s *SQLite) BuildBulkInsert(table string, columns []string, rows [][]any) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	b.WriteString("INSERT INTO ")
 	b.WriteString(quoteIdent(table))
@@ -365,9 +337,8 @@ func (p *Postgres) BuildBulkInsert(table string, columns []string, rows [][]any)
 			if ci > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("$%d", paramIdx))
+			b.WriteString("?")
 			args = append(args, val)
-			paramIdx++
 		}
 		b.WriteString(")")
 	}
@@ -375,10 +346,9 @@ func (p *Postgres) BuildBulkInsert(table string, columns []string, rows [][]any)
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkUpdate(table string, sets []dialect.ColumnValue, where *ast.WhereClause) dialect.Result {
+func (s *SQLite) BuildBulkUpdate(table string, sets []dialect.ColumnValue, where *ast.WhereClause) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	b.WriteString("UPDATE ")
 	b.WriteString(quoteIdent(table))
@@ -387,58 +357,55 @@ func (p *Postgres) BuildBulkUpdate(table string, sets []dialect.ColumnValue, whe
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("%s = $%d", quoteIdent(cv.Column), paramIdx))
+		b.WriteString(fmt.Sprintf("%s = ?", quoteIdent(cv.Column)))
 		args = append(args, cv.Value)
-		paramIdx++
 	}
 
 	if where != nil {
 		b.WriteString(" WHERE ")
-		writeWhere(&b, &args, *where, paramIdx)
+		writeWhere(&b, &args, *where)
 	}
 
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkDelete(table string, where *ast.WhereClause) dialect.Result {
+func (s *SQLite) BuildBulkDelete(table string, where *ast.WhereClause) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	b.WriteString("DELETE FROM ")
 	b.WriteString(quoteIdent(table))
 
 	if where != nil {
 		b.WriteString(" WHERE ")
-		writeWhere(&b, &args, *where, paramIdx)
+		writeWhere(&b, &args, *where)
 	}
 
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkSoftDelete(table string, where *ast.WhereClause) dialect.Result {
+func (s *SQLite) BuildBulkSoftDelete(table string, where *ast.WhereClause) dialect.Result {
 	var b strings.Builder
 	var args []any
-	paramIdx := 1
 
 	b.WriteString("UPDATE ")
 	b.WriteString(quoteIdent(table))
 	b.WriteString(" SET ")
 	b.WriteString(quoteIdent("deleted_at"))
-	b.WriteString(" = NOW() WHERE ")
+	b.WriteString(" = CURRENT_TIMESTAMP WHERE ")
 	b.WriteString(quoteIdent("deleted_at"))
 	b.WriteString(" IS NULL")
 
 	if where != nil {
 		b.WriteString(" AND ")
-		writeWhere(&b, &args, *where, paramIdx)
+		writeWhere(&b, &args, *where)
 	}
 
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) dialect.Result {
-	result := p.BuildBulkInsert(table, columns, rows)
+func (s *SQLite) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) dialect.Result {
+	result := s.BuildBulkInsert(table, columns, rows)
 
 	var b strings.Builder
 	b.WriteString(result.SQL)
