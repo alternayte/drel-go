@@ -93,9 +93,8 @@ func main() {
 }
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS log_entries`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS log_entries`)
+	database.Exec(ctx, `
 		CREATE TABLE log_entries (
 			id SERIAL PRIMARY KEY,
 			level TEXT NOT NULL,
@@ -107,5 +106,5 @@ func setup(ctx context.Context, database *db.DB) {
 }
 
 func teardown(ctx context.Context, database *db.DB) {
-	database.Driver().Exec(ctx, `DROP TABLE IF EXISTS log_entries`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS log_entries`)
 }

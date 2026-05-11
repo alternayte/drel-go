@@ -266,9 +266,8 @@ func main() {
 }
 
 func setup(ctx context.Context, engine *drel.Engine) {
-	drv := engine.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS products`)
-	drv.Exec(ctx, `
+	engine.Exec(ctx, `DROP TABLE IF EXISTS products`)
+	engine.Exec(ctx, `
 		CREATE TABLE products (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -289,10 +288,10 @@ func setup(ctx context.Context, engine *drel.Engine) {
 		{"Thingamajig", 1500, true},
 		{"Whatchamacallit", 3000, false},
 	} {
-		drv.Exec(ctx, `INSERT INTO products (name, price, in_stock) VALUES ($1, $2, $3)`, p.name, p.price, p.inStock)
+		engine.Exec(ctx, `INSERT INTO products (name, price, in_stock) VALUES ($1, $2, $3)`, p.name, p.price, p.inStock)
 	}
 }
 
 func teardown(ctx context.Context, engine *drel.Engine) {
-	engine.Driver().Exec(ctx, `DROP TABLE IF EXISTS products`)
+	engine.Exec(ctx, `DROP TABLE IF EXISTS products`)
 }

@@ -3,6 +3,7 @@
 package users
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -93,4 +94,20 @@ var UserMeta = drel.ModelMeta[User]{
 	InsertColumns: userInsertColumns,
 	ScanReturning: userScanReturning,
 	ColumnValue:   userColumnValue,
+}
+
+type UserRepository struct {
+	*drel.Repository[User]
+}
+
+func (r *UserRepository) FindByID(ctx context.Context, id int) (*User, error) {
+	return r.Find(ctx, id)
+}
+
+type TxUserRepository struct {
+	*drel.TxRepository[User]
+}
+
+func (r *TxUserRepository) FindByID(ctx context.Context, id int) (*User, error) {
+	return r.Find(ctx, id)
 }

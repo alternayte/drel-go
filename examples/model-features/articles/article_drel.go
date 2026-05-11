@@ -3,6 +3,7 @@
 package articles
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -125,4 +126,20 @@ var ArticleMeta = drel.ModelMeta[Article]{
 		_, updatedByPtr := p.AuditPtrs()
 		*updatedByPtr = actor
 	},
+}
+
+type ArticleRepository struct {
+	*drel.Repository[Article]
+}
+
+func (r *ArticleRepository) FindByID(ctx context.Context, id int) (*Article, error) {
+	return r.Find(ctx, id)
+}
+
+type TxArticleRepository struct {
+	*drel.TxRepository[Article]
+}
+
+func (r *TxArticleRepository) FindByID(ctx context.Context, id int) (*Article, error) {
+	return r.Find(ctx, id)
 }

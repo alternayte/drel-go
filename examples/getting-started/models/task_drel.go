@@ -3,6 +3,7 @@
 package models
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -101,4 +102,20 @@ var TaskMeta = drel.ModelMeta[Task]{
 	InsertColumns: taskInsertColumns,
 	ScanReturning: taskScanReturning,
 	ColumnValue:   taskColumnValue,
+}
+
+type TaskRepository struct {
+	*drel.Repository[Task]
+}
+
+func (r *TaskRepository) FindByID(ctx context.Context, id int) (*Task, error) {
+	return r.Find(ctx, id)
+}
+
+type TxTaskRepository struct {
+	*drel.TxRepository[Task]
+}
+
+func (r *TxTaskRepository) FindByID(ctx context.Context, id int) (*Task, error) {
+	return r.Find(ctx, id)
 }

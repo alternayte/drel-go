@@ -9,7 +9,7 @@ import (
 
 type DB struct {
 	*drel.Engine
-	LogEntries *drel.Repository[logs.LogEntry]
+	LogEntries *logs.LogEntryRepository
 }
 
 func Open(dsn string, opts ...drel.Option) (*DB, error) {
@@ -19,6 +19,6 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}
 	return &DB{
 		Engine: engine,
-		LogEntries: drel.NewRepository(engine, logs.LogEntryMeta),
+		LogEntries: &logs.LogEntryRepository{Repository: drel.NewRepository(engine, logs.LogEntryMeta)},
 	}, nil
 }

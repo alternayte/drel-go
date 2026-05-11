@@ -80,7 +80,7 @@ func demoSoftDelete(ctx context.Context, database *db.DB) {
 	}
 
 	// Verify deleted_at is set via raw SQL
-	row := database.Driver().QueryRow(ctx,
+	row := database.QueryRow(ctx,
 		"SELECT deleted_at IS NOT NULL FROM articles WHERE id = $1", articleID)
 	var hasDeletedAt bool
 	if err := row.Scan(&hasDeletedAt); err != nil {
@@ -122,7 +122,7 @@ func demoSoftDelete(ctx context.Context, database *db.DB) {
 		log.Fatal(err)
 	}
 
-	row = database.Driver().QueryRow(ctx,
+	row = database.QueryRow(ctx,
 		"SELECT COUNT(*) FROM articles WHERE id = $1", hardID)
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -166,7 +166,7 @@ func demoVersioning(ctx context.Context, database *db.DB) {
 	}
 
 	// Verify version in the database
-	row := database.Driver().QueryRow(ctx,
+	row := database.QueryRow(ctx,
 		"SELECT version, title FROM articles WHERE id = $1", article.ID())
 	var dbVersion int
 	var dbTitle string
@@ -201,7 +201,7 @@ func demoAudit(ctx context.Context, database *db.DB) {
 	}
 
 	// Check created_by / updated_by
-	row := database.Driver().QueryRow(ctx,
+	row := database.QueryRow(ctx,
 		"SELECT created_by, updated_by FROM articles WHERE id = $1", articleID)
 	var createdBy, updatedBy string
 	if err := row.Scan(&createdBy, &updatedBy); err != nil {
@@ -225,7 +225,7 @@ func demoAudit(ctx context.Context, database *db.DB) {
 	}
 
 	// Verify created_by unchanged, updated_by changed
-	row = database.Driver().QueryRow(ctx,
+	row = database.QueryRow(ctx,
 		"SELECT created_by, updated_by FROM articles WHERE id = $1", articleID)
 	if err := row.Scan(&createdBy, &updatedBy); err != nil {
 		log.Fatal(err)
@@ -238,9 +238,8 @@ func demoAudit(ctx context.Context, database *db.DB) {
 // ---------------------------------------------------------------------------
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS articles`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS articles`)
+	database.Exec(ctx, `
 		CREATE TABLE articles (
 			id         SERIAL PRIMARY KEY,
 			title      TEXT NOT NULL,
@@ -256,5 +255,5 @@ func setup(ctx context.Context, database *db.DB) {
 }
 
 func teardown(ctx context.Context, database *db.DB) {
-	database.Driver().Exec(ctx, `DROP TABLE IF EXISTS articles`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS articles`)
 }

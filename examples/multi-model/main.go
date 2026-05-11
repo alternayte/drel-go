@@ -123,7 +123,7 @@ func main() {
 
 	// Verify audit log
 	fmt.Println("\n=== Audit log ===")
-	row := database.Driver().QueryRow(ctx,
+	row := database.QueryRow(ctx,
 		"SELECT event_type, payload FROM audit_log ORDER BY id LIMIT 1")
 	var eventType, payload string
 	if err := row.Scan(&eventType, &payload); err != nil {
@@ -133,10 +133,9 @@ func main() {
 }
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS audit_log`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS users`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS audit_log`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS users`)
+	database.Exec(ctx, `
 		CREATE TABLE users (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -145,7 +144,7 @@ func setup(ctx context.Context, database *db.DB) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `
 		CREATE TABLE audit_log (
 			id         SERIAL PRIMARY KEY,
 			event_type TEXT NOT NULL,
@@ -156,7 +155,6 @@ func setup(ctx context.Context, database *db.DB) {
 }
 
 func teardown(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS audit_log`)
-	drv.Exec(ctx, `DROP TABLE IF EXISTS users`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS audit_log`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS users`)
 }

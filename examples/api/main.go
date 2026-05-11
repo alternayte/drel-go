@@ -255,9 +255,8 @@ func handleDeleteProduct(database *db.DB) http.HandlerFunc {
 }
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS products`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS products`)
+	database.Exec(ctx, `
 		CREATE TABLE products (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,

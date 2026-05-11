@@ -9,7 +9,7 @@ import (
 
 type DB struct {
 	*drel.Engine
-	Users *drel.Repository[users.User]
+	Users *users.UserRepository
 }
 
 func Open(dsn string, opts ...drel.Option) (*DB, error) {
@@ -19,6 +19,6 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}
 	return &DB{
 		Engine: engine,
-		Users: drel.NewRepository(engine, users.UserMeta),
+		Users: &users.UserRepository{Repository: drel.NewRepository(engine, users.UserMeta)},
 	}, nil
 }

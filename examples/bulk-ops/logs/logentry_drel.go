@@ -3,6 +3,7 @@
 package logs
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -93,4 +94,20 @@ var LogEntryMeta = drel.ModelMeta[LogEntry]{
 	InsertColumns: logentryInsertColumns,
 	ScanReturning: logentryScanReturning,
 	ColumnValue:   logentryColumnValue,
+}
+
+type LogEntryRepository struct {
+	*drel.Repository[LogEntry]
+}
+
+func (r *LogEntryRepository) FindByID(ctx context.Context, id int) (*LogEntry, error) {
+	return r.Find(ctx, id)
+}
+
+type TxLogEntryRepository struct {
+	*drel.TxRepository[LogEntry]
+}
+
+func (r *TxLogEntryRepository) FindByID(ctx context.Context, id int) (*LogEntry, error) {
+	return r.Find(ctx, id)
 }

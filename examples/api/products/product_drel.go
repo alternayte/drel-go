@@ -3,6 +3,7 @@
 package products
 
 import (
+	"context"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -109,4 +110,20 @@ var ProductMeta = drel.ModelMeta[Product]{
 	InsertColumns: productInsertColumns,
 	ScanReturning: productScanReturning,
 	ColumnValue:   productColumnValue,
+}
+
+type ProductRepository struct {
+	*drel.Repository[Product]
+}
+
+func (r *ProductRepository) FindByID(ctx context.Context, id int) (*Product, error) {
+	return r.Find(ctx, id)
+}
+
+type TxProductRepository struct {
+	*drel.TxRepository[Product]
+}
+
+func (r *TxProductRepository) FindByID(ctx context.Context, id int) (*Product, error) {
+	return r.Find(ctx, id)
 }

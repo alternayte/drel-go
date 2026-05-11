@@ -111,9 +111,8 @@ func main() {
 }
 
 func setup(ctx context.Context, database *db.DB) {
-	drv := database.Driver()
-	drv.Exec(ctx, `DROP TABLE IF EXISTS tasks`)
-	drv.Exec(ctx, `
+	database.Exec(ctx, `DROP TABLE IF EXISTS tasks`)
+	database.Exec(ctx, `
 		CREATE TABLE tasks (
 			id SERIAL PRIMARY KEY,
 			title TEXT NOT NULL,
@@ -126,5 +125,5 @@ func setup(ctx context.Context, database *db.DB) {
 }
 
 func teardown(ctx context.Context, database *db.DB) {
-	database.Driver().Exec(ctx, `DROP TABLE IF EXISTS tasks`)
+	database.Exec(ctx, `DROP TABLE IF EXISTS tasks`)
 }
