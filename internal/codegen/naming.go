@@ -40,13 +40,23 @@ func pluralize(s string) string {
 	return s + "s"
 }
 
-func inferTableName(structName string) string {
-	return toSnakeCase(pluralize(structName))
-}
-
-func toLowerFirst(s string) string {
-	if s == "" {
+func singularize(s string) string {
+	if s == "" || len(s) == 1 {
 		return s
 	}
-	return strings.ToLower(s[:1]) + s[1:]
+	lower := strings.ToLower(s)
+	if strings.HasSuffix(lower, "ies") && len(lower) > 3 {
+		return s[:len(s)-3] + "y"
+	}
+	if strings.HasSuffix(lower, "ses") || strings.HasSuffix(lower, "shes") || strings.HasSuffix(lower, "ches") || strings.HasSuffix(lower, "xes") || strings.HasSuffix(lower, "zes") {
+		return s[:len(s)-2]
+	}
+	if strings.HasSuffix(lower, "s") {
+		return s[:len(s)-1]
+	}
+	return s
+}
+
+func inferTableName(structName string) string {
+	return toSnakeCase(pluralize(structName))
 }

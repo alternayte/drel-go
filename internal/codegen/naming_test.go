@@ -39,6 +39,30 @@ func TestPluralize(t *testing.T) {
 	}
 }
 
+func TestSingularize(t *testing.T) {
+	tests := []struct {
+		input, expected string
+	}{
+		{"users", "user"},
+		{"posts", "post"},
+		{"categories", "category"},
+		{"companies", "company"},
+		{"statuses", "status"},
+		{"churches", "church"},
+		{"boxes", "box"},
+		{"buzzes", "buzz"},
+		{"dishes", "dish"},
+		{"s", "s"},
+		{"", ""},
+		{"person", "person"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, singularize(tt.input))
+		})
+	}
+}
+
 func TestInferTableName(t *testing.T) {
 	tests := []struct{ input, want string }{
 		{"User", "users"},
