@@ -36,6 +36,19 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 			}
 			b.WriteString(quoteIdent(col))
 		}
+		for aggIdx, agg := range node.Aggregates {
+			if len(node.Columns) > 0 || aggIdx > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(aggFuncSQL(agg.Func))
+			b.WriteString("(")
+			b.WriteString(quoteIdent(agg.Column))
+			b.WriteString(")")
+			if agg.Alias != "" {
+				b.WriteString(" AS ")
+				b.WriteString(quoteIdent(agg.Alias))
+			}
+		}
 		b.WriteString(" FROM ")
 		b.WriteString(quoteIdent(node.Table))
 	}
@@ -43,6 +56,22 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 	if node.Where != nil {
 		b.WriteString(" WHERE ")
 		paramIdx = writeWhere(&b, &args, *node.Where, paramIdx)
+	}
+
+	if node.Type != ast.QueryExists && node.Type != ast.QueryCount {
+		if len(node.GroupBy) > 0 {
+			b.WriteString(" GROUP BY ")
+			for i, col := range node.GroupBy {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(quoteIdent(col))
+			}
+		}
+		if node.Having != nil {
+			b.WriteString(" HAVING ")
+			paramIdx = writeWhere(&b, &args, *node.Having, paramIdx)
+		}
 	}
 
 	if node.Type == ast.QueryExists {
@@ -460,6 +489,23 @@ func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any,
 	}
 
 	return dialect.Result{SQL: b.String(), Args: result.Args}
+}
+
+func aggFuncSQL(f ast.AggFunc) string {
+	switch f {
+	case ast.AggSum:
+		return "SUM"
+	case ast.AggAvg:
+		return "AVG"
+	case ast.AggMin:
+		return "MIN"
+	case ast.AggMax:
+		return "MAX"
+	case ast.AggCount:
+		return "COUNT"
+	default:
+		return "COUNT"
+	}
 }
 
 func quoteIdent(name string) string {

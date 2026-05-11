@@ -731,6 +731,143 @@ func TestSQLite_BuildBulkUpsert(t *testing.T) {
 	assert.Equal(t, []any{1, "Alice", "alice@example.com", 2, "Bob", "bob@example.com"}, r.Args)
 }
 
+// ─── GroupBy / Having / Aggregates ───────────────────────────────────────────
+
+func TestSQLite_BuildSelectGroupBy(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:   "orders",
+		Columns: []string{"category"},
+		GroupBy: []string{"category"},
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggSum, Column: "amount", Alias: "total"},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT "category", SUM("amount") AS "total" FROM "orders" GROUP BY "category"`, result.SQL)
+	assert.Nil(t, result.Args)
+}
+
+func TestSQLite_BuildSelectHaving(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:   "orders",
+		Columns: []string{"category"},
+		GroupBy: []string{"category"},
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggCount, Column: "id", Alias: "cnt"},
+		},
+		Having: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "cnt",
+				Op:     ast.OpGT,
+				Value:  5,
+			},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT "category", COUNT("id") AS "cnt" FROM "orders" GROUP BY "category" HAVING "cnt" > ?`, result.SQL)
+	assert.Equal(t, []any{5}, result.Args)
+}
+
+func TestSQLite_BuildSelectAggregateOnly(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table: "orders",
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggSum, Column: "amount", Alias: "total"},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT SUM("amount") AS "total" FROM "orders"`, result.SQL)
+	assert.Nil(t, result.Args)
+}
+
+func TestSQLite_BuildSelectAggregateNoAlias(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table: "orders",
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggCount, Column: "id"},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT COUNT("id") FROM "orders"`, result.SQL)
+	assert.Nil(t, result.Args)
+}
+
+func TestSQLite_BuildSelectAllAggFuncs(t *testing.T) {
+	s := New()
+	tests := []struct {
+		fn       ast.AggFunc
+		expected string
+	}{
+		{ast.AggSum, "SUM"},
+		{ast.AggAvg, "AVG"},
+		{ast.AggMin, "MIN"},
+		{ast.AggMax, "MAX"},
+		{ast.AggCount, "COUNT"},
+	}
+	for _, tt := range tests {
+		node := ast.SelectNode{
+			Table:      "t",
+			Aggregates: []ast.AggregateExpr{{Func: tt.fn, Column: "v", Alias: "r"}},
+			Type:       ast.QuerySelect,
+		}
+		result := s.BuildSelect(node)
+		assert.Contains(t, result.SQL, tt.expected+"(")
+	}
+}
+
+func TestSQLite_BuildSelectMultipleGroupByColumns(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:   "sales",
+		Columns: []string{"region", "category"},
+		GroupBy: []string{"region", "category"},
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggSum, Column: "revenue", Alias: "total_revenue"},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t,
+		`SELECT "region", "category", SUM("revenue") AS "total_revenue" FROM "sales" GROUP BY "region", "category"`,
+		result.SQL,
+	)
+	assert.Nil(t, result.Args)
+}
+
+func TestSQLite_BuildSelectGroupByWithWhere(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:   "orders",
+		Columns: []string{"status"},
+		GroupBy: []string{"status"},
+		Aggregates: []ast.AggregateExpr{
+			{Func: ast.AggCount, Column: "id", Alias: "cnt"},
+		},
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "created_at",
+				Op:     ast.OpGTE,
+				Value:  "2024-01-01",
+			},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t,
+		`SELECT "status", COUNT("id") AS "cnt" FROM "orders" WHERE "created_at" >= ? GROUP BY "status"`,
+		result.SQL,
+	)
+	assert.Equal(t, []any{"2024-01-01"}, result.Args)
+}
+
 // ─── Interface compliance ─────────────────────────────────────────────────────
 
 func TestSQLite_ImplementsDialect(t *testing.T) {

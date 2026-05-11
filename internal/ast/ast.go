@@ -61,12 +61,31 @@ type OrderByExpr struct {
 	Direction Direction
 }
 
+type AggFunc int
+
+const (
+	AggSum AggFunc = iota
+	AggAvg
+	AggMin
+	AggMax
+	AggCount
+)
+
+type AggregateExpr struct {
+	Func   AggFunc
+	Column string
+	Alias  string
+}
+
 type SelectNode struct {
-	Table   string
-	Columns []string
-	Where   *WhereClause
-	OrderBy []OrderByExpr
-	Limit   *int
-	Offset  *int
-	Type    QueryType
+	Table      string
+	Columns    []string
+	Where      *WhereClause
+	OrderBy    []OrderByExpr
+	Limit      *int
+	Offset     *int
+	Type       QueryType
+	GroupBy    []string
+	Having     *WhereClause
+	Aggregates []AggregateExpr
 }
