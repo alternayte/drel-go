@@ -36,6 +36,9 @@ type RelationInfo struct {
 type IncludeSpec struct {
 	rel      *RelationInfo
 	unscoped bool
+	wheres   []ast.WhereClause
+	orderBy  []ast.OrderByExpr
+	limit    *int
 }
 
 // NewIncludeSpec creates an IncludeSpec from a RelationInfo.
@@ -46,7 +49,38 @@ func NewIncludeSpec(rel *RelationInfo) IncludeSpec {
 // Unscoped returns a copy of the IncludeSpec that bypasses global filters
 // (e.g. soft delete) when loading the related entities.
 func (s IncludeSpec) Unscoped() IncludeSpec {
-	return IncludeSpec{rel: s.rel, unscoped: true}
+	c := s
+	c.unscoped = true
+	return c
+}
+
+// Where returns a copy of the IncludeSpec with an additional filter predicate
+// applied to the related entities query.
+func (s IncludeSpec) Where(pred Predicate) IncludeSpec {
+	c := s
+	c.wheres = append(append([]ast.WhereClause(nil), s.wheres...), pred.clause)
+	return c
+}
+
+// OrderBy returns a copy of the IncludeSpec with the given ordering applied
+// to the related entities query.
+func (s IncludeSpec) OrderBy(exprs ...OrderExpr) IncludeSpec {
+	c := s
+	newOrder := make([]ast.OrderByExpr, len(s.orderBy))
+	copy(newOrder, s.orderBy)
+	for _, e := range exprs {
+		newOrder = append(newOrder, e.ToAST())
+	}
+	c.orderBy = newOrder
+	return c
+}
+
+// Limit returns a copy of the IncludeSpec that limits the number of related
+// entities loaded per parent batch.
+func (s IncludeSpec) Limit(n int) IncludeSpec {
+	c := s
+	c.limit = &n
+	return c
 }
 
 // IncludableQuery constructs queries that eagerly load related entities.
@@ -125,11 +159,11 @@ func (ie *includeExecutor) loadRelations(ctx context.Context, parents []any, inc
 func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc IncludeSpec) error {
 	switch inc.rel.Type {
 	case HasMany, HasOne:
-		return ie.loadHasManyOrOne(ctx, parents, inc.rel, inc.unscoped)
+		return ie.loadHasManyOrOne(ctx, parents, inc)
 	case BelongsTo:
-		return ie.loadBelongsTo(ctx, parents, inc.rel, inc.unscoped)
+		return ie.loadBelongsTo(ctx, parents, inc)
 	case ManyToMany:
-		return ie.loadManyToMany(ctx, parents, inc.rel, inc.unscoped)
+		return ie.loadManyToMany(ctx, parents, inc)
 	default:
 		return fmt.Errorf("unknown relation type %d", inc.rel.Type)
 	}
@@ -137,7 +171,8 @@ func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc 
 
 // loadHasManyOrOne executes: SELECT * FROM related_table WHERE fk_column IN (pk1, pk2, ...)
 // then groups results by the FK value and sets them on each parent.
-func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
+func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, inc IncludeSpec) error {
+	rel := inc.rel
 	// Collect parent PK values.
 	pkValues := make([]any, len(parents))
 	for i, p := range parents {
@@ -145,7 +180,7 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 	}
 
 	// Query related entities.
-	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.FKColumn, pkValues, unscoped)
+	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.FKColumn, pkValues, inc)
 	if err != nil {
 		return err
 	}
@@ -192,7 +227,8 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 
 // loadBelongsTo executes: SELECT * FROM related_table WHERE pk IN (fk1, fk2, ...)
 // Collects FK values from parents, then matches related entities by PK.
-func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
+func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, inc IncludeSpec) error {
+	rel := inc.rel
 	// Find the FK column index in the parent meta.
 	fkIdx := findColumnIndex(ie.parentMeta.Columns, rel.FKColumn)
 	if fkIdx < 0 {
@@ -215,7 +251,7 @@ func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, rel
 	}
 
 	// Query related entities by their PK.
-	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, fkValues, unscoped)
+	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, fkValues, inc)
 	if err != nil {
 		return err
 	}
@@ -242,8 +278,9 @@ const includeBatchSize = 1000
 
 // queryByColumn executes SELECT * FROM table WHERE column IN (values...)
 // batching the IN list to stay within Postgres parameter limits.
-// When unscoped is false, meta.Filters are applied to the query.
-func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBase, column string, values []any, unscoped bool) ([]any, error) {
+// When inc.unscoped is false, meta.Filters are applied to the query.
+// Any inc.wheres, inc.orderBy, and inc.limit are also applied.
+func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBase, column string, values []any, inc IncludeSpec) ([]any, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
@@ -265,12 +302,22 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 		}
 
 		var where *ast.WhereClause
-		if !unscoped && len(meta.Filters) > 0 {
-			allWheres := make([]ast.WhereClause, 0, len(meta.Filters)+1)
-			for _, f := range meta.Filters {
-				allWheres = append(allWheres, f.Clause)
+		hasFilters := !inc.unscoped && len(meta.Filters) > 0
+		hasIncWheres := len(inc.wheres) > 0
+		if hasFilters || hasIncWheres {
+			capacity := 1 // inClause
+			if hasFilters {
+				capacity += len(meta.Filters)
+			}
+			capacity += len(inc.wheres)
+			allWheres := make([]ast.WhereClause, 0, capacity)
+			if hasFilters {
+				for _, f := range meta.Filters {
+					allWheres = append(allWheres, f.Clause)
+				}
 			}
 			allWheres = append(allWheres, inClause)
+			allWheres = append(allWheres, inc.wheres...)
 			combined := ast.WhereClause{
 				LogicalOp: ast.LogicalAnd,
 				Children:  allWheres,
@@ -284,6 +331,8 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 			Table:   meta.Table,
 			Columns: meta.Columns,
 			Where:   where,
+			OrderBy: inc.orderBy,
+			Limit:   inc.limit,
 			Type:    ast.QuerySelect,
 		}
 
@@ -314,7 +363,8 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 // 1. SELECT source_fk, target_fk FROM pivot WHERE source_fk IN (...)
 // 2. SELECT * FROM target WHERE pk IN (collected target PKs)
 // 3. Build source→[]target mapping and assign via FieldSetter
-func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
+func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, inc IncludeSpec) error {
+	rel := inc.rel
 	pkValues := make([]any, len(parents))
 	for i, p := range parents {
 		pkValues[i] = ie.parentMeta.PKValue(p)
@@ -383,7 +433,7 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, re
 		}
 	}
 
-	targets, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, targetPKs, unscoped)
+	targets, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, targetPKs, inc)
 	if err != nil {
 		return err
 	}
