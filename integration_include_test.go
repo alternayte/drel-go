@@ -21,6 +21,14 @@ type Author struct {
 	UpdatedAt time.Time
 	Books     []*Book
 	Profile   *AuthorProfile
+	Tags      []*Tag
+}
+
+type Tag struct {
+	ID        int
+	Label     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Book struct {
@@ -181,11 +189,37 @@ var profileMeta = drel.ModelMeta[AuthorProfile]{
 	},
 }
 
+var tagMeta = drel.ModelMeta[Tag]{
+	Table:    "tags",
+	Columns:  []string{"id", "label", "created_at", "updated_at"},
+	PKColumn: "id",
+	Scan: func(row drel.Row) (*Tag, error) {
+		t := &Tag{}
+		err := row.Scan(&t.ID, &t.Label, &t.CreatedAt, &t.UpdatedAt)
+		return t, err
+	},
+	PKValue: func(t *Tag) any { return t.ID },
+	ColumnValue: func(t *Tag, idx int) any {
+		switch idx {
+		case 0:
+			return t.ID
+		case 1:
+			return t.Label
+		case 2:
+			return t.CreatedAt
+		case 3:
+			return t.UpdatedAt
+		}
+		return nil
+	},
+}
+
 // --- Meta base conversions for RelationInfo ---
 
 var bookMetaBase = drel.ToMetaBase(&bookMeta)
 var profileMetaBase = drel.ToMetaBase(&profileMeta)
 var authorMetaBase = drel.ToMetaBase(&authorMeta)
+var tagMetaBase = drel.ToMetaBase(&tagMeta)
 
 // --- RelationInfo definitions ---
 
@@ -227,15 +261,32 @@ var authorRelation = &drel.RelationInfo{
 	},
 }
 
+var tagsRelation = &drel.RelationInfo{
+	Name:      "Tags",
+	Type:      drel.ManyToMany,
+	FKColumn:  "author_id",
+	JoinTable: "author_tags",
+	RefColumn: "tag_id",
+	RelatedMeta: tagMetaBase,
+	FieldSetter: func(parent any, related any) {
+		a := parent.(*Author)
+		items := related.([]any)
+		tags := make([]*Tag, len(items))
+		for i, item := range items {
+			tags[i] = item.(*Tag)
+		}
+		a.Tags = tags
+	},
+}
+
 // --- Test helpers ---
 
 func setupRelationDB(t *testing.T) *drel.Engine {
 	t.Helper()
 	engine := setupTestDB(t)
 	ctx := context.Background()
-	drv := engine.Driver()
 
-	_, err := drv.Exec(ctx, `
+	_, err := engine.Exec(ctx, `
 		CREATE TABLE authors (
 			id         SERIAL PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -245,7 +296,7 @@ func setupRelationDB(t *testing.T) *drel.Engine {
 	`)
 	require.NoError(t, err)
 
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		CREATE TABLE books (
 			id         SERIAL PRIMARY KEY,
 			title      TEXT NOT NULL,
@@ -256,7 +307,7 @@ func setupRelationDB(t *testing.T) *drel.Engine {
 	`)
 	require.NoError(t, err)
 
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		CREATE TABLE author_profiles (
 			id         SERIAL PRIMARY KEY,
 			bio        TEXT NOT NULL,
@@ -267,20 +318,38 @@ func setupRelationDB(t *testing.T) *drel.Engine {
 	`)
 	require.NoError(t, err)
 
+	_, err = engine.Exec(ctx, `
+		CREATE TABLE tags (
+			id         SERIAL PRIMARY KEY,
+			label      TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`)
+	require.NoError(t, err)
+
+	_, err = engine.Exec(ctx, `
+		CREATE TABLE author_tags (
+			author_id INTEGER NOT NULL REFERENCES authors(id),
+			tag_id    INTEGER NOT NULL REFERENCES tags(id),
+			PRIMARY KEY (author_id, tag_id)
+		)
+	`)
+	require.NoError(t, err)
+
 	return engine
 }
 
 func seedRelationData(t *testing.T, engine *drel.Engine) {
 	t.Helper()
 	ctx := context.Background()
-	drv := engine.Driver()
 
 	// Authors
-	_, err := drv.Exec(ctx, "INSERT INTO authors (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+	_, err := engine.Exec(ctx, "INSERT INTO authors (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
 	require.NoError(t, err)
 
 	// Books
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		INSERT INTO books (title, author_id) VALUES
 			('Book A1', 1),
 			('Book A2', 1),
@@ -290,10 +359,22 @@ func seedRelationData(t *testing.T, engine *drel.Engine) {
 	require.NoError(t, err)
 
 	// Profiles
-	_, err = drv.Exec(ctx, `
+	_, err = engine.Exec(ctx, `
 		INSERT INTO author_profiles (bio, author_id) VALUES
 			('Alice writes things', 1),
 			('Bob also writes', 2)
+	`)
+	require.NoError(t, err)
+
+	// Tags
+	_, err = engine.Exec(ctx, `
+		INSERT INTO tags (id, label) VALUES (1, 'fiction'), (2, 'tech'), (3, 'science')
+	`)
+	require.NoError(t, err)
+
+	// Author-Tag associations: Alice=fiction+tech, Bob=tech+science
+	_, err = engine.Exec(ctx, `
+		INSERT INTO author_tags (author_id, tag_id) VALUES (1, 1), (1, 2), (2, 2), (2, 3)
 	`)
 	require.NoError(t, err)
 }
@@ -321,10 +402,9 @@ func TestIntegration_Include_HasMany(t *testing.T) {
 func TestIntegration_Include_HasMany_Empty(t *testing.T) {
 	engine := setupRelationDB(t)
 	ctx := context.Background()
-	drv := engine.Driver()
 
 	// Insert an author with no books.
-	_, err := drv.Exec(ctx, "INSERT INTO authors (id, name) VALUES (1, 'Lonely')")
+	_, err := engine.Exec(ctx, "INSERT INTO authors (id, name) VALUES (1, 'Lonely')")
 	require.NoError(t, err)
 
 	repo := drel.NewRepository(engine, authorMeta)
@@ -380,4 +460,117 @@ func TestIntegration_Include_MultipleParents(t *testing.T) {
 	}
 	assert.Equal(t, 3, booksByAuthor["Alice"])
 	assert.Equal(t, 1, booksByAuthor["Bob"])
+}
+
+func TestIntegration_Include_ManyToMany(t *testing.T) {
+	engine := setupRelationDB(t)
+	seedRelationData(t, engine)
+	repo := drel.NewRepository(engine, authorMeta)
+	ctx := context.Background()
+
+	alice, err := repo.Include(drel.NewIncludeSpec(tagsRelation)).Find(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", alice.Name)
+	require.Len(t, alice.Tags, 2)
+
+	labels := make([]string, len(alice.Tags))
+	for i, tag := range alice.Tags {
+		labels[i] = tag.Label
+	}
+	assert.ElementsMatch(t, []string{"fiction", "tech"}, labels)
+}
+
+func TestIntegration_Include_ManyToMany_AllParents(t *testing.T) {
+	engine := setupRelationDB(t)
+	seedRelationData(t, engine)
+	repo := drel.NewRepository(engine, authorMeta)
+	ctx := context.Background()
+
+	authors, err := repo.Include(drel.NewIncludeSpec(tagsRelation)).All(ctx)
+	require.NoError(t, err)
+	require.Len(t, authors, 2)
+
+	tagsByAuthor := make(map[string][]string)
+	for _, a := range authors {
+		labels := make([]string, len(a.Tags))
+		for i, tag := range a.Tags {
+			labels[i] = tag.Label
+		}
+		tagsByAuthor[a.Name] = labels
+	}
+	assert.ElementsMatch(t, []string{"fiction", "tech"}, tagsByAuthor["Alice"])
+	assert.ElementsMatch(t, []string{"tech", "science"}, tagsByAuthor["Bob"])
+}
+
+func TestIntegration_Include_FilterAware_SoftDelete(t *testing.T) {
+	engine := setupTestDB(t)
+	ctx := context.Background()
+
+	// Create tables with soft delete on books.
+	_, err := engine.Exec(ctx, `
+		CREATE TABLE authors (
+			id         SERIAL PRIMARY KEY,
+			name       TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`)
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, `
+		CREATE TABLE books (
+			id         SERIAL PRIMARY KEY,
+			title      TEXT NOT NULL,
+			author_id  INTEGER NOT NULL REFERENCES authors(id),
+			deleted_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`)
+	require.NoError(t, err)
+
+	// Seed: Alice with 3 books, one soft-deleted.
+	_, err = engine.Exec(ctx, "INSERT INTO authors (id, name) VALUES (1, 'Alice')")
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, `INSERT INTO books (title, author_id) VALUES ('Active Book 1', 1), ('Active Book 2', 1)`)
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, `INSERT INTO books (title, author_id, deleted_at) VALUES ('Deleted Book', 1, now())`)
+	require.NoError(t, err)
+
+	// Create a book meta WITH soft delete filter and deleted_at column.
+	sdBookMeta := drel.ModelMeta[Book]{
+		Table:    "books",
+		Columns:  []string{"id", "title", "author_id", "deleted_at", "created_at", "updated_at"},
+		PKColumn: "id",
+		Scan: func(row drel.Row) (*Book, error) {
+			b := &Book{}
+			var deletedAt *time.Time
+			err := row.Scan(&b.ID, &b.Title, &b.AuthorID, &deletedAt, &b.CreatedAt, &b.UpdatedAt)
+			return b, err
+		},
+		PKValue:       func(b *Book) any { return b.ID },
+		ColumnValue:   bookMeta.ColumnValue,
+		HasSoftDelete: true,
+		Filters:       []drel.NamedFilter{drel.SoftDeleteFilter},
+	}
+	sdBookMetaBase := drel.ToMetaBase(&sdBookMeta)
+
+	sdBooksRelation := &drel.RelationInfo{
+		Name:        "Books",
+		Type:        drel.HasMany,
+		FKColumn:    "author_id",
+		RelatedMeta: sdBookMetaBase,
+		FieldSetter: booksRelation.FieldSetter,
+	}
+
+	repo := drel.NewRepository(engine, authorMeta)
+
+	// Default: soft-deleted books should be excluded.
+	alice, err := repo.Include(drel.NewIncludeSpec(sdBooksRelation)).Find(ctx, 1)
+	require.NoError(t, err)
+	assert.Len(t, alice.Books, 2)
+
+	// Unscoped: all books including soft-deleted.
+	aliceAll, err := repo.Include(drel.NewIncludeSpec(sdBooksRelation).Unscoped()).Find(ctx, 1)
+	require.NoError(t, err)
+	assert.Len(t, aliceAll.Books, 3)
 }

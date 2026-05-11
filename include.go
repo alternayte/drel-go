@@ -357,7 +357,8 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, re
 				rows.Close()
 				return err
 			}
-			pivotRows = append(pivotRows, pivotRow{sourceFK: src, targetFK: tgt})
+			// Normalize int64 → int so map lookups match PKValue which returns Go int.
+			pivotRows = append(pivotRows, pivotRow{sourceFK: normalizeInt(src), targetFK: normalizeInt(tgt)})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -410,6 +411,20 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, re
 	}
 
 	return nil
+}
+
+// normalizeInt converts int64/int32 to int so that map lookups match
+// PKValue functions that return Go int. pgx scans INTEGER columns as int64
+// when the target is any, causing type mismatches in map keys.
+func normalizeInt(v any) any {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	default:
+		return v
+	}
 }
 
 // findColumnIndex returns the index of the named column, or -1 if not found.
