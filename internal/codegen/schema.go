@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 // GoTypeToSQL maps a Go type string to its corresponding Postgres SQL type.
 // Pointer types are unwrapped to their base type. Unknown types default to "text".
 func GoTypeToSQL(goType string) string {
@@ -39,59 +43,60 @@ func GoTypeToSQL(goType string) string {
 // fks maps column names to referenced table names for foreign key constraints.
 func GenerateCreateTable(m ModelInfo, fks map[string]string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", m.TableName))
+	b.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", quoteIdent(m.TableName)))
 
 	switch m.PKType {
 	case "int", "int32":
-		b.WriteString("    id SERIAL PRIMARY KEY")
+		b.WriteString(fmt.Sprintf("    %s SERIAL PRIMARY KEY", quoteIdent("id")))
 	case "int64":
-		b.WriteString("    id BIGSERIAL PRIMARY KEY")
+		b.WriteString(fmt.Sprintf("    %s BIGSERIAL PRIMARY KEY", quoteIdent("id")))
 	default:
-		b.WriteString(fmt.Sprintf("    id %s PRIMARY KEY", GoTypeToSQL(m.PKType)))
+		b.WriteString(fmt.Sprintf("    %s %s PRIMARY KEY", quoteIdent("id"), GoTypeToSQL(m.PKType)))
 	}
 
 	for _, f := range columnFields(m.Fields) {
 		nullable := strings.HasPrefix(f.GoType, "*")
 		sqlType := GoTypeToSQL(f.GoType)
 		if f.IsEnum {
-			sqlType = strings.ToLower(f.LocalGoType)
+			sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
 		}
 		ref := ""
 		if fks != nil {
 			if target, ok := fks[f.ColumnName]; ok {
-				ref = fmt.Sprintf(" REFERENCES %s(id)", target)
+				ref = fmt.Sprintf(" REFERENCES %s(%s)", quoteIdent(target), quoteIdent("id"))
 			}
 		}
 		if nullable {
-			b.WriteString(fmt.Sprintf(",\n    %s %s%s", f.ColumnName, sqlType, ref))
+			b.WriteString(fmt.Sprintf(",\n    %s %s%s", quoteIdent(f.ColumnName), sqlType, ref))
 		} else {
-			b.WriteString(fmt.Sprintf(",\n    %s %s NOT NULL%s", f.ColumnName, sqlType, ref))
+			b.WriteString(fmt.Sprintf(",\n    %s %s NOT NULL%s", quoteIdent(f.ColumnName), sqlType, ref))
 		}
 	}
 
 	if m.HasSoftDelete {
-		b.WriteString(",\n    deleted_at timestamptz")
+		b.WriteString(fmt.Sprintf(",\n    %s timestamptz", quoteIdent("deleted_at")))
 	}
 	if m.HasVersioned {
-		b.WriteString(",\n    version integer NOT NULL DEFAULT 1")
+		b.WriteString(fmt.Sprintf(",\n    %s integer NOT NULL DEFAULT 1", quoteIdent("version")))
 	}
 	if m.HasAudit {
-		b.WriteString(",\n    created_by text")
-		b.WriteString(",\n    updated_by text")
+		b.WriteString(fmt.Sprintf(",\n    %s text", quoteIdent("created_by")))
+		b.WriteString(fmt.Sprintf(",\n    %s text", quoteIdent("updated_by")))
 	}
 
-	b.WriteString(",\n    created_at timestamptz NOT NULL DEFAULT NOW()")
-	b.WriteString(",\n    updated_at timestamptz NOT NULL DEFAULT NOW()")
+	b.WriteString(fmt.Sprintf(",\n    %s timestamptz NOT NULL DEFAULT NOW()", quoteIdent("created_at")))
+	b.WriteString(fmt.Sprintf(",\n    %s timestamptz NOT NULL DEFAULT NOW()", quoteIdent("updated_at")))
 	b.WriteString("\n);\n")
 
 	return b.String()
 }
 
 // GenerateSchema emits the full schema DDL for a slice of models, including
-// enum type definitions and foreign key constraints.
+// enum type definitions, foreign key constraints, and many-to-many pivot tables.
 func GenerateSchema(models []ModelInfo) string {
 	fks := collectFKs(models)
 	enums := collectEnums(models)
+	pivots := collectPivotTables(models)
 
 	var b strings.Builder
 	for _, e := range enums {
@@ -104,7 +109,60 @@ func GenerateSchema(models []ModelInfo) string {
 		}
 		b.WriteString(GenerateCreateTable(m, fks))
 	}
+	for _, p := range pivots {
+		b.WriteString("\n")
+		b.WriteString(p)
+	}
 	return b.String()
+}
+
+// collectPivotTables generates CREATE TABLE DDL for many-to-many join tables.
+// Each join table is emitted only once, even when both sides of the relation
+// reference the same JoinTable name.
+func collectPivotTables(models []ModelInfo) []string {
+	modelTable := map[string]string{}
+	modelPK := map[string]string{}
+	for _, m := range models {
+		modelTable[m.Name] = m.TableName
+		modelPK[m.Name] = m.PKType
+	}
+
+	seen := map[string]bool{}
+	var pivots []string
+
+	for _, m := range models {
+		for _, f := range m.Fields {
+			if f.Relation == nil || f.Relation.Type != "many_to_many" {
+				continue
+			}
+			jt := f.Relation.JoinTable
+			if jt == "" || seen[jt] {
+				continue
+			}
+			seen[jt] = true
+
+			targetTable, ok := modelTable[f.Relation.TargetModel]
+			if !ok {
+				continue
+			}
+
+			srcPKType := GoTypeToSQL(m.PKType)
+			tgtPKType := GoTypeToSQL(modelPK[f.Relation.TargetModel])
+
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", quoteIdent(jt)))
+			b.WriteString(fmt.Sprintf("    %s %s NOT NULL REFERENCES %s(%s),\n",
+				quoteIdent(f.Relation.FK), srcPKType, quoteIdent(m.TableName), quoteIdent("id")))
+			b.WriteString(fmt.Sprintf("    %s %s NOT NULL REFERENCES %s(%s),\n",
+				quoteIdent(f.Relation.RefColumn), tgtPKType, quoteIdent(targetTable), quoteIdent("id")))
+			b.WriteString(fmt.Sprintf("    PRIMARY KEY (%s, %s)\n",
+				quoteIdent(f.Relation.FK), quoteIdent(f.Relation.RefColumn)))
+			b.WriteString(");\n")
+
+			pivots = append(pivots, b.String())
+		}
+	}
+	return pivots
 }
 
 // GenerateDropSchema emits DROP TABLE statements in reverse order to respect
@@ -112,7 +170,7 @@ func GenerateSchema(models []ModelInfo) string {
 func GenerateDropSchema(models []ModelInfo) string {
 	var b strings.Builder
 	for i := len(models) - 1; i >= 0; i-- {
-		b.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", models[i].TableName))
+		b.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", quoteIdent(models[i].TableName)))
 	}
 	return b.String()
 }
@@ -151,9 +209,9 @@ func collectEnums(models []ModelInfo) []string {
 				seen[name] = true
 				quoted := make([]string, len(f.EnumValues))
 				for i, v := range f.EnumValues {
-					quoted[i] = fmt.Sprintf("'%s'", v)
+					quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
 				}
-				enums = append(enums, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);", name, strings.Join(quoted, ", ")))
+				enums = append(enums, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);", quoteIdent(name), strings.Join(quoted, ", ")))
 			}
 		}
 	}

@@ -51,19 +51,19 @@ func TestGenerateCreateTable_BasicModel(t *testing.T) {
 	}
 	sql := GenerateCreateTable(m, nil)
 
-	assert.Contains(t, sql, "CREATE TABLE users (")
-	assert.Contains(t, sql, "id SERIAL PRIMARY KEY")
-	assert.Contains(t, sql, "name text NOT NULL")
-	assert.Contains(t, sql, "email text NOT NULL")
-	assert.Contains(t, sql, "created_at timestamptz NOT NULL DEFAULT NOW()")
-	assert.Contains(t, sql, "updated_at timestamptz NOT NULL DEFAULT NOW()")
+	assert.Contains(t, sql, `CREATE TABLE "users" (`)
+	assert.Contains(t, sql, `"id" SERIAL PRIMARY KEY`)
+	assert.Contains(t, sql, `"name" text NOT NULL`)
+	assert.Contains(t, sql, `"email" text NOT NULL`)
+	assert.Contains(t, sql, `"created_at" timestamptz NOT NULL DEFAULT NOW()`)
+	assert.Contains(t, sql, `"updated_at" timestamptz NOT NULL DEFAULT NOW()`)
 }
 
 func TestGenerateCreateTable_BigintPK(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int64", TableName: "posts",
 		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}}}
 	sql := GenerateCreateTable(m, nil)
-	assert.Contains(t, sql, "id BIGSERIAL PRIMARY KEY")
+	assert.Contains(t, sql, `"id" BIGSERIAL PRIMARY KEY`)
 }
 
 func TestGenerateCreateTable_Traits(t *testing.T) {
@@ -72,11 +72,11 @@ func TestGenerateCreateTable_Traits(t *testing.T) {
 		HasSoftDelete: true, HasVersioned: true, HasAudit: true}
 	sql := GenerateCreateTable(m, nil)
 
-	assert.Contains(t, sql, "deleted_at timestamptz")
-	assert.NotContains(t, sql, "deleted_at timestamptz NOT NULL")
-	assert.Contains(t, sql, "version integer NOT NULL DEFAULT 1")
-	assert.Contains(t, sql, "created_by text")
-	assert.Contains(t, sql, "updated_by text")
+	assert.Contains(t, sql, `"deleted_at" timestamptz`)
+	assert.NotContains(t, sql, `"deleted_at" timestamptz NOT NULL`)
+	assert.Contains(t, sql, `"version" integer NOT NULL DEFAULT 1`)
+	assert.Contains(t, sql, `"created_by" text`)
+	assert.Contains(t, sql, `"updated_by" text`)
 }
 
 func TestGenerateCreateTable_Nullable(t *testing.T) {
@@ -84,8 +84,8 @@ func TestGenerateCreateTable_Nullable(t *testing.T) {
 		Fields: []FieldInfo{{Name: "bio", GoType: "*string", ColumnName: "bio"}}}
 	sql := GenerateCreateTable(m, nil)
 
-	assert.Contains(t, sql, "bio text")
-	assert.NotContains(t, sql, "bio text NOT NULL")
+	assert.Contains(t, sql, `"bio" text`)
+	assert.NotContains(t, sql, `"bio" text NOT NULL`)
 }
 
 func TestGenerateSchema_MultipleModels(t *testing.T) {
@@ -96,8 +96,8 @@ func TestGenerateSchema_MultipleModels(t *testing.T) {
 			Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}}},
 	}
 	sql := GenerateSchema(models)
-	assert.Contains(t, sql, "CREATE TABLE users")
-	assert.Contains(t, sql, "CREATE TABLE posts")
+	assert.Contains(t, sql, `CREATE TABLE "users"`)
+	assert.Contains(t, sql, `CREATE TABLE "posts"`)
 }
 
 func TestGenerateSchema_WithEnum(t *testing.T) {
@@ -110,8 +110,8 @@ func TestGenerateSchema_WithEnum(t *testing.T) {
 	}
 	sql := GenerateSchema(models)
 
-	assert.Contains(t, sql, "CREATE TYPE role AS ENUM ('admin', 'user');")
-	assert.Contains(t, sql, "role role NOT NULL")
+	assert.Contains(t, sql, `CREATE TYPE "role" AS ENUM ('admin', 'user');`)
+	assert.Contains(t, sql, `"role" "role" NOT NULL`)
 }
 
 func TestGenerateSchema_BelongsToFK(t *testing.T) {
@@ -128,7 +128,7 @@ func TestGenerateSchema_BelongsToFK(t *testing.T) {
 	}
 	sql := GenerateSchema(models)
 
-	assert.Contains(t, sql, "author_id integer NOT NULL REFERENCES users(id)")
+	assert.Contains(t, sql, `"author_id" integer NOT NULL REFERENCES "users"("id")`)
 }
 
 func TestGenerateCreateTable_NoFK_WhenNilMap(t *testing.T) {
@@ -137,7 +137,7 @@ func TestGenerateCreateTable_NoFK_WhenNilMap(t *testing.T) {
 	}}
 	sql := GenerateCreateTable(m, nil)
 
-	assert.Contains(t, sql, "author_id integer NOT NULL")
+	assert.Contains(t, sql, `"author_id" integer NOT NULL`)
 	assert.NotContains(t, sql, "REFERENCES")
 }
 
@@ -148,7 +148,76 @@ func TestGenerateDropSchema_ReverseOrder(t *testing.T) {
 	}
 	sql := GenerateDropSchema(models)
 
-	postsIdx := strings.Index(sql, "DROP TABLE IF EXISTS posts")
-	usersIdx := strings.Index(sql, "DROP TABLE IF EXISTS users")
+	postsIdx := strings.Index(sql, `DROP TABLE IF EXISTS "posts"`)
+	usersIdx := strings.Index(sql, `DROP TABLE IF EXISTS "users"`)
+	assert.Greater(t, postsIdx, -1)
+	assert.Greater(t, usersIdx, -1)
 	assert.Less(t, postsIdx, usersIdx)
+}
+
+func TestGenerateSchema_EnumEscaping(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "status", GoType: "string", ColumnName: "status", LocalGoType: "Status",
+				IsEnum: true, EnumValues: []string{"it's", "normal"}},
+		}},
+	}
+	sql := GenerateSchema(models)
+	assert.Contains(t, sql, "'it''s'")
+}
+
+func TestGenerateSchema_ManyToManyPivotTable(t *testing.T) {
+	models := []ModelInfo{
+		{
+			Name: "Author", PkgName: "models", PKType: "int", TableName: "authors",
+			Fields: []FieldInfo{
+				{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+				{Name: "tags", GoType: "[]*Tag", Relation: &RelationFieldInfo{
+					Type: "many_to_many", FK: "author_id", JoinTable: "author_tags",
+					RefColumn: "tag_id", TargetModel: "Tag",
+				}},
+			},
+		},
+		{
+			Name: "Tag", PkgName: "models", PKType: "int", TableName: "tags",
+			Fields: []FieldInfo{
+				{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			},
+		},
+	}
+
+	schema := GenerateSchema(models)
+
+	assert.Contains(t, schema, `CREATE TABLE "author_tags"`)
+	assert.Contains(t, schema, `"author_id" integer NOT NULL REFERENCES "authors"("id")`)
+	assert.Contains(t, schema, `"tag_id" integer NOT NULL REFERENCES "tags"("id")`)
+	assert.Contains(t, schema, `PRIMARY KEY ("author_id", "tag_id")`)
+}
+
+func TestGenerateSchema_ManyToManyDeduplication(t *testing.T) {
+	models := []ModelInfo{
+		{
+			Name: "Author", PkgName: "models", PKType: "int", TableName: "authors",
+			Fields: []FieldInfo{
+				{Name: "tags", GoType: "[]*Tag", Relation: &RelationFieldInfo{
+					Type: "many_to_many", FK: "author_id", JoinTable: "author_tags",
+					RefColumn: "tag_id", TargetModel: "Tag",
+				}},
+			},
+		},
+		{
+			Name: "Tag", PkgName: "models", PKType: "int", TableName: "tags",
+			Fields: []FieldInfo{
+				{Name: "authors", GoType: "[]*Author", Relation: &RelationFieldInfo{
+					Type: "many_to_many", FK: "tag_id", JoinTable: "author_tags",
+					RefColumn: "author_id", TargetModel: "Author",
+				}},
+			},
+		},
+	}
+
+	schema := GenerateSchema(models)
+
+	count := strings.Count(schema, `CREATE TABLE "author_tags"`)
+	assert.Equal(t, 1, count)
 }
