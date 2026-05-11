@@ -29,7 +29,8 @@ Thumbs.db
 .env.*
 *.pem
 
-# Superpowers (skill definitions, never commit)
+# Internal review and skill artifacts (never commit)
+docs/review/
 docs/superpowers/
 
 # Generated drel files (codegen output, regenerated via `drel generate`)
