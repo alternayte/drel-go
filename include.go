@@ -310,9 +310,106 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 	return allItems, nil
 }
 
-// loadManyToMany is a stub for many-to-many relationship loading (not yet implemented).
+// loadManyToMany loads related entities through a pivot table in 3 steps:
+// 1. SELECT source_fk, target_fk FROM pivot WHERE source_fk IN (...)
+// 2. SELECT * FROM target WHERE pk IN (collected target PKs)
+// 3. Build source→[]target mapping and assign via FieldSetter
 func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, rel *RelationInfo, unscoped bool) error {
-	return fmt.Errorf("many-to-many not yet implemented")
+	pkValues := make([]any, len(parents))
+	for i, p := range parents {
+		pkValues[i] = ie.parentMeta.PKValue(p)
+	}
+
+	type pivotRow struct {
+		sourceFK, targetFK any
+	}
+	var pivotRows []pivotRow
+
+	for i := 0; i < len(pkValues); i += includeBatchSize {
+		end := i + includeBatchSize
+		if end > len(pkValues) {
+			end = len(pkValues)
+		}
+		batch := pkValues[i:end]
+
+		node := ast.SelectNode{
+			Table:   rel.JoinTable,
+			Columns: []string{rel.FKColumn, rel.RefColumn},
+			Where: &ast.WhereClause{
+				Comparison: &ast.ComparisonNode{
+					Column: rel.FKColumn,
+					Op:     ast.OpIn,
+					Values: batch,
+				},
+			},
+			Type: ast.QuerySelect,
+		}
+
+		result := ie.engine.dialect().BuildSelect(node)
+		rows, err := ie.engine.queryInternal(ctx, result.SQL, result.Args...)
+		if err != nil {
+			return err
+		}
+
+		for rows.Next() {
+			var src, tgt any
+			if err := rows.Scan(&src, &tgt); err != nil {
+				rows.Close()
+				return err
+			}
+			pivotRows = append(pivotRows, pivotRow{sourceFK: src, targetFK: tgt})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+
+	if len(pivotRows) == 0 {
+		for _, p := range parents {
+			rel.FieldSetter(p, []any{})
+		}
+		return nil
+	}
+
+	seen := make(map[any]bool)
+	var targetPKs []any
+	for _, pr := range pivotRows {
+		if !seen[pr.targetFK] {
+			seen[pr.targetFK] = true
+			targetPKs = append(targetPKs, pr.targetFK)
+		}
+	}
+
+	targets, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, targetPKs, unscoped)
+	if err != nil {
+		return err
+	}
+
+	targetByPK := make(map[any]any)
+	for _, t := range targets {
+		pk := rel.RelatedMeta.PKValue(t)
+		targetByPK[pk] = t
+	}
+
+	grouped := make(map[any][]any)
+	for _, pr := range pivotRows {
+		if t, ok := targetByPK[pr.targetFK]; ok {
+			grouped[pr.sourceFK] = append(grouped[pr.sourceFK], t)
+		}
+	}
+
+	for _, p := range parents {
+		pk := ie.parentMeta.PKValue(p)
+		items := grouped[pk]
+		if items == nil {
+			items = []any{}
+		}
+		rel.FieldSetter(p, items)
+	}
+
+	return nil
 }
 
 // findColumnIndex returns the index of the named column, or -1 if not found.
