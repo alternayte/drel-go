@@ -30,6 +30,10 @@ type FieldInfo struct {
 	IsPointer      bool   // whether the field is a pointer type
 	IsEnum         bool
 	EnumValues     []string
+	Unique         bool   // db tag option: unique index on this column
+	Indexed        bool   // db tag option: index on this column
+	IndexName      string // explicit index name (db:"...,index=name"); fields sharing a name form a composite index
+	CheckExpr      string // db tag option: column CHECK constraint expression (db:"...,check=expr")
 }
 
 // RelationFieldInfo holds parsed relationship metadata from a `rel:"..."` struct tag.

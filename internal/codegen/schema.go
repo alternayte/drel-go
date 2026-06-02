@@ -71,91 +71,87 @@ func goTypeToSQLite(goType string) string {
 // fks maps column names to referenced table names for foreign key constraints.
 // dialect controls SQL type mappings and syntax ("postgres" or "sqlite").
 func GenerateCreateTable(m ModelInfo, fks map[string]string, dialect string) string {
+	return createTableSQL(buildTable(m, fks, dialect), dialect)
+}
+
+// createTableSQL emits a CREATE TABLE statement from a structured Table.
+// The PK column is emitted first, followed by the remaining columns; each column
+// renders inline NOT NULL / CHECK / REFERENCES / DEFAULT clauses. A composite
+// PrimaryKey (used by pivot tables) is emitted as a trailing table-level
+// PRIMARY KEY constraint.
+func createTableSQL(t Table, dialect string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", quoteIdent(m.TableName)))
+	b.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", quoteIdent(t.Name)))
 
-	if dialect == "sqlite" {
-		switch m.PKType {
-		case "int", "int8", "int16", "int32", "int64":
-			b.WriteString(fmt.Sprintf("    %s INTEGER PRIMARY KEY AUTOINCREMENT", quoteIdent("id")))
-		default:
-			b.WriteString(fmt.Sprintf("    %s %s PRIMARY KEY", quoteIdent("id"), GoTypeToSQL(m.PKType, dialect)))
-		}
-	} else {
-		switch m.PKType {
-		case "int", "int32":
-			b.WriteString(fmt.Sprintf("    %s SERIAL PRIMARY KEY", quoteIdent("id")))
-		case "int64":
-			b.WriteString(fmt.Sprintf("    %s BIGSERIAL PRIMARY KEY", quoteIdent("id")))
-		default:
-			b.WriteString(fmt.Sprintf("    %s %s PRIMARY KEY", quoteIdent("id"), GoTypeToSQL(m.PKType, dialect)))
-		}
-	}
-
-	for _, f := range columnFields(m.Fields) {
-		nullable := strings.HasPrefix(f.GoType, "*")
-		sqlType := GoTypeToSQL(f.GoType, dialect)
-		if f.IsEnum {
-			if dialect == "sqlite" {
-				// SQLite has no CREATE TYPE; use TEXT with a CHECK constraint.
-				sqlType = "TEXT"
-			} else {
-				sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
-			}
-		}
-		ref := ""
-		if fks != nil {
-			if target, ok := fks[f.ColumnName]; ok {
-				ref = fmt.Sprintf(" REFERENCES %s(%s)", quoteIdent(target), quoteIdent("id"))
-			}
-		}
-		// For SQLite enums, append a CHECK constraint after the column definition.
-		enumCheck := ""
-		if f.IsEnum && dialect == "sqlite" && len(f.EnumValues) > 0 {
-			quoted := make([]string, len(f.EnumValues))
-			for i, v := range f.EnumValues {
-				quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
-			}
-			enumCheck = fmt.Sprintf(" CHECK(%s IN (%s))", quoteIdent(f.ColumnName), strings.Join(quoted, ", "))
-		}
-		if nullable {
-			b.WriteString(fmt.Sprintf(",\n    %s %s%s%s", quoteIdent(f.ColumnName), sqlType, enumCheck, ref))
+	first := true
+	emit := func(c Column) {
+		if first {
+			b.WriteString("    ")
+			first = false
 		} else {
-			b.WriteString(fmt.Sprintf(",\n    %s %s NOT NULL%s%s", quoteIdent(f.ColumnName), sqlType, enumCheck, ref))
+			b.WriteString(",\n    ")
+		}
+		b.WriteString(columnDefSQL(c))
+	}
+
+	// PK column first.
+	for _, c := range t.Columns {
+		if c.PK {
+			emit(c)
+		}
+	}
+	for _, c := range t.Columns {
+		if !c.PK {
+			emit(c)
 		}
 	}
 
-	if dialect == "sqlite" {
-		if m.HasSoftDelete {
-			b.WriteString(fmt.Sprintf(",\n    %s DATETIME", quoteIdent("deleted_at")))
+	if len(t.PrimaryKey) > 0 {
+		cols := make([]string, len(t.PrimaryKey))
+		for i, c := range t.PrimaryKey {
+			cols[i] = quoteIdent(c)
 		}
-		if m.HasVersioned {
-			b.WriteString(fmt.Sprintf(",\n    %s INTEGER NOT NULL DEFAULT 1", quoteIdent("version")))
-		}
-		if m.HasAudit {
-			b.WriteString(fmt.Sprintf(",\n    %s TEXT", quoteIdent("created_by")))
-			b.WriteString(fmt.Sprintf(",\n    %s TEXT", quoteIdent("updated_by")))
-		}
-		b.WriteString(fmt.Sprintf(",\n    %s DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", quoteIdent("created_at")))
-		b.WriteString(fmt.Sprintf(",\n    %s DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", quoteIdent("updated_at")))
-	} else {
-		if m.HasSoftDelete {
-			b.WriteString(fmt.Sprintf(",\n    %s timestamptz", quoteIdent("deleted_at")))
-		}
-		if m.HasVersioned {
-			b.WriteString(fmt.Sprintf(",\n    %s integer NOT NULL DEFAULT 1", quoteIdent("version")))
-		}
-		if m.HasAudit {
-			b.WriteString(fmt.Sprintf(",\n    %s text", quoteIdent("created_by")))
-			b.WriteString(fmt.Sprintf(",\n    %s text", quoteIdent("updated_by")))
-		}
-		b.WriteString(fmt.Sprintf(",\n    %s timestamptz NOT NULL DEFAULT NOW()", quoteIdent("created_at")))
-		b.WriteString(fmt.Sprintf(",\n    %s timestamptz NOT NULL DEFAULT NOW()", quoteIdent("updated_at")))
+		b.WriteString(fmt.Sprintf(",\n    PRIMARY KEY (%s)", strings.Join(cols, ", ")))
 	}
 
 	b.WriteString("\n);\n")
-
 	return b.String()
+}
+
+// columnDefSQL renders a single column definition (without leading indentation),
+// in the order: name, type, NOT NULL, CHECK, REFERENCES, DEFAULT.
+func columnDefSQL(c Column) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s %s", quoteIdent(c.Name), c.Type))
+	// The PK type string already embeds "PRIMARY KEY" (and NOT NULL semantics),
+	// so do not append an additional NOT NULL for PK columns.
+	if c.NotNull && !c.PK {
+		b.WriteString(" NOT NULL")
+	}
+	if c.Check != "" {
+		b.WriteString(fmt.Sprintf(" CHECK(%s)", c.Check))
+	}
+	if c.Ref != "" {
+		b.WriteString(fmt.Sprintf(" REFERENCES %s(%s)", quoteIdent(c.Ref), quoteIdent("id")))
+	}
+	if c.Default != "" {
+		b.WriteString(fmt.Sprintf(" DEFAULT %s", c.Default))
+	}
+	return b.String()
+}
+
+// createIndexSQL emits a CREATE [UNIQUE] INDEX statement for an index on a table.
+func createIndexSQL(table string, idx Index) string {
+	cols := make([]string, len(idx.Columns))
+	for i, c := range idx.Columns {
+		cols[i] = quoteIdent(c)
+	}
+	unique := ""
+	if idx.Unique {
+		unique = "UNIQUE "
+	}
+	return fmt.Sprintf("CREATE %sINDEX %s ON %s (%s);\n",
+		unique, quoteIdent(idx.Name), quoteIdent(table), strings.Join(cols, ", "))
 }
 
 // GenerateSchema emits the full schema DDL for a slice of models, including
@@ -187,6 +183,21 @@ func GenerateSchema(models []ModelInfo, dialect string) string {
 		b.WriteString("\n")
 		b.WriteString(p)
 	}
+
+	// Emit CREATE [UNIQUE] INDEX statements for every index in the schema,
+	// after all tables/pivots, in table-then-index order.
+	schema := BuildSchema(models, dialect)
+	var idxBuf strings.Builder
+	for _, t := range schema.Tables {
+		for _, idx := range t.Indexes {
+			idxBuf.WriteString(createIndexSQL(t.Name, idx))
+		}
+	}
+	if idxBuf.Len() > 0 {
+		b.WriteString("\n")
+		b.WriteString(idxBuf.String())
+	}
+
 	return b.String()
 }
 
@@ -249,248 +260,217 @@ func GenerateDropSchema(models []ModelInfo) string {
 	return b.String()
 }
 
-// DiffSchema compares desired models against existing migration SQL and generates
-// incremental up/down SQL containing only the changes (new tables, new columns).
-// existingSQL should be the concatenated up-migration SQL of all prior migrations.
-// Returns empty strings if there are no changes.
+// DiffSchemas compares an old (previous snapshot) schema against a new (desired)
+// schema and produces incremental up/down migration SQL containing only the
+// changes. It returns ("", "") when the schemas are equivalent.
 //
-// This is a basic diff approach: it detects new tables and new columns in existing
-// tables. It does NOT handle column type changes, renames, or drops.
-// Full Atlas integration is planned for a future release.
-func DiffSchema(models []ModelInfo, existingSQL string, dialect string) (upSQL, downSQL string) {
-	existingTables, existingColumns := parseExistingSchema(existingSQL)
-	fks := collectFKs(models)
+// Coverage (up order; down is the sensible inverse):
+//   - new enums (Postgres only): CREATE TYPE / down DROP TYPE
+//   - new tables: CREATE TABLE + indexes / down DROP TABLE
+//   - dropped tables: DROP TABLE / down recreate
+//   - per-table column add/drop, type changes, NOT NULL changes
+//   - per-table index add/drop
+//
+// SQLite cannot ALTER COLUMN TYPE or SET/DROP NOT NULL; those changes are emitted
+// as clearly-marked WARNING comments rather than silently skipped. Column renames
+// are not detected and surface as a drop + add.
+func DiffSchemas(old, newSchema Schema, dialect string) (upSQL, downSQL string) {
+	var up, down []string
 
-	var upBuf, downBuf strings.Builder
+	oldEnums := indexEnums(old.Enums)
+	newEnums := indexEnums(newSchema.Enums)
+	oldTables := indexTables(old.Tables)
+	newTables := indexTables(newSchema.Tables)
 
-	// Collect enum types needed for new tables/columns (Postgres only).
+	// 1. New enums (Postgres only).
 	if dialect != "sqlite" {
-		newEnums := diffEnums(models, existingSQL)
-		for _, e := range newEnums {
-			upBuf.WriteString(e)
-			upBuf.WriteString("\n\n")
+		for _, e := range newSchema.Enums {
+			if _, ok := oldEnums[e.Name]; !ok {
+				up = append(up, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);",
+					quoteIdent(e.Name), quoteEnumValues(e.Values)))
+				down = append(down, fmt.Sprintf("DROP TYPE %s;", quoteIdent(e.Name)))
+			}
 		}
 	}
 
-	for _, m := range models {
-		if _, exists := existingTables[m.TableName]; !exists {
-			// Entirely new table — emit CREATE TABLE.
-			if upBuf.Len() > 0 {
-				upBuf.WriteString("\n")
-			}
-			upBuf.WriteString(GenerateCreateTable(m, fks, dialect))
+	// 2. New tables (preserve new-schema order).
+	for _, t := range newSchema.Tables {
+		if _, ok := oldTables[t.Name]; ok {
+			continue
+		}
+		up = append(up, strings.TrimRight(createTableSQL(t, dialect), "\n"))
+		for _, idx := range t.Indexes {
+			up = append(up, strings.TrimRight(createIndexSQL(t.Name, idx), "\n"))
+		}
+		down = append(down, fmt.Sprintf("DROP TABLE IF EXISTS %s;", quoteIdent(t.Name)))
+	}
 
-			downBuf.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", quoteIdent(m.TableName)))
+	// 3. Dropped tables (in old, not in new) — preserve old-schema order.
+	for _, t := range old.Tables {
+		if _, ok := newTables[t.Name]; ok {
+			continue
+		}
+		up = append(up, fmt.Sprintf("DROP TABLE IF EXISTS %s;", quoteIdent(t.Name)))
+		down = append(down, strings.TrimRight(createTableSQL(t, dialect), "\n"))
+		for _, idx := range t.Indexes {
+			down = append(down, strings.TrimRight(createIndexSQL(t.Name, idx), "\n"))
+		}
+	}
+
+	// 4. Tables present in both — diff columns and indexes (new-schema order).
+	for _, nt := range newSchema.Tables {
+		ot, ok := oldTables[nt.Name]
+		if !ok {
+			continue
+		}
+		tu, td := diffTable(ot, nt, dialect)
+		up = append(up, tu...)
+		down = append(down, td...)
+	}
+
+	// 5. Dropped enums (Postgres only) — drop after dependent tables are gone.
+	if dialect != "sqlite" {
+		for _, e := range old.Enums {
+			if _, ok := newEnums[e.Name]; !ok {
+				up = append(up, fmt.Sprintf("DROP TYPE %s;", quoteIdent(e.Name)))
+				down = append(down, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);",
+					quoteIdent(e.Name), quoteEnumValues(e.Values)))
+			}
+		}
+	}
+
+	if len(up) == 0 && len(down) == 0 {
+		return "", ""
+	}
+	return strings.Join(up, "\n"), strings.Join(down, "\n")
+}
+
+// diffTable diffs the columns and indexes of a table that exists in both schemas.
+func diffTable(old, new Table, dialect string) (up, down []string) {
+	oldCols := indexColumns(old.Columns)
+	newCols := indexColumns(new.Columns)
+
+	// Added columns (preserve new-table order).
+	for _, c := range new.Columns {
+		if _, ok := oldCols[c.Name]; !ok {
+			// Adding a NOT NULL column without a default fails on a non-empty
+			// table; surface this for the reviewer rather than failing silently.
+			if c.NotNull && c.Default == "" {
+				up = append(up, fmt.Sprintf(`-- NOTE: adding NOT NULL column %s to existing table %s; ensure the table is empty or add a DEFAULT / backfill before applying`,
+					quoteIdent(c.Name), quoteIdent(new.Name)))
+			}
+			up = append(up, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(new.Name), columnDefSQL(c)))
+			down = append(down, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", quoteIdent(new.Name), quoteIdent(c.Name)))
+		}
+	}
+
+	// Dropped columns (preserve old-table order).
+	for _, c := range old.Columns {
+		if _, ok := newCols[c.Name]; !ok {
+			up = append(up, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", quoteIdent(old.Name), quoteIdent(c.Name)))
+			down = append(down, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(old.Name), columnDefSQL(c)))
+		}
+	}
+
+	// Modified columns (present in both).
+	for _, nc := range new.Columns {
+		oc, ok := oldCols[nc.Name]
+		if !ok {
+			continue
+		}
+		mu, md := diffColumn(new.Name, oc, nc, dialect)
+		up = append(up, mu...)
+		down = append(down, md...)
+	}
+
+	// Index diffs.
+	oldIdx := indexIndexes(old.Indexes)
+	newIdx := indexIndexes(new.Indexes)
+	for _, idx := range new.Indexes {
+		if _, ok := oldIdx[idx.Name]; !ok {
+			up = append(up, strings.TrimRight(createIndexSQL(new.Name, idx), "\n"))
+			down = append(down, fmt.Sprintf("DROP INDEX %s;", quoteIdent(idx.Name)))
+		}
+	}
+	for _, idx := range old.Indexes {
+		if _, ok := newIdx[idx.Name]; !ok {
+			up = append(up, fmt.Sprintf("DROP INDEX %s;", quoteIdent(idx.Name)))
+			down = append(down, strings.TrimRight(createIndexSQL(old.Name, idx), "\n"))
+		}
+	}
+
+	return up, down
+}
+
+// diffColumn emits ALTER statements for a column whose definition changed between
+// the old and new schema (type and/or NOT NULL). SQLite cannot perform these
+// alterations, so a WARNING comment is emitted instead of a silent skip.
+func diffColumn(table string, old, new Column, dialect string) (up, down []string) {
+	if old.Type != new.Type {
+		if dialect == "sqlite" {
+			up = append(up, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN TYPE for %s.%s (%s -> %s); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), old.Type, new.Type))
+			down = append(down, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN TYPE for %s.%s (%s -> %s); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), new.Type, old.Type))
 		} else {
-			// Table exists — check for new columns.
-			tableCols := existingColumns[m.TableName]
-			for _, f := range columnFields(m.Fields) {
-				if tableCols[f.ColumnName] {
-					continue
-				}
-				nullable := strings.HasPrefix(f.GoType, "*")
-				sqlType := GoTypeToSQL(f.GoType, dialect)
-				if f.IsEnum {
-					if dialect == "sqlite" {
-						sqlType = "TEXT"
-					} else {
-						sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
-					}
-				}
-				nullClause := " NOT NULL"
-				if nullable {
-					nullClause = ""
-				}
-
-				ref := ""
-				if fks != nil {
-					if target, ok := fks[f.ColumnName]; ok {
-						ref = fmt.Sprintf(" REFERENCES %s(%s)", quoteIdent(target), quoteIdent("id"))
-					}
-				}
-
-				enumCheck := ""
-				if f.IsEnum && dialect == "sqlite" && len(f.EnumValues) > 0 {
-					quoted := make([]string, len(f.EnumValues))
-					for i, v := range f.EnumValues {
-						quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
-					}
-					enumCheck = fmt.Sprintf(" CHECK(%s IN (%s))", quoteIdent(f.ColumnName), strings.Join(quoted, ", "))
-				}
-
-				upBuf.WriteString(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s%s%s%s;\n",
-					quoteIdent(m.TableName), quoteIdent(f.ColumnName), sqlType, nullClause, enumCheck, ref))
-				downBuf.WriteString(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;\n",
-					quoteIdent(m.TableName), quoteIdent(f.ColumnName)))
-			}
+			up = append(up, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
+				quoteIdent(table), quoteIdent(new.Name), new.Type))
+			down = append(down, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
+				quoteIdent(table), quoteIdent(new.Name), old.Type))
 		}
 	}
 
-	// Check for new pivot tables.
-	pivots := collectPivotTables(models, dialect)
-	for _, p := range pivots {
-		// Extract table name from "CREATE TABLE "name" ("
-		tableName := extractTableName(p)
-		if tableName != "" && !existingTables[tableName] {
-			if upBuf.Len() > 0 {
-				upBuf.WriteString("\n")
+	if old.NotNull != new.NotNull {
+		if dialect == "sqlite" {
+			up = append(up, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN NOT NULL for %s.%s; recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name)))
+			down = append(down, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN NOT NULL for %s.%s; recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name)))
+		} else {
+			upClause, downClause := "SET NOT NULL", "DROP NOT NULL"
+			if !new.NotNull {
+				upClause, downClause = "DROP NOT NULL", "SET NOT NULL"
 			}
-			upBuf.WriteString(p)
-			downBuf.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS %s;\n", quoteIdent(tableName)))
+			up = append(up, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s;",
+				quoteIdent(table), quoteIdent(new.Name), upClause))
+			down = append(down, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s;",
+				quoteIdent(table), quoteIdent(new.Name), downClause))
 		}
 	}
 
-	return strings.TrimSpace(upBuf.String()), strings.TrimSpace(downBuf.String())
+	return up, down
 }
 
-// parseExistingSchema extracts table names and their columns from concatenated
-// migration SQL. It parses CREATE TABLE statements and ALTER TABLE ADD COLUMN
-// statements with a simple line-based approach — no full SQL parser needed.
-func parseExistingSchema(sql string) (tables map[string]bool, columns map[string]map[string]bool) {
-	tables = make(map[string]bool)
-	columns = make(map[string]map[string]bool)
-
-	upper := strings.ToUpper(sql)
-	lines := strings.Split(sql, "\n")
-
-	var currentTable string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		upperTrimmed := strings.ToUpper(trimmed)
-
-		// Match CREATE TABLE "name" ( or CREATE TABLE name (
-		if strings.HasPrefix(upperTrimmed, "CREATE TABLE") {
-			name := extractIdentAfter(trimmed, "CREATE TABLE")
-			if name != "" {
-				tables[name] = true
-				columns[name] = make(map[string]bool)
-				currentTable = name
-			}
-			continue
-		}
-
-		// End of CREATE TABLE block
-		if currentTable != "" && (trimmed == ");" || trimmed == ")") {
-			currentTable = ""
-			continue
-		}
-
-		// Column definition inside CREATE TABLE
-		if currentTable != "" {
-			col := extractColumnName(trimmed)
-			if col != "" {
-				columns[currentTable][col] = true
-			}
-			continue
-		}
-
-		// ALTER TABLE "name" ADD COLUMN "col" ...
-		if strings.HasPrefix(upperTrimmed, "ALTER TABLE") && strings.Contains(upperTrimmed, "ADD COLUMN") {
-			tableName := extractIdentAfter(trimmed, "ALTER TABLE")
-			if tableName != "" {
-				colPart := trimmed
-				idx := strings.Index(strings.ToUpper(colPart), "ADD COLUMN")
-				if idx >= 0 {
-					rest := strings.TrimSpace(colPart[idx+len("ADD COLUMN"):])
-					col := extractLeadingIdent(rest)
-					if col != "" {
-						if columns[tableName] == nil {
-							columns[tableName] = make(map[string]bool)
-						}
-						columns[tableName][col] = true
-					}
-				}
-			}
-		}
+func indexEnums(enums []EnumDef) map[string]EnumDef {
+	m := make(map[string]EnumDef, len(enums))
+	for _, e := range enums {
+		m[e.Name] = e
 	}
-	_ = upper // used for string matching context
-
-	return tables, columns
+	return m
 }
 
-// extractIdentAfter extracts a quoted or unquoted identifier after a keyword prefix.
-func extractIdentAfter(line, prefix string) string {
-	idx := strings.Index(strings.ToUpper(line), strings.ToUpper(prefix))
-	if idx < 0 {
-		return ""
+func indexTables(tables []Table) map[string]Table {
+	m := make(map[string]Table, len(tables))
+	for _, t := range tables {
+		m[t.Name] = t
 	}
-	rest := strings.TrimSpace(line[idx+len(prefix):])
-	return extractLeadingIdent(rest)
+	return m
 }
 
-// extractLeadingIdent extracts a quoted ("name") or unquoted identifier from the start of s.
-func extractLeadingIdent(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 {
-		return ""
+func indexColumns(cols []Column) map[string]Column {
+	m := make(map[string]Column, len(cols))
+	for _, c := range cols {
+		m[c.Name] = c
 	}
-	if s[0] == '"' {
-		end := strings.Index(s[1:], `"`)
-		if end < 0 {
-			return ""
-		}
-		return s[1 : end+1]
-	}
-	// Unquoted: take until whitespace or (
-	end := strings.IndexAny(s, " \t(,;")
-	if end < 0 {
-		return s
-	}
-	return s[:end]
+	return m
 }
 
-// extractColumnName extracts the column name from a CREATE TABLE column definition line.
-func extractColumnName(line string) string {
-	trimmed := strings.TrimSpace(line)
-	// Skip PRIMARY KEY constraints
-	if strings.HasPrefix(strings.ToUpper(trimmed), "PRIMARY KEY") {
-		return ""
+func indexIndexes(idxs []Index) map[string]Index {
+	m := make(map[string]Index, len(idxs))
+	for _, i := range idxs {
+		m[i.Name] = i
 	}
-	// Skip comments
-	if strings.HasPrefix(trimmed, "--") {
-		return ""
-	}
-	// Skip empty lines
-	if trimmed == "" {
-		return ""
-	}
-	// Remove trailing comma
-	trimmed = strings.TrimRight(trimmed, ",")
-	return extractLeadingIdent(trimmed)
-}
-
-// extractTableName extracts a table name from a CREATE TABLE statement string.
-func extractTableName(createSQL string) string {
-	return extractIdentAfter(createSQL, "CREATE TABLE")
-}
-
-// diffEnums returns CREATE TYPE statements for enum types that don't already
-// appear in the existing migration SQL.
-func diffEnums(models []ModelInfo, existingSQL string) []string {
-	seen := map[string]bool{}
-	var enums []string
-	upper := strings.ToUpper(existingSQL)
-	for _, m := range models {
-		for _, f := range columnFields(m.Fields) {
-			if f.IsEnum && len(f.EnumValues) > 0 {
-				name := strings.ToLower(f.LocalGoType)
-				if seen[name] {
-					continue
-				}
-				seen[name] = true
-				// Check if this enum type already exists in prior migrations.
-				if strings.Contains(upper, fmt.Sprintf("CREATE TYPE %s AS ENUM", strings.ToUpper(quoteIdent(name)))) {
-					continue
-				}
-				quoted := make([]string, len(f.EnumValues))
-				for i, v := range f.EnumValues {
-					quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
-				}
-				enums = append(enums, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);", quoteIdent(name), strings.Join(quoted, ", ")))
-			}
-		}
-	}
-	return enums
+	return m
 }
 
 // collectFKs builds a map of column name → referenced table for belongs_to relations.

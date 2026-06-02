@@ -132,22 +132,35 @@ func runMigrateNew() {
 
 	dialect := cfg.Dialect
 
-	// Parse existing migrations to determine if we should do a full dump or an incremental diff.
+	// Build the desired logical schema and compare against the persisted snapshot.
+	desired := codegen.BuildSchema(models, dialect)
+	snapshotPath := filepath.Join(mDir, ".drel_snapshot.json")
+	old, hasSnapshot, err := codegen.LoadSnapshot(snapshotPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+		os.Exit(1)
+	}
+
 	existing, _ := migrate.ParseMigrationDir(mDir)
 
 	var upSQL, downSQL string
-	if len(existing) == 0 {
+	if !hasSnapshot {
+		if len(existing) > 0 {
+			// Legacy project adopting snapshots: seed the snapshot from current
+			// models without generating a migration.
+			if err := codegen.SaveSnapshot(snapshotPath, desired); err != nil {
+				fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("drel: initialized schema snapshot from current models (no migration generated); re-run after changing models")
+			return
+		}
 		// First migration: emit the full schema.
 		upSQL = codegen.GenerateSchema(models, dialect)
 		downSQL = codegen.GenerateDropSchema(models)
 	} else {
-		// Incremental migration: diff desired schema against existing migrations.
-		var existingUpSQL strings.Builder
-		for _, m := range existing {
-			existingUpSQL.WriteString(m.UpSQL)
-			existingUpSQL.WriteString("\n")
-		}
-		upSQL, downSQL = codegen.DiffSchema(models, existingUpSQL.String(), dialect)
+		// Incremental migration: structured diff of snapshot against desired schema.
+		upSQL, downSQL = codegen.DiffSchemas(old, desired, dialect)
 		if upSQL == "" && downSQL == "" {
 			fmt.Println("drel: no schema changes detected")
 			return
@@ -156,6 +169,12 @@ func runMigrateNew() {
 
 	version, err := migrate.WriteMigration(mDir, name, upSQL, downSQL)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Persist the snapshot only after the migration is successfully written.
+	if err := codegen.SaveSnapshot(snapshotPath, desired); err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
 		os.Exit(1)
 	}

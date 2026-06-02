@@ -235,3 +235,58 @@ func TestParseRelTag_ManyToManyWithRef(t *testing.T) {
 	assert.Equal(t, "writer_id", ri.FK)
 	assert.Equal(t, "label_id", ri.RefColumn)
 }
+
+func TestParseDBTag_Options(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  string
+		col  string
+		opts dbTagOpts
+	}{
+		{"unique", `db:"email,unique"`, "email", dbTagOpts{unique: true}},
+		{"index", `db:"age,index"`, "age", dbTagOpts{indexed: true}},
+		{"named index", `db:"x,index=ix"`, "x", dbTagOpts{indexed: true, indexName: "ix"}},
+		{"check", `db:"y,check=y > 0"`, "y", dbTagOpts{check: "y > 0"}},
+		{"plain", `db:"name"`, "name", dbTagOpts{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col, opts := parseDBTag(tt.tag)
+			assert.Equal(t, tt.col, col)
+			assert.Equal(t, tt.opts, opts)
+		})
+	}
+}
+
+func TestScanner_IndexAndCheckTags(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Account struct {
+	drel.Model[int]
+	email string ` + "`db:\"email,unique\"`" + `
+	age   int    ` + "`db:\"age,index\"`" + `
+	first string ` + "`db:\"first,index=ix_name\"`" + `
+	score int    ` + "`db:\"score,check=score > 0\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	byCol := map[string]FieldInfo{}
+	for _, f := range models[0].Fields {
+		byCol[f.ColumnName] = f
+	}
+
+	assert.True(t, byCol["email"].Unique)
+	assert.True(t, byCol["age"].Indexed)
+	assert.Empty(t, byCol["age"].IndexName)
+	assert.True(t, byCol["first"].Indexed)
+	assert.Equal(t, "ix_name", byCol["first"].IndexName)
+	assert.Equal(t, "score > 0", byCol["score"].CheckExpr)
+}

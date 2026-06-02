@@ -181,7 +181,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 			continue
 		}
 		tag := st.Tag(i)
-		dbCol := parseDBTag(tag)
+		dbCol, dbOpts := parseDBTag(tag)
 		relTag := parseRelTag(tag)
 		if dbCol == "" && relTag == "" {
 			continue
@@ -193,6 +193,10 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 			ColumnName: dbCol,
 			IsExported: f.Exported(),
 			RelTag:     relTag,
+			Unique:     dbOpts.unique,
+			Indexed:    dbOpts.indexed,
+			IndexName:  dbOpts.indexName,
+			CheckExpr:  dbOpts.check,
 		}
 
 		if relTag != "" {
@@ -262,9 +266,47 @@ func parseRelTagStructured(tag string) *RelationFieldInfo {
 	return ri
 }
 
-func parseDBTag(rawTag string) string {
+// dbTagOpts holds the options parsed from a db struct tag after the column name.
+type dbTagOpts struct {
+	unique    bool
+	indexed   bool
+	indexName string
+	check     string
+}
+
+// parseDBTag splits a db struct tag into its column name and options. The first
+// comma-separated element is the column name; subsequent elements are options:
+//
+//	db:"email,unique"                 — unique index
+//	db:"age,index"                    — single-column index (auto-named)
+//	db:"role,index=idx_role_age"      — named index; fields sharing the name compose
+//	db:"age,check=age >= 0"           — column CHECK constraint
+//
+// Returns an empty column name when no db tag is present.
+func parseDBTag(rawTag string) (string, dbTagOpts) {
 	st := reflect.StructTag(rawTag)
-	return st.Get("db")
+	raw, ok := st.Lookup("db")
+	if !ok || raw == "" {
+		return "", dbTagOpts{}
+	}
+	parts := strings.Split(raw, ",")
+	col := strings.TrimSpace(parts[0])
+	var opts dbTagOpts
+	for _, p := range parts[1:] {
+		p = strings.TrimSpace(p)
+		switch {
+		case p == "unique":
+			opts.unique = true
+		case p == "index":
+			opts.indexed = true
+		case strings.HasPrefix(p, "index="):
+			opts.indexed = true
+			opts.indexName = strings.TrimSpace(strings.TrimPrefix(p, "index="))
+		case strings.HasPrefix(p, "check="):
+			opts.check = strings.TrimSpace(strings.TrimPrefix(p, "check="))
+		}
+	}
+	return col, opts
 }
 
 func parseRelTag(rawTag string) string {
