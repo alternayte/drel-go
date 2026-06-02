@@ -96,7 +96,18 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 			actor := ActorFromContext(ctx)
 			te.meta.AuditSetUpdate(te.entity, actor)
 		}
-		changes := te.meta.Diff(te.entity, te.snapshot)
+		var changes []FieldChange
+		if te.forceUpdate {
+			// Entity was attached as Modified: no snapshot to diff against, so
+			// UPDATE every user-settable column.
+			cols, vals := te.meta.InsertColumns(te.entity)
+			changes = make([]FieldChange, len(cols))
+			for i, c := range cols {
+				changes[i] = FieldChange{Column: c, Value: vals[i]}
+			}
+		} else {
+			changes = te.meta.Diff(te.entity, te.snapshot)
+		}
 		if len(changes) == 0 {
 			continue
 		}

@@ -5,12 +5,17 @@ import (
 	"fmt"
 )
 
-type entityState int
+// EntityState describes a tracked entity's lifecycle state within a Tx.
+type EntityState int
 
 const (
-	StateUnchanged entityState = iota
+	// StateUnchanged marks an entity with no pending changes.
+	StateUnchanged EntityState = iota
+	// StateAdded marks an entity to be INSERTed on the next flush.
 	StateAdded
+	// StateModified marks an entity to be UPDATEd on the next flush.
 	StateModified
+	// StateDeleted marks an entity to be deleted on the next flush.
 	StateDeleted
 )
 
@@ -41,11 +46,12 @@ type ModelMetaBase struct {
 }
 
 type trackedEntity struct {
-	entity     any
-	state      entityState
-	snapshot   any
-	meta       *ModelMetaBase
-	hardDelete bool
+	entity      any
+	state       EntityState
+	snapshot    any
+	meta        *ModelMetaBase
+	hardDelete  bool
+	forceUpdate bool // attached as Modified: UPDATE all columns rather than diffing
 }
 
 type changeTracker struct {
@@ -84,6 +90,44 @@ func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
 	}
 	ct.entities = append(ct.entities, te)
 	ct.index[entity] = te
+}
+
+// Attach begins tracking an externally-constructed entity in the given state.
+// StateModified flags the entity for a full-column UPDATE on the next flush
+// (no snapshot diff, since the prior values are unknown).
+func (ct *changeTracker) Attach(entity any, state EntityState, meta *ModelMetaBase) {
+	if te, exists := ct.index[entity]; exists {
+		te.state = state
+		te.meta = meta
+		te.forceUpdate = state == StateModified
+		return
+	}
+	te := &trackedEntity{
+		entity:      entity,
+		state:       state,
+		meta:        meta,
+		forceUpdate: state == StateModified,
+	}
+	if state == StateUnchanged {
+		te.snapshot = meta.Snapshot(entity)
+	}
+	ct.entities = append(ct.entities, te)
+	ct.index[entity] = te
+}
+
+// Detach stops tracking an entity. Subsequent mutations to it are not flushed.
+func (ct *changeTracker) Detach(entity any) {
+	te, exists := ct.index[entity]
+	if !exists {
+		return
+	}
+	delete(ct.index, entity)
+	for i, e := range ct.entities {
+		if e == te {
+			ct.entities = append(ct.entities[:i], ct.entities[i+1:]...)
+			break
+		}
+	}
 }
 
 func (ct *changeTracker) MarkDeleted(entity any) error {
@@ -136,6 +180,38 @@ func (ct *changeTracker) GetPendingChanges() pendingChanges {
 		}
 	}
 	return pc
+}
+
+// trackerState captures the change-tracker's bookkeeping so a savepoint can
+// restore it on rollback. It records the entity ordering at save time and a
+// copy of each tracked entity's mutable state.
+type trackerState struct {
+	entities []*trackedEntity
+	states   map[*trackedEntity]trackedEntity
+}
+
+// save snapshots the current tracker state for later restore.
+func (ct *changeTracker) save() trackerState {
+	st := trackerState{
+		entities: append([]*trackedEntity(nil), ct.entities...),
+		states:   make(map[*trackedEntity]trackedEntity, len(ct.entities)),
+	}
+	for _, te := range ct.entities {
+		st.states[te] = *te
+	}
+	return st
+}
+
+// restore reverts the tracker to a previously saved state. Entities tracked
+// since the save (e.g. Adds inside a rolled-back savepoint) are dropped, and
+// the state/snapshot of surviving entities is reverted.
+func (ct *changeTracker) restore(st trackerState) {
+	ct.entities = append([]*trackedEntity(nil), st.entities...)
+	ct.index = make(map[any]*trackedEntity, len(st.entities))
+	for _, te := range ct.entities {
+		*te = st.states[te]
+		ct.index[te.entity] = te
+	}
 }
 
 func (ct *changeTracker) PostFlush() {

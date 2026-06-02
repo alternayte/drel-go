@@ -2,6 +2,8 @@ package drel
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/alternayte/drel/internal/ast"
@@ -63,6 +65,54 @@ func (tx *Tx) HardRemove(entity any) error {
 	return tx.tracker.MarkHardDeleted(entity)
 }
 
+// Savepoint runs fn within a nested SAVEPOINT. If fn returns nil the savepoint
+// is released; otherwise the transaction is rolled back to the savepoint and
+// the change tracker is reverted to its state before the savepoint, so entities
+// added inside fn are dropped and prior entities keep their earlier state. The
+// outer transaction continues either way. Savepoints may be nested.
+func (tx *Tx) Savepoint(ctx context.Context, name string, fn func(sp *Tx) error) error {
+	sp := sanitizeSavepoint(name)
+	savedTracker := tx.tracker.save()
+	savedEvents := len(tx.heldEvents)
+
+	if _, err := tx.execInternal(ctx, "SAVEPOINT "+sp); err != nil {
+		return fmt.Errorf("drel: savepoint %q: %w", name, err)
+	}
+
+	if err := fn(tx); err != nil {
+		if _, rbErr := tx.execInternal(ctx, "ROLLBACK TO SAVEPOINT "+sp); rbErr != nil {
+			return fmt.Errorf("drel: rollback to savepoint %q: %w (while handling: %v)", name, rbErr, err)
+		}
+		// Release the (now rewound) savepoint so its name is reusable.
+		_, _ = tx.execInternal(ctx, "RELEASE SAVEPOINT "+sp)
+		tx.tracker.restore(savedTracker)
+		tx.heldEvents = tx.heldEvents[:savedEvents]
+		return err
+	}
+
+	if _, err := tx.execInternal(ctx, "RELEASE SAVEPOINT "+sp); err != nil {
+		return fmt.Errorf("drel: release savepoint %q: %w", name, err)
+	}
+	return nil
+}
+
+// sanitizeSavepoint produces a safe SQL identifier from a user-supplied name.
+// Savepoint names cannot be parameterized, so disallowed characters are mapped
+// to underscores and a leading letter is guaranteed.
+func sanitizeSavepoint(name string) string {
+	var b strings.Builder
+	b.WriteString("sp_")
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
 // TxRepository provides tracked query and mutation access within a transaction.
 type TxRepository[T any] struct {
 	tx   *Tx
@@ -89,56 +139,79 @@ func (r *TxRepository[T]) Remove(entity *T) error {
 	return r.tx.tracker.MarkDeleted(entity)
 }
 
+// Attach begins tracking an externally-constructed entity (e.g. deserialized
+// from a request) in the given state. StateModified flushes a full-column
+// UPDATE; StateAdded behaves like Add; StateUnchanged snapshots the entity so
+// subsequent mutations are detected.
+func (r *TxRepository[T]) Attach(entity *T, state EntityState) {
+	r.tx.tracker.Attach(entity, state, r.base)
+}
+
+// Detach stops tracking an entity so its mutations are no longer flushed.
+func (r *TxRepository[T]) Detach(entity *T) {
+	r.tx.tracker.Detach(entity)
+}
+
+// AsNoTracking returns a query builder whose results are not tracked, for
+// read-only queries within the transaction.
+func (r *TxRepository[T]) AsNoTracking() *TxQueryBuilder[T] {
+	qb := newTxQueryBuilder(r.tx, &r.meta, r.base)
+	qb.noTrack = true
+	return qb
+}
+
 // Find looks up a single record by primary key and begins tracking it.
 func (r *TxRepository[T]) Find(ctx context.Context, id any) (*T, error) {
-	qb := newTxQueryBuilder(r.tx, &r.meta)
-	result, err := qb.Where(newComparison(r.meta.PKColumn, ast.OpEq, id)).First(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if r.meta.Snapshot != nil {
-		snap := r.meta.Snapshot(result)
-		r.tx.tracker.Track(result, snap, r.base)
-	}
-	return result, nil
+	qb := newTxQueryBuilder(r.tx, &r.meta, r.base)
+	return qb.Where(newComparison(r.meta.PKColumn, ast.OpEq, id)).First(ctx)
 }
 
-// Where starts a filtered query within the transaction.
+// Where starts a filtered, tracked query within the transaction.
 func (r *TxRepository[T]) Where(pred Predicate) *TxQueryBuilder[T] {
-	return newTxQueryBuilder(r.tx, &r.meta).Where(pred)
+	return newTxQueryBuilder(r.tx, &r.meta, r.base).Where(pred)
 }
 
-// All returns all records for this model within the transaction.
+// OrderBy starts an ordered, tracked query within the transaction.
+func (r *TxRepository[T]) OrderBy(exprs ...OrderExpr) *TxQueryBuilder[T] {
+	return newTxQueryBuilder(r.tx, &r.meta, r.base).OrderBy(exprs...)
+}
+
+// All returns all records for this model within the transaction, tracking them.
 func (r *TxRepository[T]) All(ctx context.Context) ([]*T, error) {
-	return newTxQueryBuilder(r.tx, &r.meta).All(ctx)
+	return newTxQueryBuilder(r.tx, &r.meta, r.base).All(ctx)
 }
 
 // Unscoped returns a query builder with all global filters removed.
 func (r *TxRepository[T]) Unscoped() *TxQueryBuilder[T] {
-	return newTxQueryBuilder(r.tx, &r.meta).Unscoped()
+	return newTxQueryBuilder(r.tx, &r.meta, r.base).Unscoped()
 }
 
 // WithoutFilter returns a query builder with the named filter removed.
 func (r *TxRepository[T]) WithoutFilter(name string) *TxQueryBuilder[T] {
-	return newTxQueryBuilder(r.tx, &r.meta).WithoutFilter(name)
+	return newTxQueryBuilder(r.tx, &r.meta, r.base).WithoutFilter(name)
 }
 
 // TxQueryBuilder constructs and executes typed queries within a transaction.
+// By default, results are tracked by the transaction's change tracker so that
+// mutations are detected on SaveChanges; use AsNoTracking to opt out.
 type TxQueryBuilder[T any] struct {
 	tx      *Tx
 	meta    *ModelMeta[T]
+	base    *ModelMetaBase
 	wheres  []ast.WhereClause
 	orderBy []ast.OrderByExpr
 	limit   *int
 	offset  *int
 	after   *string
 	filters []NamedFilter
+	noTrack bool
 }
 
-func newTxQueryBuilder[T any](tx *Tx, meta *ModelMeta[T]) *TxQueryBuilder[T] {
+func newTxQueryBuilder[T any](tx *Tx, meta *ModelMeta[T], base *ModelMetaBase) *TxQueryBuilder[T] {
 	return &TxQueryBuilder[T]{
 		tx:      tx,
 		meta:    meta,
+		base:    base,
 		filters: append([]NamedFilter(nil), meta.Filters...),
 	}
 }
@@ -147,15 +220,24 @@ func (q *TxQueryBuilder[T]) clone() *TxQueryBuilder[T] {
 	c := &TxQueryBuilder[T]{
 		tx:      q.tx,
 		meta:    q.meta,
+		base:    q.base,
 		wheres:  make([]ast.WhereClause, len(q.wheres)),
 		orderBy: make([]ast.OrderByExpr, len(q.orderBy)),
 		limit:   q.limit,
 		offset:  q.offset,
 		after:   q.after,
 		filters: append([]NamedFilter(nil), q.filters...),
+		noTrack: q.noTrack,
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
+	return c
+}
+
+// AsNoTracking returns a copy of the builder whose results will not be tracked.
+func (q *TxQueryBuilder[T]) AsNoTracking() *TxQueryBuilder[T] {
+	c := q.clone()
+	c.noTrack = true
 	return c
 }
 
@@ -253,6 +335,11 @@ func (q *TxQueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if !q.noTrack && q.base != nil && q.meta.Snapshot != nil {
+		for _, item := range items {
+			q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		}
 	}
 	return items, nil
 }
