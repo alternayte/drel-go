@@ -1,0 +1,8 @@
+packages:
+  - ./models
+
+output:
+  db: ./db/drel_gen.go
+  migrations: ./db/migrations
+
+dialect: sqlite

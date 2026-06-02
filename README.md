@@ -126,6 +126,7 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
 See [examples/](examples/) for working samples:
 
 - [getting-started](examples/getting-started/) -- minimal CRUD
+- [sqlite-todo](examples/sqlite-todo/) -- SQLite dialect, tag indexes, cursor pagination
 - [model-features](examples/model-features/) -- soft delete, versioning, audit
 - [relationships](examples/relationships/) -- associations and includes
 - [bulk-ops](examples/bulk-ops/) -- batch operations
