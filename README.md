@@ -2,8 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Code-generation-based Go ORM for Postgres. Type-safe queries,
-snapshot-based change tracking, zero runtime reflection.
+Code-generation-based Go ORM for Postgres and SQLite/LibSQL (Turso).
+Type-safe queries, snapshot-based change tracking, zero runtime reflection,
+EF Core-level developer experience.
 
 ## Installation
 
@@ -92,10 +93,33 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
   related models, with `Unscoped()` opt-out.
 - **Bulk operations** -- `BulkInsert`, `BulkUpdate`, `BulkDelete`,
   `BulkUpsert` with batching and safety guards.
-- **Domain events** -- register and dispatch events on entity lifecycle.
+- **Domain events & outbox** -- record events on entities, dispatch them
+  after commit, and optionally persist them to a transactional outbox table
+  via `Engine.UseOutbox`.
+- **Pagination** -- offset (`PageOffset`) and keyset/cursor (`Page`) paging
+  with a deterministic primary-key tiebreaker.
+- **Projections & aggregations** -- `Select`, `Aggregate`, `GroupBy` into
+  arbitrary DTOs.
+- **Nested & filtered includes** -- `Include(Users.Posts.Then(Posts.Tags))`,
+  with `Where`/`OrderBy`/`Limit` per relationship; split-query loading avoids
+  cartesian products.
+- **Change-tracking depth** -- tracked queries by default, `AsNoTracking`,
+  `Attach`/`Detach`, and nested `Savepoint`s.
+- **Migrations** -- dialect-aware schema generation and a structured snapshot
+  diff (`drel migrate new`) that emits add/drop/alter for tables, columns,
+  types, nullability, and indexes; `up`/`down`/`status`/`lint` for both
+  dialects. Declare indexes/checks with `db:` tag options.
+- **Read replicas** -- `WithReadReplica` round-robins reads; writes and
+  transactions use the primary; `Primary()` forces read-your-writes.
+- **Query batching** -- `NewBatch` + `BatchAll`/`BatchFirst`/`BatchCount`
+  pipeline queries over pgx (sequential fallback elsewhere).
+- **Observability** -- structured `slog` query logging, slow-query and
+  dev-mode diagnostics (N+1, unbounded queries, missing-index hints), and an
+  OpenTelemetry-adaptable `Tracer`.
+- **CLI** -- `drel init`, `generate`, `migrate`, `seed`.
 - **Raw SQL escape hatches** -- `Engine.Exec`, `Engine.Query`,
-  `Engine.QueryRow`, and `Tx.Exec`, `Tx.QueryRow` for anything the
-  ORM does not cover.
+  `Engine.QueryRow`, `RawQuery[T]`, and `Tx.Exec`, `Tx.QueryRow` for anything
+  the ORM does not cover.
 
 ## Examples
 
@@ -107,14 +131,25 @@ See [examples/](examples/) for working samples:
 - [bulk-ops](examples/bulk-ops/) -- batch operations
 - [multi-model](examples/multi-model/) -- domain events, transaction hooks
 
+## Dialects
+
+- **Postgres** — direct `pgx`, auto-detected from `postgres://` DSNs.
+- **SQLite** — pure-Go `modernc.org/sqlite`, auto-detected from `file:`,
+  `sqlite://`, `:memory:`, or `*.db` DSNs.
+- **LibSQL/Turso** — `libsql://`/`wss://` DSNs; build with `-tags libsql`
+  (keeps the libsql client out of builds that don't use it).
+
 ## Limitations
 
-- Postgres only (SQLite/LibSQL planned).
-- Migration generation produces full schema; incremental diffing is not
-  yet automated — treat generated SQL as a scaffold and review before
-  applying.
+- Migration diffing does not auto-detect column **renames** — a rename appears
+  as drop + add; edit the generated SQL if you intend a rename. SQLite cannot
+  `ALTER COLUMN TYPE`/nullability in place, so those changes are emitted as
+  loud `-- WARNING` comments to be applied by hand.
 - Bulk `Set` accepts `any` values — type safety is enforced on column
-  predicates and `FindByID` but not on bulk mutation values.
+  predicates and `Find` but not on bulk mutation values.
+- True JOIN-based eager loading is intentionally not offered; relationships
+  load via batched split queries (correct for every shape, no cartesian
+  products).
 
 ## License
 
