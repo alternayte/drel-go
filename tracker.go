@@ -52,6 +52,8 @@ type trackedEntity struct {
 	meta        *ModelMetaBase
 	hardDelete  bool
 	forceUpdate bool // attached as Modified: UPDATE all columns rather than diffing
+	loaded      bool // tracked from a query (not Added) — eligible for unused-tracking hint
+	everDirty   bool // ever transitioned to Modified/Deleted during this transaction
 }
 
 type changeTracker struct {
@@ -74,6 +76,7 @@ func (ct *changeTracker) Track(entity any, snapshot any, meta *ModelMetaBase) {
 		state:    StateUnchanged,
 		snapshot: snapshot,
 		meta:     meta,
+		loaded:   true,
 	}
 	ct.entities = append(ct.entities, te)
 	ct.index[entity] = te
@@ -136,7 +139,20 @@ func (ct *changeTracker) MarkDeleted(entity any) error {
 		return fmt.Errorf("%w: cannot remove an entity that is not tracked", ErrEntityNotTracked)
 	}
 	te.state = StateDeleted
+	te.everDirty = true
 	return nil
+}
+
+// countUnusedTracked returns the number of entities loaded via a tracked query
+// that were never modified or deleted — candidates for AsNoTracking.
+func (ct *changeTracker) countUnusedTracked() int {
+	n := 0
+	for _, te := range ct.entities {
+		if te.loaded && !te.everDirty {
+			n++
+		}
+	}
+	return n
 }
 
 func (ct *changeTracker) MarkHardDeleted(entity any) error {
@@ -146,6 +162,7 @@ func (ct *changeTracker) MarkHardDeleted(entity any) error {
 	}
 	te.state = StateDeleted
 	te.hardDelete = true
+	te.everDirty = true
 	return nil
 }
 
@@ -157,6 +174,7 @@ func (ct *changeTracker) DetectChanges() {
 		changes := te.meta.Diff(te.entity, te.snapshot)
 		if len(changes) > 0 {
 			te.state = StateModified
+			te.everDirty = true
 		}
 	}
 }

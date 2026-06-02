@@ -3,6 +3,7 @@ package drel
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +22,12 @@ type Engine struct {
 	beforeCommitHooks []BeforeCommitHook
 	afterCommitHooks  []AfterCommitHook
 	queryHooks        []QueryHook
+
+	logger        *slog.Logger
+	tracer        Tracer
+	devMode       bool
+	slowThreshold time.Duration
+	n1            *n1Detector
 }
 
 // Option configures Engine creation.
@@ -30,6 +37,12 @@ type engineConfig struct {
 	ctx context.Context
 	drv driver.Driver
 	dia dialect.Dialect
+
+	logger        *slog.Logger
+	queryLog      bool
+	slowThreshold time.Duration
+	tracer        Tracer
+	devMode       bool
 }
 
 // detectDialect inspects the DSN and returns "sqlite" or "postgres".
@@ -88,10 +101,12 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	return &Engine{
+	e := &Engine{
 		drv: drv,
 		dia: dia,
-	}, nil
+	}
+	e.installObservability(cfg)
+	return e, nil
 }
 
 // WithContext sets the context used during engine creation.
@@ -146,23 +161,42 @@ func (e *Engine) dialect() dialect.Dialect {
 	return e.dia
 }
 
+// startSpan begins a tracing span for a query if a tracer is configured.
+// It returns the (possibly augmented) context and a no-op-safe end function.
+func (e *Engine) startSpan(ctx context.Context, name string) (context.Context, func(err error)) {
+	if e.tracer == nil {
+		return ctx, func(error) {}
+	}
+	spanCtx, span := e.tracer.Start(ctx, name)
+	return spanCtx, func(err error) {
+		span.RecordError(err)
+		span.End()
+	}
+}
+
 func (e *Engine) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
+	ctx, endSpan := e.startSpan(ctx, "drel.exec")
 	start := time.Now()
 	n, err := e.drv.Exec(ctx, sql, args...)
+	endSpan(err)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
 	return n, err
 }
 
 func (e *Engine) queryInternal(ctx context.Context, sql string, args ...any) (Rows, error) {
+	ctx, endSpan := e.startSpan(ctx, "drel.query")
 	start := time.Now()
 	rows, err := e.drv.Query(ctx, sql, args...)
+	endSpan(err)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
 	return rows, err
 }
 
 func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
+	ctx, endSpan := e.startSpan(ctx, "drel.queryRow")
 	start := time.Now()
 	row := e.drv.QueryRow(ctx, sql, args...)
+	endSpan(nil)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
 	return row
 }

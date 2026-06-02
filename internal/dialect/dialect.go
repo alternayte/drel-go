@@ -26,6 +26,10 @@ type Dialect interface {
 	// Now returns the SQL expression for the current timestamp.
 	// Postgres returns "NOW()", SQLite returns "CURRENT_TIMESTAMP".
 	Now() string
+	// Explain returns a query that produces a textual execution plan for the
+	// given query, and whether the dialect supports plan inspection in the form
+	// drel uses for missing-index hints. SQLite returns ("", false).
+	Explain(query string) (string, bool)
 	BuildSelect(node ast.SelectNode) Result
 	BuildInsert(table string, columns []string, values []any, returningCols []string) Result
 	BuildUpdate(table string, changes []ColumnValue, pkColumn string, pkValue any) Result

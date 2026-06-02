@@ -98,6 +98,13 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		return err
 	}
 
+	if e.devMode {
+		if n := tx.tracker.countUnusedTracked(); n > 0 {
+			e.devWarn(ctx, "drel dev: tracked entities were loaded but never modified; consider AsNoTracking for read-only queries",
+				"count", n)
+		}
+	}
+
 	if err := dbTx.Commit(ctx); err != nil {
 		return fmt.Errorf("drel: commit: %w", err)
 	}
