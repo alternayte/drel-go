@@ -50,6 +50,8 @@ type engineConfig struct {
 
 	replicaDSNs []string
 	replicaDrvs []driver.Driver
+
+	authToken string
 }
 
 // detectDialect inspects the DSN and returns "sqlite" or "postgres".
@@ -57,6 +59,11 @@ type engineConfig struct {
 // ":memory:", or a path ending with ".db".
 // Everything else (including "postgres://" and "postgresql://") maps to "postgres".
 func detectDialect(dsn string) string {
+	if strings.HasPrefix(dsn, "libsql://") ||
+		strings.HasPrefix(dsn, "wss://") ||
+		strings.HasPrefix(dsn, "ws://") {
+		return "libsql"
+	}
 	if strings.HasPrefix(dsn, "file:") ||
 		strings.HasPrefix(dsn, "sqlite://") ||
 		dsn == ":memory:" ||
@@ -83,6 +90,18 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	if drv == nil || dia == nil {
 		detected := detectDialect(dsn)
 		switch detected {
+		case "libsql":
+			// libSQL is SQLite-compatible: reuse the SQLite dialect.
+			if drv == nil {
+				d, err := newLibSQLDriver(applyAuthToken(dsn, cfg.authToken))
+				if err != nil {
+					return nil, fmt.Errorf("drel: open: %w", err)
+				}
+				drv = d
+			}
+			if dia == nil {
+				dia = dialectsqlite.New()
+			}
 		case "sqlite":
 			if drv == nil {
 				d, err := sqlitedriver.New(dsn)
@@ -135,10 +154,33 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 // openDriverForDSN opens a driver for a DSN using the same dialect detection as
 // the primary connection.
 func openDriverForDSN(ctx context.Context, dsn string) (driver.Driver, error) {
-	if detectDialect(dsn) == "sqlite" {
+	switch detectDialect(dsn) {
+	case "libsql":
+		return newLibSQLDriver(dsn)
+	case "sqlite":
 		return sqlitedriver.New(dsn)
+	default:
+		return pgxdriver.New(ctx, dsn)
 	}
-	return pgxdriver.New(ctx, dsn)
+}
+
+// WithAuthToken sets the authentication token for a libSQL/Turso connection.
+// It is appended to the DSN as the authToken query parameter.
+func WithAuthToken(token string) Option {
+	return func(cfg *engineConfig) { cfg.authToken = token }
+}
+
+// applyAuthToken appends an authToken query parameter to a libSQL DSN if a token
+// is provided and the DSN does not already carry one.
+func applyAuthToken(dsn, token string) string {
+	if token == "" || strings.Contains(dsn, "authToken=") {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "authToken=" + token
 }
 
 // WithReadReplica registers a read replica. Read queries issued through
