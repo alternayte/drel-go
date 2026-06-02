@@ -67,11 +67,30 @@ type cursorPayload struct {
 }
 
 func encodeCursor(columns []string, vals []any) (string, error) {
+	// Register each value's concrete type so gob can encode named types
+	// (enums, uuid.UUID, value objects) behind the []any. Registration is
+	// process-global and idempotent for a given type; subsequent decodes in the
+	// same process therefore succeed. The static init() registrations cover the
+	// built-in kinds for decode-before-encode robustness across restarts.
+	for _, v := range vals {
+		registerCursorType(v)
+	}
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(cursorPayload{Columns: columns, Vals: vals}); err != nil {
-		return "", fmt.Errorf("drel: encode cursor: %w", err)
+		return "", fmt.Errorf("drel: encode cursor (order-key type may be unsupported): %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+// registerCursorType registers v's concrete type with gob, swallowing the
+// benign panic gob raises if a different type was already registered under the
+// same name (extremely unlikely for ordering-key types).
+func registerCursorType(v any) {
+	if v == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	gob.Register(v)
 }
 
 func decodeCursor(s string) (cursorPayload, error) {

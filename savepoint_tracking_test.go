@@ -106,6 +106,55 @@ func TestSavepoint_Nested(t *testing.T) {
 	assert.Equal(t, 2, countItems(t, engine)) // a and b, not c
 }
 
+func TestSavepoint_NestedSameName(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx := context.Background()
+
+	// Reusing the same savepoint name at different nesting levels must not
+	// collide: the inner rollback drops only "c", the outer keeps "a"+"b".
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		drel.NewTxRepository(tx, sqliteItemMeta).Add(&sqliteItem{Title: "a"})
+		if err := tx.SaveChanges(ctx); err != nil {
+			return err
+		}
+		return tx.Savepoint(ctx, "sp", func(sp1 *drel.Tx) error {
+			drel.NewTxRepository(sp1, sqliteItemMeta).Add(&sqliteItem{Title: "b"})
+			if err := sp1.SaveChanges(ctx); err != nil {
+				return err
+			}
+			_ = sp1.Savepoint(ctx, "sp", func(sp2 *drel.Tx) error { // same name
+				drel.NewTxRepository(sp2, sqliteItemMeta).Add(&sqliteItem{Title: "c"})
+				if err := sp2.SaveChanges(ctx); err != nil {
+					return err
+				}
+				return fmt.Errorf("drop c")
+			})
+			return nil
+		})
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, countItems(t, engine))
+}
+
+func TestAttach_UnchangedInsertOnlyMetaDoesNotPanic(t *testing.T) {
+	// evItemMeta (defined in outbox_test.go) has no Snapshot/Diff. Attaching as
+	// StateUnchanged must not panic even though such a model can't be diffed.
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	defer engine.Close()
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `CREATE TABLE ev_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() {
+		_ = engine.Transaction(ctx, func(tx *drel.Tx) error {
+			repo := drel.NewTxRepository(tx, evItemMeta)
+			repo.Attach(&evItem{ID: 1, Name: "x"}, drel.StateUnchanged)
+			return tx.SaveChanges(ctx)
+		})
+	})
+}
+
 // ─── Tracking by default vs AsNoTracking ─────────────────────────────────────
 
 func TestTxQuery_TracksByDefault(t *testing.T) {

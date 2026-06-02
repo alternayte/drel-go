@@ -2,6 +2,7 @@ package codegen_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/alternayte/drel/internal/codegen"
@@ -79,6 +80,34 @@ func TestDiffSchemas_AppliesToRealSQLite(t *testing.T) {
 	assert.Error(t, err, "posts table should be gone after down")
 	_, err = drv.Exec(ctx, "UPDATE users SET bio = 'y' WHERE name = 'alice'")
 	assert.Error(t, err, "bio column should be gone after down")
+}
+
+// TestDiffSchemas_DownEnumOrdering verifies that when a table using an enum is
+// dropped, the down migration creates the enum type before recreating the
+// table that references it.
+func TestDiffSchemas_DownEnumOrdering(t *testing.T) {
+	withEnum := []codegen.ModelInfo{{
+		Name: "User", TableName: "users", PKType: "int",
+		Fields: []codegen.FieldInfo{
+			{Name: "Role", GoType: "Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumValues: []string{"admin", "user"}, IsExported: true},
+		},
+	}}
+	empty := []codegen.ModelInfo{} // table (and its enum) dropped
+
+	_, down := codegen.DiffSchemas(
+		codegen.BuildSchema(withEnum, "postgres"),
+		codegen.BuildSchema(empty, "postgres"),
+		"postgres",
+	)
+	createType := strings.Index(down, "CREATE TYPE")
+	createTable := strings.Index(down, "CREATE TABLE")
+	if createType < 0 || createTable < 0 {
+		t.Fatalf("down should recreate both type and table:\n%s", down)
+	}
+	if createType > createTable {
+		t.Fatalf("down must CREATE TYPE before CREATE TABLE that uses it:\n%s", down)
+	}
 }
 
 // TestDiffSchemas_NoChange returns empty when schemas match.

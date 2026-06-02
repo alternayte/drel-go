@@ -16,6 +16,7 @@ type Tx struct {
 	dbTx       driver.Tx
 	tracker    *changeTracker
 	heldEvents []any
+	spCounter  int
 }
 
 // SaveChanges flushes all tracked changes within this transaction.
@@ -69,9 +70,19 @@ func (tx *Tx) HardRemove(entity any) error {
 // is released; otherwise the transaction is rolled back to the savepoint and
 // the change tracker is reverted to its state before the savepoint, so entities
 // added inside fn are dropped and prior entities keep their earlier state. The
-// outer transaction continues either way. Savepoints may be nested.
+// outer transaction continues either way. Savepoints may be nested, including
+// reusing the same name.
+//
+// Note: rollback reverts the change tracker, not the in-memory Go structs. If a
+// flush inside fn populated generated fields on an entity (id, version,
+// created_at) and the savepoint is then rolled back, that entity still carries
+// those values in memory even though its row no longer exists. Discard such
+// entities rather than reusing them after a rolled-back savepoint.
 func (tx *Tx) Savepoint(ctx context.Context, name string, fn func(sp *Tx) error) error {
-	sp := sanitizeSavepoint(name)
+	// A per-transaction counter guarantees a unique SQL identifier even when the
+	// same user-facing name is reused at different nesting levels.
+	tx.spCounter++
+	sp := fmt.Sprintf("%s_%d", sanitizeSavepoint(name), tx.spCounter)
 	savedTracker := tx.tracker.save()
 	savedEvents := len(tx.heldEvents)
 
@@ -440,6 +451,9 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	c := q.clone()
 	c.orderBy = order
 	c.after = nil
+	// Fetch the over-fetch (pageSize+1) without tracking so the discarded
+	// sentinel row is never added to the change tracker.
+	c.noTrack = true
 	if q.after != nil {
 		payload, err := decodeCursor(*q.after)
 		if err != nil {
@@ -457,5 +471,15 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	return finishCursorPage(q.meta, order, items, pageSize)
+	page, err := finishCursorPage(q.meta, order, items, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	// Track only the rows actually returned to the caller (unless opted out).
+	if !q.noTrack && q.base != nil && q.meta.Snapshot != nil {
+		for _, item := range page.Items {
+			q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		}
+	}
+	return page, nil
 }

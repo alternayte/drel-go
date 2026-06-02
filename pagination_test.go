@@ -177,6 +177,66 @@ func TestCursorPage_RequiresOrderBy(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrCursorPaginationNeedsOrderBy)
 }
 
+// catKind is a named string type used to exercise cursor encoding of a
+// non-builtin (enum-like / uuid-like) order-key type.
+type catKind string
+
+type catRow struct {
+	ID   int
+	Kind catKind
+}
+
+var catRowMeta = drel.ModelMeta[catRow]{
+	Table:    "cat_rows",
+	Columns:  []string{"id", "kind"},
+	PKColumn: "id",
+	Scan: func(r drel.Row) (*catRow, error) {
+		c := &catRow{}
+		return c, r.Scan(&c.ID, &c.Kind)
+	},
+	PKValue: func(c *catRow) any { return c.ID },
+	ColumnValue: func(c *catRow, i int) any {
+		if i == 0 {
+			return c.ID
+		}
+		return c.Kind
+	},
+}
+
+func TestCursorPage_NamedTypeOrderKey(t *testing.T) {
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	defer engine.Close()
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `CREATE TABLE cat_rows (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL)`)
+	require.NoError(t, err)
+	for i := 1; i <= 9; i++ {
+		_, err = engine.Exec(ctx, `INSERT INTO cat_rows (kind) VALUES (?)`,
+			[]string{"a", "b", "c"}[i%3])
+		require.NoError(t, err)
+	}
+	repo := drel.NewRepository(engine, catRowMeta)
+
+	// Ordering by the named-type column must encode/decode cursors without error.
+	seen := 0
+	cursor := ""
+	for {
+		q := repo.OrderBy(drel.NewOrderedCol[catKind]("kind").Asc()).Take(4)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		require.NoError(t, err) // would error if gob couldn't encode catKind
+		seen += len(page.Items)
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+		require.NotEmpty(t, cursor)
+	}
+	assert.Equal(t, 9, seen)
+}
+
 func TestCursorPage_InvalidCursor(t *testing.T) {
 	_, repo := setupPageRows(t, 3)
 	ctx := context.Background()

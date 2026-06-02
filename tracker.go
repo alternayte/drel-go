@@ -110,8 +110,9 @@ func (ct *changeTracker) Attach(entity any, state EntityState, meta *ModelMetaBa
 		state:       state,
 		meta:        meta,
 		forceUpdate: state == StateModified,
+		loaded:      state == StateUnchanged,
 	}
-	if state == StateUnchanged {
+	if state == StateUnchanged && meta.Snapshot != nil {
 		te.snapshot = meta.Snapshot(entity)
 	}
 	ct.entities = append(ct.entities, te)

@@ -342,6 +342,12 @@ func DiffSchemas(old, newSchema Schema, dialect string) (upSQL, downSQL string) 
 	if len(up) == 0 && len(down) == 0 {
 		return "", ""
 	}
+	// The down migration must undo the up steps in reverse order so that
+	// dependencies hold (e.g. a recreated table's enum type is created before
+	// the table, and a new table is dropped before the enum it depends on).
+	for i, j := 0, len(down)-1; i < j; i, j = i+1, j-1 {
+		down[i], down[j] = down[j], down[i]
+	}
 	return strings.Join(up, "\n"), strings.Join(down, "\n")
 }
 
@@ -438,7 +444,36 @@ func diffColumn(table string, old, new Column, dialect string) (up, down []strin
 		}
 	}
 
+	if old.Default != new.Default {
+		if dialect == "sqlite" {
+			up = append(up, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN DEFAULT for %s.%s (%q -> %q); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), old.Default, new.Default))
+			down = append(down, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER COLUMN DEFAULT for %s.%s (%q -> %q); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), new.Default, old.Default))
+		} else {
+			up = append(up, alterDefaultSQL(table, new.Name, new.Default))
+			down = append(down, alterDefaultSQL(table, old.Name, old.Default))
+		}
+	}
+
+	if old.Check != new.Check {
+		// CHECK constraints are inline column constraints in our model; changing
+		// one requires a table rebuild on both dialects, which we don't attempt.
+		up = append(up, fmt.Sprintf(`-- WARNING: CHECK constraint on %s.%s changed (%q -> %q); apply the new constraint manually (requires a table rebuild)`,
+			quoteIdent(table), quoteIdent(new.Name), old.Check, new.Check))
+		down = append(down, fmt.Sprintf(`-- WARNING: CHECK constraint on %s.%s changed (%q -> %q); apply the new constraint manually (requires a table rebuild)`,
+			quoteIdent(table), quoteIdent(new.Name), new.Check, old.Check))
+	}
+
 	return up, down
+}
+
+// alterDefaultSQL emits SET/DROP DEFAULT for a Postgres column.
+func alterDefaultSQL(table, column, def string) string {
+	if def == "" {
+		return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;", quoteIdent(table), quoteIdent(column))
+	}
+	return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;", quoteIdent(table), quoteIdent(column), def)
 }
 
 func indexEnums(enums []EnumDef) map[string]EnumDef {
