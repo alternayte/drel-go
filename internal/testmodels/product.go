@@ -53,6 +53,23 @@ var ProductMeta = drel.ModelMeta[Product]{
 	PKValue: func(p *Product) any {
 		return p.ID
 	},
+	ColumnValue: func(p *Product, idx int) any {
+		switch idx {
+		case 0:
+			return p.ID
+		case 1:
+			return p.Name
+		case 2:
+			return p.Price
+		case 3:
+			return p.InStock
+		case 4:
+			return p.CreatedAt
+		case 5:
+			return p.UpdatedAt
+		}
+		return nil
+	},
 	InsertColumns: func(p *Product) ([]string, []any) {
 		return []string{"name", "price", "in_stock"}, []any{p.Name, p.Price, p.InStock}
 	},

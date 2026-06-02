@@ -123,6 +123,21 @@ func (r *Repository[T]) Limit(n int) *QueryBuilder[T] {
 	return r.newBuilder().Limit(n)
 }
 
+// Take starts a query with a row limit (alias for Limit, reads naturally with pagination).
+func (r *Repository[T]) Take(n int) *QueryBuilder[T] {
+	return r.newBuilder().Limit(n)
+}
+
+// Skip starts a query with a row offset.
+func (r *Repository[T]) Skip(n int) *QueryBuilder[T] {
+	return r.newBuilder().Skip(n)
+}
+
+// After starts a cursor-paginated query positioned past the given cursor.
+func (r *Repository[T]) After(cursor string) *QueryBuilder[T] {
+	return r.newBuilder().After(cursor)
+}
+
 // All returns all records for this model.
 func (r *Repository[T]) All(ctx context.Context) ([]*T, error) {
 	return r.newBuilder().All(ctx)

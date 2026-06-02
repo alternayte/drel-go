@@ -81,6 +81,11 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 		return dialect.Result{SQL: b.String(), Args: args}
 	}
 
+	// COUNT carries only WHERE — ordering/limit/offset would corrupt the single-row result.
+	if node.Type == ast.QueryCount {
+		return dialect.Result{SQL: b.String(), Args: args}
+	}
+
 	if len(node.OrderBy) > 0 {
 		b.WriteString(" ORDER BY ")
 		for i, ob := range node.OrderBy {

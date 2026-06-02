@@ -21,6 +21,7 @@ type QueryBuilder[T any] struct {
 	orderBy []ast.OrderByExpr
 	limit   *int
 	offset  *int
+	after   *string
 	filters []NamedFilter
 }
 
@@ -40,6 +41,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		orderBy: make([]ast.OrderByExpr, len(q.orderBy)),
 		limit:   q.limit,
 		offset:  q.offset,
+		after:   q.after,
 		filters: append([]NamedFilter(nil), q.filters...),
 	}
 	copy(c.wheres, q.wheres)
@@ -201,4 +203,75 @@ func (q *QueryBuilder[T]) Exists(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return exists, nil
+}
+
+// Take limits the number of results returned. It is an alias for Limit that
+// reads naturally alongside Skip/After in pagination expressions.
+func (q *QueryBuilder[T]) Take(n int) *QueryBuilder[T] {
+	return q.Limit(n)
+}
+
+// After positions a cursor-paginated query immediately past the row encoded by
+// the cursor (as returned in a prior CursorPage.NextCursor). Combine with
+// OrderBy and Take, then call Page.
+func (q *QueryBuilder[T]) After(cursor string) *QueryBuilder[T] {
+	c := q.clone()
+	c.after = &cursor
+	return c
+}
+
+// PageOffset executes an offset-based page query. Take (or Limit) sets the page
+// size and Skip sets the offset. It runs a COUNT to populate Total/TotalPages.
+func (q *QueryBuilder[T]) PageOffset(ctx context.Context) (*OffsetPage[T], error) {
+	if q.limit == nil {
+		return nil, ErrPaginationNeedsLimit
+	}
+	total, err := q.Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items, err := q.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	offset := 0
+	if q.offset != nil {
+		offset = *q.offset
+	}
+	return buildOffsetPage(items, total, *q.limit, offset), nil
+}
+
+// Page executes a keyset (cursor) page query. OrderBy is required; Take sets the
+// page size. When After is set the page begins past that cursor.
+func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
+	if len(q.orderBy) == 0 {
+		return nil, ErrCursorPaginationNeedsOrderBy
+	}
+	if q.limit == nil {
+		return nil, ErrPaginationNeedsLimit
+	}
+	pageSize := *q.limit
+	order := cursorOrder(q.orderBy, q.meta.PKColumn)
+
+	c := q.clone()
+	c.orderBy = order
+	c.after = nil
+	if q.after != nil {
+		payload, err := decodeCursor(*q.after)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateCursorColumns(payload, order); err != nil {
+			return nil, err
+		}
+		c.wheres = append(c.wheres, keysetClause(order, payload.Vals))
+	}
+	fetch := pageSize + 1
+	c.limit = &fetch
+
+	items, err := c.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return finishCursorPage(q.meta, order, items, pageSize)
 }
