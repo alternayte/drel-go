@@ -10,21 +10,21 @@ import (
 )
 
 var Articles = struct {
-	ID drel.OrderedColumn[int]
-	Title drel.StringColumn
-	Body drel.StringColumn
+	ID        drel.OrderedColumn[int]
+	Title     drel.StringColumn
+	Body      drel.StringColumn
 	DeletedAt drel.Column[*time.Time]
-	Version drel.OrderedColumn[int]
+	Version   drel.OrderedColumn[int]
 	CreatedBy drel.StringColumn
 	UpdatedBy drel.StringColumn
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Title: drel.NewStringCol("title"),
-	Body: drel.NewStringCol("body"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Title:     drel.NewStringCol("title"),
+	Body:      drel.NewStringCol("body"),
 	DeletedAt: drel.NewCol[*time.Time]("deleted_at"),
-	Version: drel.NewOrderedCol[int]("version"),
+	Version:   drel.NewOrderedCol[int]("version"),
 	CreatedBy: drel.NewStringCol("created_by"),
 	UpdatedBy: drel.NewStringCol("updated_by"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
@@ -44,7 +44,7 @@ func scanArticle(row drel.Row) (*Article, error) {
 
 type articleSnapshot struct {
 	Title string
-	Body string
+	Body  string
 }
 
 func snapshotArticle(p *Article) any {
@@ -101,9 +101,9 @@ func articleScanReturning(p *Article, row drel.Row) error {
 }
 
 var ArticleMeta = drel.ModelMeta[Article]{
-	Table:   "articles",
-	Columns: []string{"id", "title", "body", "deleted_at", "version", "created_by", "updated_by", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "articles",
+	Columns:       []string{"id", "title", "body", "deleted_at", "version", "created_by", "updated_by", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanArticle,
 	Snapshot:      snapshotArticle,
 	Diff:          diffArticle,
@@ -112,11 +112,11 @@ var ArticleMeta = drel.ModelMeta[Article]{
 	ScanReturning: articleScanReturning,
 	ColumnValue:   articleColumnValue,
 	HasSoftDelete: true,
-	Filters: []drel.NamedFilter{drel.SoftDeleteFilter},
-	HasVersioned: true,
-	VersionValue: func(p *Article) int { return p.Version() },
-	SetVersion:   func(p *Article, v int) { *p.VersionPtr() = v },
-	HasAudit: true,
+	Filters:       []drel.NamedFilter{drel.SoftDeleteFilter},
+	HasVersioned:  true,
+	VersionValue:  func(p *Article) int { return p.Version() },
+	SetVersion:    func(p *Article, v int) { *p.VersionPtr() = v },
+	HasAudit:      true,
 	AuditSetCreate: func(p *Article, actor string) {
 		createdByPtr, updatedByPtr := p.AuditPtrs()
 		*createdByPtr = actor

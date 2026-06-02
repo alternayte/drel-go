@@ -119,7 +119,7 @@ func TestGenerateCreateTable_BigintPK(t *testing.T) {
 
 func TestGenerateCreateTable_Traits(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts",
-		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
+		Fields:        []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
 		HasSoftDelete: true, HasVersioned: true, HasAudit: true}
 	sql := GenerateCreateTable(m, nil, "postgres")
 
@@ -174,7 +174,7 @@ func TestGenerateCreateTable_SQLite_BigintPK(t *testing.T) {
 
 func TestGenerateCreateTable_SQLite_Traits(t *testing.T) {
 	m := ModelInfo{Name: "Post", PKType: "int", TableName: "posts",
-		Fields: []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
+		Fields:        []FieldInfo{{Name: "title", GoType: "string", ColumnName: "title"}},
 		HasSoftDelete: true, HasVersioned: true, HasAudit: true}
 	sql := GenerateCreateTable(m, nil, "sqlite")
 
@@ -405,4 +405,3 @@ func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
 	assert.Contains(t, sql, `"author_id" INTEGER NOT NULL REFERENCES "authors"("id")`)
 	assert.Contains(t, sql, `"tag_id" INTEGER NOT NULL REFERENCES "tags"("id")`)
 }
-

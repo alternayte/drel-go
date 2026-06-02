@@ -80,12 +80,13 @@ output:
 	modelContent, err := os.ReadFile(modelFile)
 	require.NoError(t, err)
 	modelStr := string(modelContent)
+	modelNorm := strings.Join(strings.Fields(modelStr), " ") // gofmt-alignment-insensitive
 
 	assert.Contains(t, modelStr, "var Products = struct {")
 	assert.Contains(t, modelStr, "var ProductMeta = drel.ModelMeta[Product]{")
-	assert.Contains(t, modelStr, "Name drel.StringColumn")
-	assert.Contains(t, modelStr, "Price drel.OrderedColumn[int]")
-	assert.Contains(t, modelStr, "InStock drel.BoolColumn")
+	assert.Contains(t, modelNorm, "Name drel.StringColumn")
+	assert.Contains(t, modelNorm, "Price drel.OrderedColumn[int]")
+	assert.Contains(t, modelNorm, "InStock drel.BoolColumn")
 
 	// Verify DB file was generated.
 	dbFile := filepath.Join(dir, "db", "drel_gen.go")
@@ -241,6 +242,7 @@ output:
 	modelContent, err := os.ReadFile(modelFile)
 	require.NoError(t, err)
 	modelStr := string(modelContent)
+	modelNorm := strings.Join(strings.Fields(modelStr), " ") // gofmt-alignment-insensitive
 
 	// Verify VO type uses unqualified name (Email, not testmod/models.Email).
 	assert.Contains(t, modelStr, "drel.Column[Email]")
@@ -251,8 +253,8 @@ output:
 	assert.Contains(t, modelStr, `drel.NewCol[Role]("role")`)
 
 	// Verify snapshot uses local types.
-	assert.Contains(t, modelStr, "email Email")
-	assert.Contains(t, modelStr, "role Role")
+	assert.Contains(t, modelNorm, "email Email")
+	assert.Contains(t, modelNorm, "role Role")
 
 	// Run go mod tidy and go build to verify generated code compiles.
 	tidy := exec.Command("go", "mod", "tidy")

@@ -18,7 +18,7 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 		return nil, err
 	}
 	return &DB{
-		Engine: engine,
+		Engine:   engine,
 		Articles: &articles.ArticleRepository{Repository: drel.NewRepository(engine, articles.ArticleMeta)},
 	}, nil
 }

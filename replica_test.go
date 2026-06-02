@@ -27,7 +27,7 @@ func (d *recDriver) Exec(ctx context.Context, sql string, args ...any) (int64, e
 	d.record("exec")
 	return 0, nil
 }
-func (d *recDriver) Begin(ctx context.Context) (driver.Tx, error)  { d.record("begin"); return nil, nil }
+func (d *recDriver) Begin(ctx context.Context) (driver.Tx, error) { d.record("begin"); return nil, nil }
 func (d *recDriver) BeginTx(ctx context.Context, o driver.TxOptions) (driver.Tx, error) {
 	d.record("begintx")
 	return nil, nil
@@ -74,7 +74,7 @@ func TestReadRouting_WritesAndTxUsePrimary(t *testing.T) {
 	e := &Engine{drv: primary, replicas: []driver.Driver{r1}}
 	ctx := context.Background()
 
-	_, _ = e.queryInternal(ctx, "SELECT 1")     // read → replica
+	_, _ = e.queryInternal(ctx, "SELECT 1")      // read → replica
 	_, _ = e.execInternal(ctx, "UPDATE x SET y") // write → primary
 	_, _ = e.drv.Begin(ctx)                      // tx begin is always on primary by construction
 

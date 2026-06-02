@@ -10,13 +10,13 @@ import (
 )
 
 var Authors = struct {
-	ID drel.OrderedColumn[int]
-	Name drel.StringColumn
+	ID        drel.OrderedColumn[int]
+	Name      drel.StringColumn
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Name: drel.NewStringCol("name"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Name:      drel.NewStringCol("name"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -76,9 +76,9 @@ func authorScanReturning(p *Author, row drel.Row) error {
 }
 
 var AuthorMeta = drel.ModelMeta[Author]{
-	Table:   "authors",
-	Columns: []string{"id", "name", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "authors",
+	Columns:       []string{"id", "name", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanAuthor,
 	Snapshot:      snapshotAuthor,
 	Diff:          diffAuthor,

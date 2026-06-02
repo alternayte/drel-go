@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,5 +66,12 @@ func writeFile(path, content string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0644)
+	// gofmt the generated source. On a formatting error (malformed output) write
+	// the raw content so the problem is debuggable, and surface the error.
+	formatted, ferr := format.Source([]byte(content))
+	if ferr != nil {
+		_ = os.WriteFile(path, []byte(content), 0644)
+		return fmt.Errorf("codegen: gofmt %s: %w", path, ferr)
+	}
+	return os.WriteFile(path, formatted, 0644)
 }

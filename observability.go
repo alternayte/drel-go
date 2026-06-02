@@ -190,8 +190,8 @@ type n1Detector struct {
 }
 
 type n1Entry struct {
-	count int
-	first time.Time
+	count  int
+	first  time.Time
 	warned bool
 }
 

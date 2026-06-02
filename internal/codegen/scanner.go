@@ -66,13 +66,13 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 		}
 
 		mi := ModelInfo{
-			Name:      tn.Name(),
-			PkgPath:   pkg.PkgPath,
-			PkgName:   pkg.Name,
-			PKType:    pkInfo.Display,
+			Name:       tn.Name(),
+			PkgPath:    pkg.PkgPath,
+			PkgName:    pkg.Name,
+			PKType:     pkInfo.Display,
 			PKTypeFull: pkInfo.Full,
-			PKTypePkg: pkInfo.PkgPath,
-			Dir:       pkgDir,
+			PKTypePkg:  pkInfo.PkgPath,
+			Dir:        pkgDir,
 		}
 
 		mi.TableName = inferTableName(tn.Name())

@@ -10,15 +10,15 @@ import (
 )
 
 var Users = struct {
-	ID drel.OrderedColumn[int]
-	Name drel.StringColumn
-	Balance drel.OrderedColumn[int]
+	ID        drel.OrderedColumn[int]
+	Name      drel.StringColumn
+	Balance   drel.OrderedColumn[int]
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Name: drel.NewStringCol("name"),
-	Balance: drel.NewOrderedCol[int]("balance"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Name:      drel.NewStringCol("name"),
+	Balance:   drel.NewOrderedCol[int]("balance"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -34,7 +34,7 @@ func scanUser(row drel.Row) (*User, error) {
 }
 
 type userSnapshot struct {
-	name string
+	name    string
 	balance int
 }
 
@@ -84,9 +84,9 @@ func userScanReturning(p *User, row drel.Row) error {
 }
 
 var UserMeta = drel.ModelMeta[User]{
-	Table:   "users",
-	Columns: []string{"id", "name", "balance", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "users",
+	Columns:       []string{"id", "name", "balance", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanUser,
 	Snapshot:      snapshotUser,
 	Diff:          diffUser,

@@ -18,8 +18,8 @@ func NewSoftDeleteProduct(name string, price int) *SoftDeleteProduct {
 	return &SoftDeleteProduct{name: name, price: price}
 }
 
-func (p *SoftDeleteProduct) Name() string    { return p.name }
-func (p *SoftDeleteProduct) Price() int      { return p.price }
+func (p *SoftDeleteProduct) Name() string     { return p.name }
+func (p *SoftDeleteProduct) Price() int       { return p.price }
 func (p *SoftDeleteProduct) SetName(n string) { p.name = n }
 func (p *SoftDeleteProduct) SetPrice(pr int)  { p.price = pr }
 

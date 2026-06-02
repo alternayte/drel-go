@@ -10,15 +10,15 @@ import (
 )
 
 var LogEntries = struct {
-	ID drel.OrderedColumn[int]
-	Level drel.StringColumn
-	Message drel.StringColumn
+	ID        drel.OrderedColumn[int]
+	Level     drel.StringColumn
+	Message   drel.StringColumn
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Level: drel.NewStringCol("level"),
-	Message: drel.NewStringCol("message"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Level:     drel.NewStringCol("level"),
+	Message:   drel.NewStringCol("message"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -34,7 +34,7 @@ func scanLogentry(row drel.Row) (*LogEntry, error) {
 }
 
 type logentrySnapshot struct {
-	Level string
+	Level   string
 	Message string
 }
 
@@ -84,9 +84,9 @@ func logentryScanReturning(p *LogEntry, row drel.Row) error {
 }
 
 var LogEntryMeta = drel.ModelMeta[LogEntry]{
-	Table:   "log_entries",
-	Columns: []string{"id", "level", "message", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "log_entries",
+	Columns:       []string{"id", "level", "message", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanLogentry,
 	Snapshot:      snapshotLogentry,
 	Diff:          diffLogentry,

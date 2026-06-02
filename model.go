@@ -9,7 +9,7 @@ type Model[K comparable] struct {
 	events    []any
 }
 
-func (m Model[K]) ID() K               { return m.id }
+func (m Model[K]) ID() K                { return m.id }
 func (m Model[K]) CreatedAt() time.Time { return m.createdAt }
 func (m Model[K]) UpdatedAt() time.Time { return m.updatedAt }
 
@@ -36,15 +36,15 @@ type SoftDelete struct {
 	deletedAt *time.Time
 }
 
-func (s SoftDelete) DeletedAt() *time.Time    { return s.deletedAt }
+func (s SoftDelete) DeletedAt() *time.Time      { return s.deletedAt }
 func (s *SoftDelete) DeletedAtPtr() **time.Time { return &s.deletedAt }
-func (s SoftDelete) IsDeleted() bool             { return s.deletedAt != nil }
+func (s SoftDelete) IsDeleted() bool            { return s.deletedAt != nil }
 
 type Versioned struct {
 	version int
 }
 
-func (v Versioned) Version() int    { return v.version }
+func (v Versioned) Version() int      { return v.version }
 func (v *Versioned) VersionPtr() *int { return &v.version }
 
 type Audit struct {
@@ -52,6 +52,6 @@ type Audit struct {
 	updatedBy string
 }
 
-func (a Audit) CreatedBy() string          { return a.createdBy }
-func (a Audit) UpdatedBy() string          { return a.updatedBy }
+func (a Audit) CreatedBy() string              { return a.createdBy }
+func (a Audit) UpdatedBy() string              { return a.updatedBy }
 func (a *Audit) AuditPtrs() (*string, *string) { return &a.createdBy, &a.updatedBy }

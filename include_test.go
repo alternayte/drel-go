@@ -91,15 +91,15 @@ func TestIncludeSpec_UnscopedPreservesFilters(t *testing.T) {
 
 func TestToMetaBase_CopiesFilters(t *testing.T) {
 	meta := &ModelMeta[testModel]{
-		Table:    "test",
-		Columns:  []string{"id"},
-		PKColumn: "id",
-		Scan:     func(Row) (*testModel, error) { return nil, nil },
-		Snapshot: func(*testModel) any { return nil },
-		Diff:     func(*testModel, any) []FieldChange { return nil },
-		PKValue:  func(*testModel) any { return nil },
+		Table:         "test",
+		Columns:       []string{"id"},
+		PKColumn:      "id",
+		Scan:          func(Row) (*testModel, error) { return nil, nil },
+		Snapshot:      func(*testModel) any { return nil },
+		Diff:          func(*testModel, any) []FieldChange { return nil },
+		PKValue:       func(*testModel) any { return nil },
 		InsertColumns: func(*testModel) ([]string, []any) { return nil, nil },
-		Filters: []NamedFilter{SoftDeleteFilter},
+		Filters:       []NamedFilter{SoftDeleteFilter},
 	}
 	base := ToMetaBase(meta)
 	assert.Len(t, base.Filters, 1)

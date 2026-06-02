@@ -10,17 +10,17 @@ import (
 )
 
 var Tasks = struct {
-	ID drel.OrderedColumn[int]
-	Title drel.StringColumn
-	Done drel.BoolColumn
-	Priority drel.OrderedColumn[int]
+	ID        drel.OrderedColumn[int]
+	Title     drel.StringColumn
+	Done      drel.BoolColumn
+	Priority  drel.OrderedColumn[int]
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Title: drel.NewStringCol("title"),
-	Done: drel.NewBoolCol("done"),
-	Priority: drel.NewOrderedCol[int]("priority"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Title:     drel.NewStringCol("title"),
+	Done:      drel.NewBoolCol("done"),
+	Priority:  drel.NewOrderedCol[int]("priority"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -36,8 +36,8 @@ func scanTask(row drel.Row) (*Task, error) {
 }
 
 type taskSnapshot struct {
-	Title string
-	Done bool
+	Title    string
+	Done     bool
 	Priority int
 }
 
@@ -92,9 +92,9 @@ func taskScanReturning(p *Task, row drel.Row) error {
 }
 
 var TaskMeta = drel.ModelMeta[Task]{
-	Table:   "tasks",
-	Columns: []string{"id", "title", "done", "priority", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "tasks",
+	Columns:       []string{"id", "title", "done", "priority", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanTask,
 	Snapshot:      snapshotTask,
 	Diff:          diffTask,

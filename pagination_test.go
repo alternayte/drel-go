@@ -78,10 +78,10 @@ func TestPageOffset_Math(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 25, page.Total)
 	assert.Equal(t, 10, page.PageSize)
-	assert.Equal(t, 3, page.Page)        // offset 20 / size 10 + 1
-	assert.Equal(t, 3, page.TotalPages)  // ceil(25/10)
-	assert.Len(t, page.Items, 5)         // only 5 rows left after skipping 20
-	assert.False(t, page.HasMore)        // 20 + 5 == 25
+	assert.Equal(t, 3, page.Page)       // offset 20 / size 10 + 1
+	assert.Equal(t, 3, page.TotalPages) // ceil(25/10)
+	assert.Len(t, page.Items, 5)        // only 5 rows left after skipping 20
+	assert.False(t, page.HasMore)       // 20 + 5 == 25
 	assert.Equal(t, 21, page.Items[0].ID)
 }
 

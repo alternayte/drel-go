@@ -9,9 +9,9 @@ import (
 
 type DB struct {
 	*drel.Engine
-	Authors *models.AuthorRepository
+	Authors        *models.AuthorRepository
 	AuthorProfiles *models.AuthorProfileRepository
-	Books *models.BookRepository
+	Books          *models.BookRepository
 }
 
 func Open(dsn string, opts ...drel.Option) (*DB, error) {
@@ -20,10 +20,10 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 		return nil, err
 	}
 	return &DB{
-		Engine: engine,
-		Authors: &models.AuthorRepository{Repository: drel.NewRepository(engine, models.AuthorMeta)},
+		Engine:         engine,
+		Authors:        &models.AuthorRepository{Repository: drel.NewRepository(engine, models.AuthorMeta)},
 		AuthorProfiles: &models.AuthorProfileRepository{Repository: drel.NewRepository(engine, models.AuthorProfileMeta)},
-		Books: &models.BookRepository{Repository: drel.NewRepository(engine, models.BookMeta)},
+		Books:          &models.BookRepository{Repository: drel.NewRepository(engine, models.BookMeta)},
 	}, nil
 }
 

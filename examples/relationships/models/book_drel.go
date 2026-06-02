@@ -10,15 +10,15 @@ import (
 )
 
 var Books = struct {
-	ID drel.OrderedColumn[int]
-	Title drel.StringColumn
-	AuthorID drel.OrderedColumn[int]
+	ID        drel.OrderedColumn[int]
+	Title     drel.StringColumn
+	AuthorID  drel.OrderedColumn[int]
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Title: drel.NewStringCol("title"),
-	AuthorID: drel.NewOrderedCol[int]("author_id"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Title:     drel.NewStringCol("title"),
+	AuthorID:  drel.NewOrderedCol[int]("author_id"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -34,7 +34,7 @@ func scanBook(row drel.Row) (*Book, error) {
 }
 
 type bookSnapshot struct {
-	Title string
+	Title    string
 	AuthorID int
 }
 
@@ -84,9 +84,9 @@ func bookScanReturning(p *Book, row drel.Row) error {
 }
 
 var BookMeta = drel.ModelMeta[Book]{
-	Table:   "books",
-	Columns: []string{"id", "title", "author_id", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "books",
+	Columns:       []string{"id", "title", "author_id", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanBook,
 	Snapshot:      snapshotBook,
 	Diff:          diffBook,

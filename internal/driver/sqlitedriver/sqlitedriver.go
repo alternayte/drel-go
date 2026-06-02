@@ -120,7 +120,7 @@ type sqliteRows struct {
 	rows *sql.Rows
 }
 
-func (r *sqliteRows) Next() bool            { return r.rows.Next() }
+func (r *sqliteRows) Next() bool             { return r.rows.Next() }
 func (r *sqliteRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
-func (r *sqliteRows) Close()                { r.rows.Close() }
-func (r *sqliteRows) Err() error            { return r.rows.Err() }
+func (r *sqliteRows) Close()                 { r.rows.Close() }
+func (r *sqliteRows) Err() error             { return r.rows.Err() }

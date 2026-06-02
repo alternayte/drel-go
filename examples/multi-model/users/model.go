@@ -22,8 +22,8 @@ func NewUser(name string, balance int) *User {
 	return &User{name: name, balance: balance}
 }
 
-func (u *User) Name() string  { return u.name }
-func (u *User) Balance() int  { return u.balance }
+func (u *User) Name() string { return u.name }
+func (u *User) Balance() int { return u.balance }
 
 func (u *User) Transfer(amount int, to *User) error {
 	if u.balance < amount {

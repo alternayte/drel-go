@@ -19,6 +19,6 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}
 	return &DB{
 		Engine: engine,
-		Tasks: &models.TaskRepository{Repository: drel.NewRepository(engine, models.TaskMeta)},
+		Tasks:  &models.TaskRepository{Repository: drel.NewRepository(engine, models.TaskMeta)},
 	}, nil
 }

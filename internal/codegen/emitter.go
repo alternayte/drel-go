@@ -476,4 +476,3 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 
 	b.WriteString("}\n")
 }
-

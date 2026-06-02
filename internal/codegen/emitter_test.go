@@ -9,10 +9,10 @@ import (
 
 func TestEmitModelFile_SimpleModel(t *testing.T) {
 	m := ModelInfo{
-		Name:    "Product",
-		PkgPath: "testmod/models",
-		PkgName: "models",
-		PKType:  "int",
+		Name:      "Product",
+		PkgPath:   "testmod/models",
+		PkgName:   "models",
+		PKType:    "int",
 		TableName: "products",
 		Fields: []FieldInfo{
 			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
@@ -260,8 +260,8 @@ func TestEmitModelFile_WithSingleColVO(t *testing.T) {
 
 	assert.Contains(t, output, "drel.Column[Email]")
 	assert.Contains(t, output, `drel.NewCol[Email]("email")`)
-	assert.Contains(t, output, "email Email")  // snapshot struct field
-	assert.Contains(t, output, "&p.email")      // scan
+	assert.Contains(t, output, "email Email")        // snapshot struct field
+	assert.Contains(t, output, "&p.email")           // scan
 	assert.Contains(t, output, "p.email != s.email") // diff
 }
 

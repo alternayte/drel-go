@@ -10,15 +10,15 @@ import (
 )
 
 var AuthorProfiles = struct {
-	ID drel.OrderedColumn[int]
-	Bio drel.StringColumn
-	AuthorID drel.OrderedColumn[int]
+	ID        drel.OrderedColumn[int]
+	Bio       drel.StringColumn
+	AuthorID  drel.OrderedColumn[int]
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
-	ID: drel.NewOrderedCol[int]("id"),
-	Bio: drel.NewStringCol("bio"),
-	AuthorID: drel.NewOrderedCol[int]("author_id"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Bio:       drel.NewStringCol("bio"),
+	AuthorID:  drel.NewOrderedCol[int]("author_id"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -34,7 +34,7 @@ func scanAuthorprofile(row drel.Row) (*AuthorProfile, error) {
 }
 
 type authorprofileSnapshot struct {
-	Bio string
+	Bio      string
 	AuthorID int
 }
 
@@ -84,9 +84,9 @@ func authorprofileScanReturning(p *AuthorProfile, row drel.Row) error {
 }
 
 var AuthorProfileMeta = drel.ModelMeta[AuthorProfile]{
-	Table:   "author_profiles",
-	Columns: []string{"id", "bio", "author_id", "created_at", "updated_at"},
-	PKColumn: "id",
+	Table:         "author_profiles",
+	Columns:       []string{"id", "bio", "author_id", "created_at", "updated_at"},
+	PKColumn:      "id",
 	Scan:          scanAuthorprofile,
 	Snapshot:      snapshotAuthorprofile,
 	Diff:          diffAuthorprofile,

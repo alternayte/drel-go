@@ -262,11 +262,11 @@ var authorRelation = &drel.RelationInfo{
 }
 
 var tagsRelation = &drel.RelationInfo{
-	Name:      "Tags",
-	Type:      drel.ManyToMany,
-	FKColumn:  "author_id",
-	JoinTable: "author_tags",
-	RefColumn: "tag_id",
+	Name:        "Tags",
+	Type:        drel.ManyToMany,
+	FKColumn:    "author_id",
+	JoinTable:   "author_tags",
+	RefColumn:   "tag_id",
 	RelatedMeta: tagMetaBase,
 	FieldSetter: func(parent any, related any) {
 		a := parent.(*Author)

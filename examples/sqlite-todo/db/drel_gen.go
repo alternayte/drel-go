@@ -19,6 +19,6 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}
 	return &DB{
 		Engine: engine,
-		Notes: &models.NoteRepository{Repository: drel.NewRepository(engine, models.NoteMeta)},
+		Notes:  &models.NoteRepository{Repository: drel.NewRepository(engine, models.NoteMeta)},
 	}, nil
 }
