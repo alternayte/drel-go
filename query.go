@@ -23,6 +23,7 @@ type QueryBuilder[T any] struct {
 	offset  *int
 	after   *string
 	filters []NamedFilter
+	primary bool
 }
 
 func newQueryBuilder[T any](engine *Engine, meta *ModelMeta[T]) *QueryBuilder[T] {
@@ -43,9 +44,18 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		offset:  q.offset,
 		after:   q.after,
 		filters: append([]NamedFilter(nil), q.filters...),
+		primary: q.primary,
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
+	return c
+}
+
+// Primary forces this query to read from the primary connection instead of a
+// read replica. Has no effect when no replicas are configured.
+func (q *QueryBuilder[T]) Primary() *QueryBuilder[T] {
+	c := q.clone()
+	c.primary = true
 	return c
 }
 
@@ -133,7 +143,7 @@ func (q *QueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 	node := q.buildAST(ast.QuerySelect)
 	result := q.engine.dialect().BuildSelect(node)
 
-	rows, err := q.engine.queryInternal(ctx, result.SQL, result.Args...)
+	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +194,7 @@ func (q *QueryBuilder[T]) Count(ctx context.Context) (int, error) {
 	node := q.buildAST(ast.QueryCount)
 	result := q.engine.dialect().BuildSelect(node)
 
-	row := q.engine.queryRowInternal(ctx, result.SQL, result.Args...)
+	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return 0, err
@@ -197,7 +207,7 @@ func (q *QueryBuilder[T]) Exists(ctx context.Context) (bool, error) {
 	node := q.buildAST(ast.QueryExists)
 	result := q.engine.dialect().BuildSelect(node)
 
-	row := q.engine.queryRowInternal(ctx, result.SQL, result.Args...)
+	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
 	var exists bool
 	if err := row.Scan(&exists); err != nil {
 		return false, err

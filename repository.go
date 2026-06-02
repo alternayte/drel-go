@@ -163,6 +163,12 @@ func (r *Repository[T]) Exists(ctx context.Context) (bool, error) {
 	return r.newBuilder().Exists(ctx)
 }
 
+// Primary returns a query builder that reads from the primary connection,
+// bypassing read replicas (useful for read-your-writes consistency).
+func (r *Repository[T]) Primary() *QueryBuilder[T] {
+	return r.newBuilder().Primary()
+}
+
 // Unscoped returns a query builder with all global filters removed.
 func (r *Repository[T]) Unscoped() *QueryBuilder[T] {
 	return r.newBuilder().Unscoped()

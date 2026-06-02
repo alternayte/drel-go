@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/alternayte/drel/internal/dialect"
@@ -28,6 +29,9 @@ type Engine struct {
 	devMode       bool
 	slowThreshold time.Duration
 	n1            *n1Detector
+
+	replicas  []driver.Driver
+	rrCounter uint64
 }
 
 // Option configures Engine creation.
@@ -43,6 +47,9 @@ type engineConfig struct {
 	slowThreshold time.Duration
 	tracer        Tracer
 	devMode       bool
+
+	replicaDSNs []string
+	replicaDrvs []driver.Driver
 }
 
 // detectDialect inspects the DSN and returns "sqlite" or "postgres".
@@ -101,12 +108,47 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 		}
 	}
 
+	// Open read replicas (same dialect as the primary). Reads round-robin across
+	// them; writes and transactions always use the primary.
+	var replicas []driver.Driver
+	for _, rdsn := range cfg.replicaDSNs {
+		rd, err := openDriverForDSN(cfg.ctx, rdsn)
+		if err != nil {
+			for _, r := range replicas {
+				r.Close()
+			}
+			return nil, fmt.Errorf("drel: open read replica: %w", err)
+		}
+		replicas = append(replicas, rd)
+	}
+	replicas = append(replicas, cfg.replicaDrvs...)
+
 	e := &Engine{
-		drv: drv,
-		dia: dia,
+		drv:      drv,
+		dia:      dia,
+		replicas: replicas,
 	}
 	e.installObservability(cfg)
 	return e, nil
+}
+
+// openDriverForDSN opens a driver for a DSN using the same dialect detection as
+// the primary connection.
+func openDriverForDSN(ctx context.Context, dsn string) (driver.Driver, error) {
+	if detectDialect(dsn) == "sqlite" {
+		return sqlitedriver.New(dsn)
+	}
+	return pgxdriver.New(ctx, dsn)
+}
+
+// WithReadReplica registers a read replica. Read queries issued through
+// repositories (not within a transaction, and not forced to Primary) are routed
+// round-robin across all registered replicas; writes and transactions always go
+// to the primary.
+func WithReadReplica(dsn string) Option {
+	return func(cfg *engineConfig) {
+		cfg.replicaDSNs = append(cfg.replicaDSNs, dsn)
+	}
 }
 
 // WithContext sets the context used during engine creation.
@@ -132,9 +174,22 @@ func WithDialect(dia dialect.Dialect) Option {
 	}
 }
 
-// Close shuts down the underlying database connection.
+// Close shuts down the underlying database connection and any read replicas.
 func (e *Engine) Close() {
 	e.drv.Close()
+	for _, r := range e.replicas {
+		r.Close()
+	}
+}
+
+// readDriver selects the driver for a read query: the primary when primary is
+// true or no replicas are registered, otherwise a replica chosen round-robin.
+func (e *Engine) readDriver(primary bool) driver.Driver {
+	if primary || len(e.replicas) == 0 {
+		return e.drv
+	}
+	n := atomic.AddUint64(&e.rrCounter, 1)
+	return e.replicas[(n-1)%uint64(len(e.replicas))]
 }
 
 // Exec executes a raw SQL statement and returns the number of rows affected.
@@ -184,18 +239,28 @@ func (e *Engine) execInternal(ctx context.Context, sql string, args ...any) (int
 }
 
 func (e *Engine) queryInternal(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return e.queryRouted(ctx, false, sql, args...)
+}
+
+// queryRouted executes a read query against a replica (primary=false) or the
+// primary (primary=true), with tracing and query-hook notification.
+func (e *Engine) queryRouted(ctx context.Context, primary bool, sql string, args ...any) (Rows, error) {
 	ctx, endSpan := e.startSpan(ctx, "drel.query")
 	start := time.Now()
-	rows, err := e.drv.Query(ctx, sql, args...)
+	rows, err := e.readDriver(primary).Query(ctx, sql, args...)
 	endSpan(err)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
 	return rows, err
 }
 
 func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
+	return e.queryRowRouted(ctx, false, sql, args...)
+}
+
+func (e *Engine) queryRowRouted(ctx context.Context, primary bool, sql string, args ...any) Row {
 	ctx, endSpan := e.startSpan(ctx, "drel.queryRow")
 	start := time.Now()
-	row := e.drv.QueryRow(ctx, sql, args...)
+	row := e.readDriver(primary).QueryRow(ctx, sql, args...)
 	endSpan(nil)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
 	return row
