@@ -50,28 +50,30 @@ helpers, and a `DB` struct that aggregates all discovered models.
 // Open the generated DB
 database, err := db.Open(dsn)
 
-// Insert via transaction with change tracking
-err = database.Transaction(ctx, func(tx *drel.Tx) error {
-    repo := drel.NewTxRepository(tx, models.TaskMeta)
-    repo.Add(models.NewTask("Build ORM", 1))
-    return nil
-})
+// Insert via a UnitOfWork (change-tracking work session)
+uow := database.NewUnitOfWork()
+uow.Tasks.Add(models.NewTask("Build ORM", 1))
+err = uow.SaveChanges(ctx)
 
-// Query with generated type-safe columns
+// Query with generated type-safe columns (read-only, untracked)
 tasks, err := database.Tasks.
     Where(models.Tasks.Done.IsFalse()).
     OrderBy(models.Tasks.Priority.Asc()).
     All(ctx)
 
 // Update with change tracking (only modified columns are UPDATEd)
+uow = database.NewUnitOfWork()
+task, err := uow.Tasks.Find(ctx, 1) // tracked
+if err == nil {
+    task.MarkDone()
+    err = uow.SaveChanges(ctx)
+}
+
+// Or an explicit multi-statement transaction:
 err = database.Transaction(ctx, func(tx *drel.Tx) error {
     repo := drel.NewTxRepository(tx, models.TaskMeta)
-    task, err := repo.Find(ctx, 1)
-    if err != nil {
-        return err
-    }
-    task.MarkDone()
-    return nil
+    repo.Add(models.NewTask("ship it", 2))
+    return tx.SaveChanges(ctx)
 })
 ```
 
