@@ -4,10 +4,36 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/alternayte/drel/internal/driver"
 	_ "modernc.org/sqlite"
 )
+
+// isInMemory reports whether a DSN refers to a transient in-memory database.
+// Such databases live in a single connection, so the pool must be pinned to one
+// connection or each pooled connection would see an independent, empty database.
+func isInMemory(dsn string) bool {
+	return dsn == ":memory:" ||
+		strings.Contains(dsn, ":memory:") ||
+		strings.Contains(dsn, "mode=memory")
+}
+
+// withPragmas appends modernc.org/sqlite `_pragma` query parameters to a DSN so
+// they apply to every pooled connection (a plain `PRAGMA` Exec configures only
+// the single connection it runs on). File-backed databases additionally get WAL
+// journaling; in-memory databases do not support WAL.
+func withPragmas(dsn string, inMemory bool) string {
+	pragmas := []string{"_pragma=busy_timeout(5000)", "_pragma=foreign_keys(1)"}
+	if !inMemory {
+		pragmas = append(pragmas, "_pragma=journal_mode(WAL)")
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + strings.Join(pragmas, "&")
+}
 
 // SQLiteDriver implements driver.Driver using database/sql with the modernc.org/sqlite pure-Go driver.
 type SQLiteDriver struct {
@@ -17,14 +43,23 @@ type SQLiteDriver struct {
 // New opens a SQLite database at the given DSN and enables WAL mode.
 // No context is required for connection — SQLite is an embedded database.
 func New(dsn string) (*SQLiteDriver, error) {
-	db, err := sql.Open("sqlite", dsn)
+	inMemory := isInMemory(dsn)
+	db, err := sql.Open("sqlite", withPragmas(dsn, inMemory))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitedriver: open: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sqlitedriver: enable WAL: %w", err)
+
+	if inMemory {
+		// A pooled second connection to :memory: would open a separate empty
+		// database. Pin to one connection so all work shares the same DB.
+		db.SetMaxOpenConns(1)
 	}
+
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sqlitedriver: open: %w", err)
+	}
+
 	return &SQLiteDriver{db: db}, nil
 }
 

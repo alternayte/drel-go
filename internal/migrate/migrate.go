@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func WriteMigration(dir, name, upSQL, downSQL string) (string, error) {
 		return "", fmt.Errorf("migrate: create dir: %w", err)
 	}
 
-	version := time.Now().Format("20060102150405")
+	version := nextVersion(dir)
 	slug := strings.ReplaceAll(strings.ToLower(name), " ", "_")
 
 	upPath := filepath.Join(dir, fmt.Sprintf("%s_%s.up.sql", version, slug))
@@ -109,6 +110,27 @@ func WriteMigration(dir, name, upSQL, downSQL string) (string, error) {
 	}
 
 	return version, nil
+}
+
+// nextVersion returns a unique, monotonically increasing 14-digit version based
+// on the current time. If a migration with the candidate version already exists
+// (e.g. two migrations created within the same second), the version is bumped
+// by one until free, guaranteeing deterministic ordering.
+func nextVersion(dir string) string {
+	v := time.Now().Format("20060102150405")
+	for versionExists(dir, v) {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			break
+		}
+		v = fmt.Sprintf("%014d", n+1)
+	}
+	return v
+}
+
+func versionExists(dir, version string) bool {
+	matches, _ := filepath.Glob(filepath.Join(dir, version+"_*.up.sql"))
+	return len(matches) > 0
 }
 
 // ChecksumContent returns the SHA-256 hex digest of the given content string.
@@ -130,12 +152,14 @@ func NewRunner(drv driver.Driver, dir string) *Runner {
 }
 
 func (r *Runner) ensureTable(ctx context.Context) error {
+	// Portable across Postgres and SQLite: TIMESTAMP + CURRENT_TIMESTAMP are
+	// understood by both (SQLite is dynamically typed; Postgres maps TIMESTAMP).
 	_, err := r.drv.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS drel_migrations (
 			version    VARCHAR(14) PRIMARY KEY,
 			name       TEXT NOT NULL,
 			checksum   TEXT NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {

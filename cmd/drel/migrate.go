@@ -8,9 +8,32 @@ import (
 	"strings"
 
 	"github.com/alternayte/drel/internal/codegen"
+	"github.com/alternayte/drel/internal/driver"
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
+	"github.com/alternayte/drel/internal/driver/sqlitedriver"
 	"github.com/alternayte/drel/internal/migrate"
 )
+
+// openMigrateDriver opens a database driver for migration commands, choosing the
+// implementation from the configured dialect (falling back to DSN inspection).
+func openMigrateDriver(ctx context.Context, configPath, dsn string) (driver.Driver, error) {
+	dialect := ""
+	if cfg, err := codegen.LoadConfig(configPath); err == nil {
+		dialect = cfg.Dialect
+	}
+	if dialect == "" {
+		if strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite://") ||
+			dsn == ":memory:" || strings.HasSuffix(dsn, ".db") {
+			dialect = "sqlite"
+		} else {
+			dialect = "postgres"
+		}
+	}
+	if dialect == "sqlite" {
+		return sqlitedriver.New(dsn)
+	}
+	return pgxdriver.New(ctx, dsn)
+}
 
 func runMigrate() {
 	if len(os.Args) < 3 {
@@ -145,7 +168,7 @@ func runMigrateUp() {
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := pgxdriver.New(ctx, dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
 		os.Exit(1)
@@ -170,7 +193,7 @@ func runMigrateDown() {
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := pgxdriver.New(ctx, dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
@@ -190,7 +213,7 @@ func runMigrateStatus() {
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := pgxdriver.New(ctx, dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
 		os.Exit(1)
@@ -231,7 +254,7 @@ func runMigrateLint() {
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := pgxdriver.New(ctx, dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
 		os.Exit(1)

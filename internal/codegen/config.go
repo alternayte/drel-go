@@ -11,6 +11,9 @@ type Config struct {
 	Packages []string     `yaml:"packages"`
 	Output   OutputConfig `yaml:"output"`
 	Dialect  string       `yaml:"dialect"`
+	// Seed is an optional path to a Go main package that seeds the database.
+	// `drel seed` runs it with `go run`, passing through DATABASE_URL.
+	Seed string `yaml:"seed"`
 }
 
 type OutputConfig struct {
