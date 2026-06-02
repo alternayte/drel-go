@@ -61,7 +61,11 @@ type engineConfig struct {
 func detectDialect(dsn string) string {
 	if strings.HasPrefix(dsn, "libsql://") ||
 		strings.HasPrefix(dsn, "wss://") ||
-		strings.HasPrefix(dsn, "ws://") {
+		strings.HasPrefix(dsn, "ws://") ||
+		strings.HasPrefix(dsn, "http://") ||
+		strings.HasPrefix(dsn, "https://") {
+		// libSQL/Turso DSNs. http(s) covers a local sqld and Turso's HTTP
+		// endpoint; a SQL database is never addressed over http otherwise.
 		return "libsql"
 	}
 	if strings.HasPrefix(dsn, "file:") ||

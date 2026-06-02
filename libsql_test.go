@@ -4,12 +4,15 @@ import "testing"
 
 func TestDetectDialect_LibSQL(t *testing.T) {
 	cases := map[string]string{
-		"libsql://db.turso.io":   "libsql",
-		"wss://db.turso.io":      "libsql",
-		"ws://localhost:8080":    "libsql",
-		"file:app.db":            "sqlite",
-		":memory:":               "sqlite",
-		"postgres://localhost/x": "postgres",
+		"libsql://db.turso.io":    "libsql",
+		"wss://db.turso.io":       "libsql",
+		"ws://localhost:8080":     "libsql",
+		"http://localhost:8080":   "libsql",
+		"https://db.turso.io":     "libsql",
+		"file:app.db":             "sqlite",
+		":memory:":                "sqlite",
+		"postgres://localhost/x":  "postgres",
+		"postgresql://localhost/": "postgres",
 	}
 	for dsn, want := range cases {
 		if got := detectDialect(dsn); got != want {
