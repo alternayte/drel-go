@@ -39,11 +39,24 @@ type IncludeSpec struct {
 	wheres   []ast.WhereClause
 	orderBy  []ast.OrderByExpr
 	limit    *int
+	then     []IncludeSpec
 }
 
 // NewIncludeSpec creates an IncludeSpec from a RelationInfo.
 func NewIncludeSpec(rel *RelationInfo) IncludeSpec {
 	return IncludeSpec{rel: rel}
+}
+
+// Then returns a copy of the IncludeSpec that also eagerly loads the given
+// relationships on the related entities, enabling nested includes such as
+// Users.Posts.Then(Posts.Tags). The child specs describe relationships on the
+// related model (here Post), and may themselves be nested with Then. Nested
+// loading uses split queries on each level, so it never produces a cartesian
+// product regardless of depth.
+func (s IncludeSpec) Then(children ...IncludeSpec) IncludeSpec {
+	c := s
+	c.then = append(append([]IncludeSpec(nil), s.then...), children...)
+	return c
 }
 
 // Unscoped returns a copy of the IncludeSpec that bypasses global filters
@@ -83,9 +96,13 @@ func (s IncludeSpec) Limit(n int) IncludeSpec {
 	return c
 }
 
-// IncludableQuery constructs queries that eagerly load related entities.
+// IncludableQuery constructs queries that eagerly load related entities. The
+// root query may be refined with Where/OrderBy/Limit/Skip/Take exactly like a
+// plain QueryBuilder; the configured relationships are loaded via split queries
+// after the root result set is materialized.
 type IncludableQuery[T any] struct {
 	repo     *Repository[T]
+	builder  *QueryBuilder[T]
 	includes []IncludeSpec
 }
 
@@ -93,49 +110,105 @@ type IncludableQuery[T any] struct {
 func (r *Repository[T]) Include(rels ...IncludeSpec) *IncludableQuery[T] {
 	return &IncludableQuery[T]{
 		repo:     r,
+		builder:  r.newBuilder(),
 		includes: rels,
 	}
 }
 
+func (q *IncludableQuery[T]) with(b *QueryBuilder[T]) *IncludableQuery[T] {
+	return &IncludableQuery[T]{repo: q.repo, builder: b, includes: q.includes}
+}
+
+// Include adds more relationships to eagerly load.
+func (q *IncludableQuery[T]) Include(rels ...IncludeSpec) *IncludableQuery[T] {
+	c := q.with(q.builder)
+	c.includes = append(append([]IncludeSpec(nil), q.includes...), rels...)
+	return c
+}
+
+// Where adds a filter predicate to the root query.
+func (q *IncludableQuery[T]) Where(pred Predicate) *IncludableQuery[T] {
+	return q.with(q.builder.Where(pred))
+}
+
+// OrderBy sets the ordering for the root query.
+func (q *IncludableQuery[T]) OrderBy(exprs ...OrderExpr) *IncludableQuery[T] {
+	return q.with(q.builder.OrderBy(exprs...))
+}
+
+// Limit restricts the number of root records returned.
+func (q *IncludableQuery[T]) Limit(n int) *IncludableQuery[T] {
+	return q.with(q.builder.Limit(n))
+}
+
+// Take restricts the number of root records returned (alias for Limit).
+func (q *IncludableQuery[T]) Take(n int) *IncludableQuery[T] {
+	return q.with(q.builder.Limit(n))
+}
+
+// Skip sets the offset for the root query.
+func (q *IncludableQuery[T]) Skip(n int) *IncludableQuery[T] {
+	return q.with(q.builder.Skip(n))
+}
+
+// Unscoped removes all global filters from the root query.
+func (q *IncludableQuery[T]) Unscoped() *IncludableQuery[T] {
+	return q.with(q.builder.Unscoped())
+}
+
+// WithoutFilter removes the named global filter from the root query.
+func (q *IncludableQuery[T]) WithoutFilter(name string) *IncludableQuery[T] {
+	return q.with(q.builder.WithoutFilter(name))
+}
+
+func (q *IncludableQuery[T]) loadInto(ctx context.Context, entities []*T) error {
+	if len(entities) == 0 {
+		return nil
+	}
+	parents := make([]any, len(entities))
+	for i, e := range entities {
+		parents[i] = e
+	}
+	exec := &includeExecutor{
+		engine:     q.repo.engine,
+		parentMeta: ToMetaBase(&q.repo.meta),
+	}
+	return exec.loadRelations(ctx, parents, q.includes)
+}
+
 // Find looks up a single record by primary key and loads included relationships.
 func (q *IncludableQuery[T]) Find(ctx context.Context, id any) (*T, error) {
-	entity, err := q.repo.Find(ctx, id)
+	entity, err := q.builder.Where(newComparison(q.repo.meta.PKColumn, ast.OpEq, id)).First(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	parents := []any{entity}
-	parentMeta := ToMetaBase(&q.repo.meta)
-	exec := &includeExecutor{
-		engine:     q.repo.engine,
-		parentMeta: parentMeta,
-	}
-	if err := exec.loadRelations(ctx, parents, q.includes); err != nil {
+	if err := q.loadInto(ctx, []*T{entity}); err != nil {
 		return nil, err
 	}
 	return entity, nil
 }
 
-// All returns all records and loads included relationships.
-func (q *IncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
-	entities, err := q.repo.All(ctx)
+// First returns the first matching record (honoring Where/OrderBy) and loads
+// included relationships, or ErrNotFound if none match.
+func (q *IncludableQuery[T]) First(ctx context.Context) (*T, error) {
+	entity, err := q.builder.First(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(entities) == 0 {
-		return entities, nil
+	if err := q.loadInto(ctx, []*T{entity}); err != nil {
+		return nil, err
 	}
+	return entity, nil
+}
 
-	parents := make([]any, len(entities))
-	for i, e := range entities {
-		parents[i] = e
+// All returns all matching records (honoring Where/OrderBy/Limit) and loads
+// included relationships.
+func (q *IncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
+	entities, err := q.builder.All(ctx)
+	if err != nil {
+		return nil, err
 	}
-	parentMeta := ToMetaBase(&q.repo.meta)
-	exec := &includeExecutor{
-		engine:     q.repo.engine,
-		parentMeta: parentMeta,
-	}
-	if err := exec.loadRelations(ctx, parents, q.includes); err != nil {
+	if err := q.loadInto(ctx, entities); err != nil {
 		return nil, err
 	}
 	return entities, nil
@@ -157,21 +230,39 @@ func (ie *includeExecutor) loadRelations(ctx context.Context, parents []any, inc
 }
 
 func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc IncludeSpec) error {
+	var related []any
+	var err error
 	switch inc.rel.Type {
 	case HasMany, HasOne:
-		return ie.loadHasManyOrOne(ctx, parents, inc)
+		related, err = ie.loadHasManyOrOne(ctx, parents, inc)
 	case BelongsTo:
-		return ie.loadBelongsTo(ctx, parents, inc)
+		related, err = ie.loadBelongsTo(ctx, parents, inc)
 	case ManyToMany:
-		return ie.loadManyToMany(ctx, parents, inc)
+		related, err = ie.loadManyToMany(ctx, parents, inc)
 	default:
 		return fmt.Errorf("unknown relation type %d", inc.rel.Type)
 	}
+	if err != nil {
+		return err
+	}
+
+	// Nested includes: treat the freshly loaded related entities as parents and
+	// load the next level via split queries on the related model's metadata.
+	if len(inc.then) > 0 && len(related) > 0 {
+		childExec := &includeExecutor{
+			engine:     ie.engine,
+			parentMeta: inc.rel.RelatedMeta,
+		}
+		if err := childExec.loadRelations(ctx, related, inc.then); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadHasManyOrOne executes: SELECT * FROM related_table WHERE fk_column IN (pk1, pk2, ...)
 // then groups results by the FK value and sets them on each parent.
-func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, inc IncludeSpec) error {
+func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, inc IncludeSpec) ([]any, error) {
 	rel := inc.rel
 	// Collect parent PK values.
 	pkValues := make([]any, len(parents))
@@ -182,13 +273,13 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 	// Query related entities.
 	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.FKColumn, pkValues, inc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Find the FK column index in the related meta.
 	fkIdx := findColumnIndex(rel.RelatedMeta.Columns, rel.FKColumn)
 	if fkIdx < 0 {
-		return fmt.Errorf("FK column %q not found in %s columns", rel.FKColumn, rel.RelatedMeta.Table)
+		return nil, fmt.Errorf("FK column %q not found in %s columns", rel.FKColumn, rel.RelatedMeta.Table)
 	}
 
 	if rel.Type == HasMany {
@@ -222,17 +313,17 @@ func (ie *includeExecutor) loadHasManyOrOne(ctx context.Context, parents []any, 
 		}
 	}
 
-	return nil
+	return related, nil
 }
 
 // loadBelongsTo executes: SELECT * FROM related_table WHERE pk IN (fk1, fk2, ...)
 // Collects FK values from parents, then matches related entities by PK.
-func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, inc IncludeSpec) error {
+func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, inc IncludeSpec) ([]any, error) {
 	rel := inc.rel
 	// Find the FK column index in the parent meta.
 	fkIdx := findColumnIndex(ie.parentMeta.Columns, rel.FKColumn)
 	if fkIdx < 0 {
-		return fmt.Errorf("FK column %q not found in %s columns", rel.FKColumn, ie.parentMeta.Table)
+		return nil, fmt.Errorf("FK column %q not found in %s columns", rel.FKColumn, ie.parentMeta.Table)
 	}
 
 	// Collect FK values from parents (deduplicating).
@@ -247,13 +338,13 @@ func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, inc
 	}
 
 	if len(fkValues) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Query related entities by their PK.
 	related, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, fkValues, inc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Index related by PK.
@@ -271,7 +362,7 @@ func (ie *includeExecutor) loadBelongsTo(ctx context.Context, parents []any, inc
 		}
 	}
 
-	return nil
+	return related, nil
 }
 
 const includeBatchSize = 1000
@@ -363,7 +454,7 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 // 1. SELECT source_fk, target_fk FROM pivot WHERE source_fk IN (...)
 // 2. SELECT * FROM target WHERE pk IN (collected target PKs)
 // 3. Build source→[]target mapping and assign via FieldSetter
-func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, inc IncludeSpec) error {
+func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, inc IncludeSpec) ([]any, error) {
 	rel := inc.rel
 	pkValues := make([]any, len(parents))
 	for i, p := range parents {
@@ -398,21 +489,21 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 		result := ie.engine.dialect().BuildSelect(node)
 		rows, err := ie.engine.queryInternal(ctx, result.SQL, result.Args...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		for rows.Next() {
 			var src, tgt any
 			if err := rows.Scan(&src, &tgt); err != nil {
 				rows.Close()
-				return err
+				return nil, err
 			}
 			// Normalize int64 → int so map lookups match PKValue which returns Go int.
 			pivotRows = append(pivotRows, pivotRow{sourceFK: normalizeInt(src), targetFK: normalizeInt(tgt)})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		rows.Close()
 	}
@@ -421,7 +512,7 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 		for _, p := range parents {
 			rel.FieldSetter(p, []any{})
 		}
-		return nil
+		return nil, nil
 	}
 
 	seen := make(map[any]bool)
@@ -435,7 +526,7 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 
 	targets, err := ie.queryByColumn(ctx, rel.RelatedMeta, rel.RelatedMeta.PKColumn, targetPKs, inc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	targetByPK := make(map[any]any)
@@ -460,7 +551,7 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 		rel.FieldSetter(p, items)
 	}
 
-	return nil
+	return targets, nil
 }
 
 // normalizeInt converts int64/int32 to int so that map lookups match
