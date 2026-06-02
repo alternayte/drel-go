@@ -22,3 +22,20 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 		Notes:  &models.NoteRepository{Repository: drel.NewRepository(engine, models.NoteMeta)},
 	}, nil
 }
+
+// UnitOfWork is a change-tracking work session with typed, tracked
+// repositories. Load through uow.<Model>, stage with Add/Remove, then
+// SaveChanges to flush everything in a single transaction.
+type UnitOfWork struct {
+	*drel.UnitOfWork
+	Notes *models.UoWNoteRepository
+}
+
+// NewUnitOfWork starts a new change-tracking work session.
+func (db *DB) NewUnitOfWork() *UnitOfWork {
+	uow := db.Engine.NewUnitOfWork()
+	return &UnitOfWork{
+		UnitOfWork: uow,
+		Notes:      &models.UoWNoteRepository{UoWRepository: drel.NewUoWRepository(uow, models.NoteMeta)},
+	}
+}

@@ -34,12 +34,13 @@ type RelationInfo struct {
 
 // IncludeSpec wraps a RelationInfo for use with Include queries.
 type IncludeSpec struct {
-	rel      *RelationInfo
-	unscoped bool
-	wheres   []ast.WhereClause
-	orderBy  []ast.OrderByExpr
-	limit    *int
-	then     []IncludeSpec
+	rel           *RelationInfo
+	unscoped      bool
+	withoutFilter []string
+	wheres        []ast.WhereClause
+	orderBy       []ast.OrderByExpr
+	limit         *int
+	then          []IncludeSpec
 }
 
 // NewIncludeSpec creates an IncludeSpec from a RelationInfo.
@@ -64,6 +65,14 @@ func (s IncludeSpec) Then(children ...IncludeSpec) IncludeSpec {
 func (s IncludeSpec) Unscoped() IncludeSpec {
 	c := s
 	c.unscoped = true
+	return c
+}
+
+// WithoutFilter returns a copy of the IncludeSpec that drops the named global
+// filter when loading the related entities (the others still apply).
+func (s IncludeSpec) WithoutFilter(name string) IncludeSpec {
+	c := s
+	c.withoutFilter = append(append([]string(nil), s.withoutFilter...), name)
 	return c
 }
 
@@ -392,20 +401,25 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 			},
 		}
 
+		// Collect global filters, honoring Unscoped and WithoutFilter.
+		var activeFilters []NamedFilter
+		if !inc.unscoped {
+			for _, f := range meta.Filters {
+				if containsString(inc.withoutFilter, f.Name) {
+					continue
+				}
+				activeFilters = append(activeFilters, f)
+			}
+		}
+
 		var where *ast.WhereClause
-		hasFilters := !inc.unscoped && len(meta.Filters) > 0
+		hasFilters := len(activeFilters) > 0
 		hasIncWheres := len(inc.wheres) > 0
 		if hasFilters || hasIncWheres {
-			capacity := 1 // inClause
-			if hasFilters {
-				capacity += len(meta.Filters)
-			}
-			capacity += len(inc.wheres)
+			capacity := 1 + len(activeFilters) + len(inc.wheres)
 			allWheres := make([]ast.WhereClause, 0, capacity)
-			if hasFilters {
-				for _, f := range meta.Filters {
-					allWheres = append(allWheres, f.Clause)
-				}
+			for _, f := range activeFilters {
+				allWheres = append(allWheres, f.Clause)
 			}
 			allWheres = append(allWheres, inClause)
 			allWheres = append(allWheres, inc.wheres...)
@@ -566,6 +580,16 @@ func normalizeInt(v any) any {
 	default:
 		return v
 	}
+}
+
+// containsString reports whether s contains v.
+func containsString(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // findColumnIndex returns the index of the named column, or -1 if not found.

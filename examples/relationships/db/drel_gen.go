@@ -27,6 +27,27 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 	}, nil
 }
 
+// UnitOfWork is a change-tracking work session with typed, tracked
+// repositories. Load through uow.<Model>, stage with Add/Remove, then
+// SaveChanges to flush everything in a single transaction.
+type UnitOfWork struct {
+	*drel.UnitOfWork
+	Authors        *models.UoWAuthorRepository
+	AuthorProfiles *models.UoWAuthorProfileRepository
+	Books          *models.UoWBookRepository
+}
+
+// NewUnitOfWork starts a new change-tracking work session.
+func (db *DB) NewUnitOfWork() *UnitOfWork {
+	uow := db.Engine.NewUnitOfWork()
+	return &UnitOfWork{
+		UnitOfWork:     uow,
+		Authors:        &models.UoWAuthorRepository{UoWRepository: drel.NewUoWRepository(uow, models.AuthorMeta)},
+		AuthorProfiles: &models.UoWAuthorProfileRepository{UoWRepository: drel.NewUoWRepository(uow, models.AuthorProfileMeta)},
+		Books:          &models.UoWBookRepository{UoWRepository: drel.NewUoWRepository(uow, models.BookMeta)},
+	}
+}
+
 var AuthorBooksRel = drel.RelationInfo{
 	Name:        "Books",
 	Type:        drel.HasMany,

@@ -111,3 +111,11 @@ type TxLogEntryRepository struct {
 func (r *TxLogEntryRepository) FindByID(ctx context.Context, id int) (*LogEntry, error) {
 	return r.Find(ctx, id)
 }
+
+type UoWLogEntryRepository struct {
+	*drel.UoWRepository[LogEntry]
+}
+
+func (r *UoWLogEntryRepository) FindByID(ctx context.Context, id int) (*LogEntry, error) {
+	return r.Find(ctx, id)
+}

@@ -53,6 +53,33 @@ func EmitDBFile(models []ModelInfo, dbPkgName string) string {
 		b.WriteString(fmt.Sprintf("\t\t%s: &%s.%sRepository{Repository: drel.NewRepository(engine, %s.%sMeta)},\n", fieldName, alias, m.Name, alias, m.Name))
 	}
 	b.WriteString("\t}, nil\n")
+	b.WriteString("}\n\n")
+
+	// UnitOfWork struct with typed tracked repositories.
+	b.WriteString("// UnitOfWork is a change-tracking work session with typed, tracked\n")
+	b.WriteString("// repositories. Load through uow.<Model>, stage with Add/Remove, then\n")
+	b.WriteString("// SaveChanges to flush everything in a single transaction.\n")
+	b.WriteString("type UnitOfWork struct {\n")
+	b.WriteString("\t*drel.UnitOfWork\n")
+	for _, m := range models {
+		alias := aliases[m.PkgPath]
+		fieldName := pluralize(m.Name)
+		b.WriteString(fmt.Sprintf("\t%s *%s.UoW%sRepository\n", fieldName, alias, m.Name))
+	}
+	b.WriteString("}\n\n")
+
+	// NewUnitOfWork constructor.
+	b.WriteString("// NewUnitOfWork starts a new change-tracking work session.\n")
+	b.WriteString("func (db *DB) NewUnitOfWork() *UnitOfWork {\n")
+	b.WriteString("\tuow := db.Engine.NewUnitOfWork()\n")
+	b.WriteString("\treturn &UnitOfWork{\n")
+	b.WriteString("\t\tUnitOfWork: uow,\n")
+	for _, m := range models {
+		alias := aliases[m.PkgPath]
+		fieldName := pluralize(m.Name)
+		b.WriteString(fmt.Sprintf("\t\t%s: &%s.UoW%sRepository{UoWRepository: drel.NewUoWRepository(uow, %s.%sMeta)},\n", fieldName, alias, m.Name, alias, m.Name))
+	}
+	b.WriteString("\t}\n")
 	b.WriteString("}\n")
 
 	// Emit RelationInfo and IncludeSpec vars for all relationships.

@@ -18,6 +18,19 @@ func TestIncludeSpec_Unscoped(t *testing.T) {
 	assert.False(t, spec.unscoped) // original unchanged
 }
 
+func TestIncludeSpec_WithoutFilter(t *testing.T) {
+	rel := &RelationInfo{Name: "posts", Type: HasMany}
+	base := NewIncludeSpec(rel)
+
+	wf := base.WithoutFilter("active")
+	assert.Equal(t, []string{"active"}, wf.withoutFilter)
+	assert.Empty(t, base.withoutFilter) // original unchanged
+
+	wf2 := wf.WithoutFilter("tenant")
+	assert.Equal(t, []string{"active", "tenant"}, wf2.withoutFilter)
+	assert.Len(t, wf.withoutFilter, 1) // first copy unchanged
+}
+
 func TestIncludeSpec_Where(t *testing.T) {
 	rel := &RelationInfo{Name: "posts"}
 	base := NewIncludeSpec(rel)

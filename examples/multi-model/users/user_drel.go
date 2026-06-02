@@ -111,3 +111,11 @@ type TxUserRepository struct {
 func (r *TxUserRepository) FindByID(ctx context.Context, id int) (*User, error) {
 	return r.Find(ctx, id)
 }
+
+type UoWUserRepository struct {
+	*drel.UoWRepository[User]
+}
+
+func (r *UoWUserRepository) FindByID(ctx context.Context, id int) (*User, error) {
+	return r.Find(ctx, id)
+}

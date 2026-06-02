@@ -24,6 +24,11 @@ type QueryBuilder[T any] struct {
 	after   *string
 	filters []NamedFilter
 	primary bool
+
+	// When tracker is non-null, results materialized by All are snapshotted and
+	// tracked (used by UnitOfWork repositories).
+	tracker *changeTracker
+	base    *ModelMetaBase
 }
 
 func newQueryBuilder[T any](engine *Engine, meta *ModelMeta[T]) *QueryBuilder[T] {
@@ -45,6 +50,8 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		after:   q.after,
 		filters: append([]NamedFilter(nil), q.filters...),
 		primary: q.primary,
+		tracker: q.tracker,
+		base:    q.base,
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
@@ -159,6 +166,11 @@ func (q *QueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if q.tracker != nil && q.base != nil && q.meta.Snapshot != nil {
+		for _, item := range items {
+			q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		}
 	}
 	return items, nil
 }
@@ -278,10 +290,22 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	}
 	fetch := pageSize + 1
 	c.limit = &fetch
+	// Fetch the over-fetch untracked so the discarded sentinel row is never
+	// added to the tracker; track only the returned page below.
+	c.tracker = nil
 
 	items, err := c.All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return finishCursorPage(q.meta, order, items, pageSize)
+	page, err := finishCursorPage(q.meta, order, items, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	if q.tracker != nil && q.base != nil && q.meta.Snapshot != nil {
+		for _, item := range page.Items {
+			q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		}
+	}
+	return page, nil
 }

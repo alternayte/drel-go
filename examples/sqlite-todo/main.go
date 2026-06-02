@@ -36,19 +36,16 @@ func main() {
 
 	setup(ctx, database)
 
-	// === Insert ===
-	err = database.Transaction(ctx, func(tx *drel.Tx) error {
-		repo := drel.NewTxRepository(tx, models.NoteMeta)
-		for i := 1; i <= 12; i++ {
-			repo.Add(models.NewNote(
-				fmt.Sprintf("note-%02d", i),
-				fmt.Sprintf("Note %d", i),
-				[]string{"work", "home", "ideas"}[i%3],
-			))
-		}
-		return nil
-	})
-	if err != nil {
+	// === Insert via a UnitOfWork (DbContext-style change tracking) ===
+	uow := database.NewUnitOfWork()
+	for i := 1; i <= 12; i++ {
+		uow.Notes.Add(models.NewNote(
+			fmt.Sprintf("note-%02d", i),
+			fmt.Sprintf("Note %d", i),
+			[]string{"work", "home", "ideas"}[i%3],
+		))
+	}
+	if err := uow.SaveChanges(ctx); err != nil {
 		log.Fatal(err)
 	}
 
@@ -84,17 +81,14 @@ func main() {
 		page++
 	}
 
-	// === Update with change tracking ===
-	err = database.Transaction(ctx, func(tx *drel.Tx) error {
-		repo := drel.NewTxRepository(tx, models.NoteMeta)
-		n, err := repo.Find(ctx, 1)
-		if err != nil {
-			return err
-		}
-		n.Pin() // only `pinned` is included in the UPDATE
-		return nil
-	})
+	// === Update with change tracking via a UnitOfWork ===
+	uow2 := database.NewUnitOfWork()
+	n, err := uow2.Notes.Find(ctx, 1) // tracked
 	if err != nil {
+		log.Fatal(err)
+	}
+	n.Pin() // only `pinned` is included in the UPDATE
+	if err := uow2.SaveChanges(ctx); err != nil {
 		log.Fatal(err)
 	}
 
