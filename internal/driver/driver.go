@@ -40,6 +40,27 @@ type Tx interface {
 	Rollback(ctx context.Context) error
 }
 
+// BatchItem is a single queued query in a pipelined batch.
+type BatchItem struct {
+	SQL  string
+	Args []any
+}
+
+// BatchResults yields the result rows for each queued query, in order.
+type BatchResults interface {
+	// Query returns the rows for the next queued query.
+	Query() (Rows, error)
+	// Close releases the batch results.
+	Close() error
+}
+
+// Pipeliner is an optional Driver capability: sending multiple queries in a
+// single network round-trip (e.g. the pgx pipeline). Drivers that do not
+// implement it fall back to sequential execution.
+type Pipeliner interface {
+	SendBatch(ctx context.Context, items []BatchItem) (BatchResults, error)
+}
+
 // Driver abstracts database access for the drel engine.
 type Driver interface {
 	QueryRow(ctx context.Context, sql string, args ...any) Row

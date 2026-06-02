@@ -82,6 +82,32 @@ func (d *PgxDriver) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.
 	return &pgxTx{tx: tx}, nil
 }
 
+// SendBatch sends all queued queries in a single pipelined round-trip using the
+// pgx batch protocol. Results must be read in order via the returned
+// BatchResults before it is closed.
+func (d *PgxDriver) SendBatch(ctx context.Context, items []driver.BatchItem) (driver.BatchResults, error) {
+	batch := &pgx.Batch{}
+	for _, it := range items {
+		batch.Queue(it.SQL, it.Args...)
+	}
+	br := d.pool.SendBatch(ctx, batch)
+	return &pgxBatchResults{br: br}, nil
+}
+
+type pgxBatchResults struct {
+	br pgx.BatchResults
+}
+
+func (b *pgxBatchResults) Query() (driver.Rows, error) {
+	rows, err := b.br.Query()
+	if err != nil {
+		return nil, err
+	}
+	return &pgxRows{rows: rows}, nil
+}
+
+func (b *pgxBatchResults) Close() error { return b.br.Close() }
+
 // Close shuts down the connection pool.
 func (d *PgxDriver) Close() {
 	d.pool.Close()
