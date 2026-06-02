@@ -171,6 +171,10 @@ func (ct *changeTracker) DetectChanges() {
 		if te.state != StateUnchanged {
 			continue
 		}
+		// Insert-only metas (no Diff/snapshot) can't be change-detected; skip.
+		if te.meta == nil || te.meta.Diff == nil || te.snapshot == nil {
+			continue
+		}
 		changes := te.meta.Diff(te.entity, te.snapshot)
 		if len(changes) > 0 {
 			te.state = StateModified
@@ -232,17 +236,29 @@ func (ct *changeTracker) restore(st trackerState) {
 	}
 }
 
+// snapshotOf re-snapshots a tracked entity after flush, tolerating metas that
+// have no Snapshot function (insert-only models): such entities simply carry no
+// snapshot and are never diffed.
+func snapshotOf(te *trackedEntity) any {
+	if te.meta == nil || te.meta.Snapshot == nil {
+		return nil
+	}
+	return te.meta.Snapshot(te.entity)
+}
+
 func (ct *changeTracker) PostFlush() {
 	surviving := ct.entities[:0]
 	for _, te := range ct.entities {
 		switch te.state {
 		case StateAdded:
-			te.snapshot = te.meta.Snapshot(te.entity)
+			te.snapshot = snapshotOf(te)
 			te.state = StateUnchanged
+			te.everDirty = false
 			surviving = append(surviving, te)
 		case StateModified:
-			te.snapshot = te.meta.Snapshot(te.entity)
+			te.snapshot = snapshotOf(te)
 			te.state = StateUnchanged
+			te.everDirty = false
 			surviving = append(surviving, te)
 		case StateDeleted:
 			delete(ct.index, te.entity)

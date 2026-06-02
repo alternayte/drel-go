@@ -34,12 +34,6 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 		Table:    meta.Table,
 		Columns:  meta.Columns,
 		PKColumn: meta.PKColumn,
-		Snapshot: func(entity any) any {
-			return meta.Snapshot(entity.(*T))
-		},
-		Diff: func(entity any, snapshot any) []FieldChange {
-			return meta.Diff(entity.(*T), snapshot)
-		},
 		PKValue: func(entity any) any {
 			return meta.PKValue(entity.(*T))
 		},
@@ -49,6 +43,18 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 		ScanRow: func(row Row) (any, error) {
 			return meta.Scan(row)
 		},
+	}
+	// Snapshot/Diff are optional (insert-only models omit them); keep the
+	// type-erased wrappers nil when absent so callers can detect their absence.
+	if meta.Snapshot != nil {
+		base.Snapshot = func(entity any) any {
+			return meta.Snapshot(entity.(*T))
+		}
+	}
+	if meta.Diff != nil {
+		base.Diff = func(entity any, snapshot any) []FieldChange {
+			return meta.Diff(entity.(*T), snapshot)
+		}
 	}
 	if meta.ScanReturning != nil {
 		base.ScanReturning = func(entity any, row Row) error {
