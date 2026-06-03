@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 to [Semantic Versioning](https://semver.org/). While the major version is `0`,
 minor versions may contain breaking changes.
 
+## [0.4.0] - 2026-06-04
+
+Application-assigned primary keys.
+
+### Added
+- **Pluggable primary-key strategies.** A model declared with
+  `drel.Model[uuid.UUID]` now gets an application-assigned **UUIDv7** key,
+  generated and stamped at `Add()` time — the id is valid before any flush, so
+  you can record domain events, wire foreign keys, and build object graphs
+  without a database round-trip. The INSERT carries the id and reads back only
+  the generated timestamps. Integer primary keys keep their database-generated
+  auto-increment behavior unchanged. The strategy is inferred from the PK type;
+  override it at runtime with `drel.SetKeyStrategy` / `drel.SetKeyGenerator`.
+- **`drel.Repo(tx, meta)`** — sugar for `drel.NewTxRepository(tx, meta)`.
+- **`Model.SetID`** — assign an application-supplied primary key.
+- New example **`examples/uuid-keys`** demonstrating the UUIDv7 flow; the
+  `examples/outbox` example now uses app-assigned UUIDs and no longer needs a
+  mid-transaction `SaveChanges` to obtain the id.
+
+### Changed
+- `github.com/google/uuid` is now a direct dependency (used only for UUIDv7 key
+  generation) — a documented exception to the zero-runtime-dependency rule.
+
+### Fixed
+- Inserting an app-assigned model whose key was never set now fails loudly with
+  a clear error instead of silently persisting a zero key.
+
 ## [0.3.2] - 2026-06-03
 
 Production-hardening.
@@ -117,6 +144,7 @@ Initial release: Postgres (pgx) core, code generation (model scanning, query
 builders, scan/snapshot/diff), basic CRUD, snapshot-based change tracking,
 implicit transactions, and the type-safe query builder.
 
+[0.4.0]: https://github.com/alternayte/drel-go/releases/tag/v0.4.0
 [0.3.2]: https://github.com/alternayte/drel-go/releases/tag/v0.3.2
 [0.3.1]: https://github.com/alternayte/drel-go/releases/tag/v0.3.1
 [0.3.0]: https://github.com/alternayte/drel-go/releases/tag/v0.3.0

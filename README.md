@@ -89,6 +89,10 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
   levels and automatic flush on commit.
 - **Soft delete, versioning, audit** -- embed `drel.SoftDelete`,
   `drel.Versioned`, or `drel.Audit` for automatic column management.
+- **Primary keys** -- integer auto-increment by default, or application-assigned
+  **UUIDv7** via `drel.Model[uuid.UUID]` (generated and stamped at `Add()`, so the
+  id is valid before any flush; time-ordered for index locality). Pluggable
+  per-model via `SetKeyStrategy` / `SetKeyGenerator`.
 - **Relationships** -- generated `RelationInfo` and `IncludeSpec` for
   has-many, has-one, belongs-to, and many-to-many eager loading with
   cross-package support. Filter-aware includes respect soft-delete on
