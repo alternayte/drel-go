@@ -1,6 +1,7 @@
 package drel
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,4 +31,16 @@ func TestKeyRegistry_OverrideByTable(t *testing.T) {
 	if !ok || cfg.Strategy != KeyAppAssigned || cfg.Generate == nil {
 		t.Fatalf("expected registered app-assigned config, got %+v ok=%v", cfg, ok)
 	}
+}
+
+func TestKeyRegistry_ConcurrentAccess(t *testing.T) {
+	const table = "widgets_concurrent"
+	defer clearKeyConfig(table)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); setKeyConfig(table, keyConfig{Strategy: KeyAppAssigned, Generate: UUIDv7Key}) }()
+		go func() { defer wg.Done(); keyConfigFor(table) }()
+	}
+	wg.Wait()
 }
