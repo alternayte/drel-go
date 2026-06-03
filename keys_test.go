@@ -44,3 +44,18 @@ func TestKeyRegistry_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSetKeyStrategy_And_Generator(t *testing.T) {
+	meta := ModelMeta[kdummy]{Table: "kd_override"}
+	defer clearKeyConfig(meta.Table)
+
+	SetKeyStrategy(meta, KeyAppAssigned)
+	SetKeyGenerator(meta, func() any { return "G" })
+
+	cfg, ok := keyConfigFor(meta.Table)
+	if !ok || cfg.Strategy != KeyAppAssigned || cfg.Generate().(string) != "G" {
+		t.Fatalf("override not applied: %+v ok=%v", cfg, ok)
+	}
+}
+
+type kdummy struct{ Model[string] }

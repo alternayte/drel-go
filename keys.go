@@ -60,3 +60,23 @@ func clearKeyConfig(table string) {
 	defer keyConfigMu.Unlock()
 	delete(keyConfigs, table)
 }
+
+// SetKeyStrategy overrides the key strategy for a model at runtime. It must be
+// called before the model's repositories are used (typically at startup).
+func SetKeyStrategy[T any](meta ModelMeta[T], s KeyStrategy) {
+	cfg, _ := keyConfigFor(meta.Table)
+	cfg.Strategy = s
+	if cfg.Generate == nil {
+		cfg.Generate = meta.GenerateKey
+	}
+	setKeyConfig(meta.Table, cfg)
+}
+
+// SetKeyGenerator overrides the key generator for a model at runtime. Setting a
+// generator implies KeyAppAssigned. Pass nil to require app-supplied keys.
+func SetKeyGenerator[T any](meta ModelMeta[T], gen func() any) {
+	cfg, _ := keyConfigFor(meta.Table)
+	cfg.Strategy = KeyAppAssigned
+	cfg.Generate = gen
+	setKeyConfig(meta.Table, cfg)
+}

@@ -141,6 +141,13 @@ func NewTxRepository[T any](tx *Tx, meta ModelMeta[T]) *TxRepository[T] {
 	}
 }
 
+// Repo returns a transaction-bound repository for the given model metadata.
+// It is sugar for NewTxRepository(tx, meta). (A method form is impossible in Go
+// because methods cannot have their own type parameters.)
+func Repo[T any](tx *Tx, meta ModelMeta[T]) *TxRepository[T] {
+	return NewTxRepository(tx, meta)
+}
+
 // Add marks an entity for insertion on the next flush.
 func (r *TxRepository[T]) Add(entity *T) {
 	r.tx.tracker.MarkAdded(entity, r.base)
