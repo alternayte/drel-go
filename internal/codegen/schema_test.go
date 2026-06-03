@@ -405,3 +405,35 @@ func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
 	assert.Contains(t, sql, `"author_id" INTEGER NOT NULL REFERENCES "authors"("id")`)
 	assert.Contains(t, sql, `"tag_id" INTEGER NOT NULL REFERENCES "tags"("id")`)
 }
+
+func TestCreateTable_UUIDPK_NoAutoGen(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PKType: "uuid.UUID", PKTypePkg: "github.com/google/uuid",
+		TableName: "accounts",
+		Fields:    []FieldInfo{{Name: "Name", GoType: "string", ColumnName: "name"}},
+	}
+
+	pg := GenerateCreateTable(m, nil, "postgres")
+	if !strings.Contains(pg, `"id" uuid PRIMARY KEY`) {
+		t.Fatalf("postgres: expected uuid PK, got:\n%s", pg)
+	}
+	// Extract the "id" PK line and assert it has no SERIAL or DEFAULT on the PK
+	// itself. (DEFAULT is valid on trait columns like created_at; we only
+	// care the PK column is free of auto-generation clauses.)
+	for _, line := range strings.Split(pg, "\n") {
+		if strings.Contains(line, `"id"`) {
+			if strings.Contains(line, "SERIAL") || strings.Contains(line, "DEFAULT") {
+				t.Fatalf("postgres: app-assigned uuid PK must have no SERIAL/DEFAULT on id line:\n%s", line)
+			}
+			break
+		}
+	}
+
+	lite := GenerateCreateTable(m, nil, "sqlite")
+	if !strings.Contains(lite, `"id" TEXT PRIMARY KEY`) {
+		t.Fatalf("sqlite: expected TEXT PK, got:\n%s", lite)
+	}
+	if strings.Contains(lite, "AUTOINCREMENT") {
+		t.Fatalf("sqlite: app-assigned uuid PK must have no AUTOINCREMENT:\n%s", lite)
+	}
+}
