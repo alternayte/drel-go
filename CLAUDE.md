@@ -79,10 +79,11 @@ go run ./cmd/drel migrate status
 | `jackc/pgx/v5` | Postgres driver | Runtime (Postgres) |
 | `mattn/go-sqlite3` or `modernc.org/sqlite` | SQLite driver | Runtime (SQLite) |
 | `tursodatabase/libsql-client-go` | Turso driver | Runtime (LibSQL) |
+| `github.com/google/uuid` | UUIDv7 generation for app-assigned keys | Runtime (only when using uuid PKs) |
 | `ariga.io/atlas` | Migration diffing/generation | CLI only |
 | `golang.org/x/tools/go/packages` | Go source analysis for codegen | CLI only |
 
-Zero runtime dependencies beyond the database driver.
+Zero runtime dependencies beyond the database driver and `google/uuid` (used only for UUIDv7 key generation).
 
 ## Current Milestone
 
