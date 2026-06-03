@@ -36,6 +36,12 @@ docs/superpowers/
 # Generated drel files (codegen output, regenerated via `drel generate`)
 *_drel.go
 db/drel_gen.go
+# ...but the bundled examples ship their generated code so they compile.
+!examples/**/*_drel.go
+!examples/**/db/drel_gen.go
+
+# Compiled example binaries (from `go build .` in an example dir)
+examples/sqlite-todo/sqlite-todo
 
 # SQLite test databases
 *.db
