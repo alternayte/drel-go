@@ -20,6 +20,10 @@ func (m *Model[K]) ScanPtrs() (*K, *time.Time, *time.Time) {
 	return &m.id, &m.createdAt, &m.updatedAt
 }
 
+// SetID sets the primary key. Used by generated key strategies (app-assigned
+// keys) and by application code that supplies its own keys.
+func (m *Model[K]) SetID(id K) { m.id = id }
+
 func (m *Model[K]) RecordEvent(event any) {
 	m.events = append(m.events, event)
 }
