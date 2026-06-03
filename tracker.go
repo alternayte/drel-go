@@ -34,6 +34,11 @@ type ModelMetaBase struct {
 	InsertColumns  func(entity any) ([]string, []any)
 	ScanRow        func(Row) (any, error)
 	ScanReturning  func(entity any, row Row) error
+	ScanGenerated  func(entity any, row Row) error
+	KeyStrategy    KeyStrategy
+	GenerateKey    func() any
+	SetKey         func(entity any, key any)
+	KeyIsZero      func(entity any) bool
 	ColumnValue    func(entity any, colIdx int) any
 	HasSoftDelete  bool
 	HasVersioned   bool

@@ -17,6 +17,11 @@ type ModelMeta[T any] struct {
 	PKValue        func(*T) any
 	InsertColumns  func(*T) ([]string, []any)
 	ScanReturning  func(*T, Row) error
+	ScanGenerated  func(*T, Row) error // scans created_at, updated_at only (app-assigned)
+	KeyStrategy    KeyStrategy
+	GenerateKey    func() any
+	SetKey         func(*T, any)
+	KeyIsZero      func(*T) bool
 	ColumnValue    func(*T, int) any
 	Filters        []NamedFilter
 	HasSoftDelete  bool
@@ -84,6 +89,23 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 		}
 		base.AuditSetUpdate = func(entity any, actor string) {
 			meta.AuditSetUpdate(entity.(*T), actor)
+		}
+	}
+	base.KeyStrategy = meta.KeyStrategy
+	base.GenerateKey = meta.GenerateKey
+	if meta.SetKey != nil {
+		base.SetKey = func(entity any, key any) {
+			meta.SetKey(entity.(*T), key)
+		}
+	}
+	if meta.KeyIsZero != nil {
+		base.KeyIsZero = func(entity any) bool {
+			return meta.KeyIsZero(entity.(*T))
+		}
+	}
+	if meta.ScanGenerated != nil {
+		base.ScanGenerated = func(entity any, row Row) error {
+			return meta.ScanGenerated(entity.(*T), row)
 		}
 	}
 	return base
