@@ -44,44 +44,75 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 		}
 		cols, vals := te.meta.InsertColumns(te.entity)
 
+		appAssigned := te.meta.KeyStrategy == KeyAppAssigned
+		if appAssigned {
+			// Include the (already-stamped) PK in the INSERT and read back only
+			// the DB-generated timestamps — never the id.
+			cols = append([]string{te.meta.PKColumn}, cols...)
+			vals = append([]any{te.meta.PKValue(te.entity)}, vals...)
+		}
+
 		if d.SupportsReturning() {
-			// Postgres path: INSERT ... RETURNING id, created_at, updated_at
-			result := d.BuildInsert(te.meta.Table, cols, vals, []string{"id", "created_at", "updated_at"})
+			returning := []string{"id", "created_at", "updated_at"}
+			scan := te.meta.ScanReturning
+			if appAssigned {
+				returning = []string{"created_at", "updated_at"}
+				scan = te.meta.ScanGenerated
+			}
+			result := d.BuildInsert(te.meta.Table, cols, vals, returning)
 			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-			if te.meta.ScanReturning != nil {
-				if err := te.meta.ScanReturning(te.entity, row); err != nil {
+			if scan != nil {
+				if err := scan(te.entity, row); err != nil {
 					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 				}
 			} else {
-				var discard any
-				if err := row.Scan(&discard, &discard, &discard); err != nil {
+				discards := make([]any, len(returning))
+				for i := range discards {
+					discards[i] = new(any)
+				}
+				if err := row.Scan(discards...); err != nil {
 					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 				}
 			}
 		} else {
-			// SQLite path: INSERT without RETURNING, then read back the generated columns.
 			result := d.BuildInsert(te.meta.Table, cols, vals, nil)
-			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
-			if err != nil {
+			if _, err := exec.execInternal(ctx, result.SQL, result.Args...); err != nil {
 				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
-			// Read back id, created_at, updated_at using last_insert_rowid().
-			readbackSQL := fmt.Sprintf(
-				`SELECT %s, %s, %s FROM %s WHERE rowid = last_insert_rowid()`,
-				quoteIdentMutation("id"),
-				quoteIdentMutation("created_at"),
-				quoteIdentMutation("updated_at"),
-				quoteIdentMutation(te.meta.Table),
-			)
-			row := exec.queryRowInternal(ctx, readbackSQL)
-			if te.meta.ScanReturning != nil {
-				if err := te.meta.ScanReturning(te.entity, row); err != nil {
-					return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+			if appAssigned {
+				// Read back timestamps by the known id (correct for non-integer
+				// keys). Skip entirely if the model has no timestamp scanner.
+				if te.meta.ScanGenerated != nil {
+					readbackSQL := fmt.Sprintf(
+						`SELECT %s, %s FROM %s WHERE %s = ?`,
+						quoteIdentMutation("created_at"),
+						quoteIdentMutation("updated_at"),
+						quoteIdentMutation(te.meta.Table),
+						quoteIdentMutation(te.meta.PKColumn),
+					)
+					row := exec.queryRowInternal(ctx, readbackSQL, te.meta.PKValue(te.entity))
+					if err := te.meta.ScanGenerated(te.entity, row); err != nil {
+						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+					}
 				}
 			} else {
-				var discard any
-				if err := row.Scan(&discard, &discard, &discard); err != nil {
-					return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+				readbackSQL := fmt.Sprintf(
+					`SELECT %s, %s, %s FROM %s WHERE rowid = last_insert_rowid()`,
+					quoteIdentMutation("id"),
+					quoteIdentMutation("created_at"),
+					quoteIdentMutation("updated_at"),
+					quoteIdentMutation(te.meta.Table),
+				)
+				row := exec.queryRowInternal(ctx, readbackSQL)
+				if te.meta.ScanReturning != nil {
+					if err := te.meta.ScanReturning(te.entity, row); err != nil {
+						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+					}
+				} else {
+					var discard any
+					if err := row.Scan(&discard, &discard, &discard); err != nil {
+						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
+					}
 				}
 			}
 		}
