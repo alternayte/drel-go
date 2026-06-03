@@ -1,8 +1,5 @@
-//go:build libsql
-
 // Package libsqldriver implements driver.Driver for libSQL / Turso using the
-// database/sql libsql driver. It is compiled only with the "libsql" build tag,
-// keeping the libsql client out of builds that don't need it.
+// database/sql libsql driver.
 package libsqldriver
 
 import (

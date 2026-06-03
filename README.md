@@ -139,10 +139,9 @@ See [examples/](examples/) for working samples:
 - **Postgres** — direct `pgx`, auto-detected from `postgres://` DSNs.
 - **SQLite** — pure-Go `modernc.org/sqlite`, auto-detected from `file:`,
   `sqlite://`, `:memory:`, or `*.db` DSNs.
-- **LibSQL/Turso** — `libsql://`/`https://`/`wss://` DSNs; build with
-  `-tags libsql` (keeps the libsql client out of builds that don't use it).
-  Verified end-to-end against a real libSQL server over HTTP. Prefer
-  `libsql://`/`https://` over `ws://` for models with `time.Time` columns.
+- **LibSQL/Turso** — `libsql://`/`https://`/`wss://` DSNs, no build flags or
+  imports required. Verified end-to-end against a real libSQL server over HTTP.
+  Prefer `libsql://`/`https://` over `ws://` for models with `time.Time` columns.
 
 ## Limitations
 

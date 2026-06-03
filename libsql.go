@@ -1,5 +1,3 @@
-//go:build libsql
-
 package drel
 
 import (
@@ -7,8 +5,8 @@ import (
 	"github.com/alternayte/drel/internal/driver/libsqldriver"
 )
 
-// newLibSQLDriver opens a libSQL/Turso driver. Compiled only with the "libsql"
-// build tag so the libsql client stays out of builds that don't need it.
+// newLibSQLDriver opens a libSQL/Turso driver. libSQL works out of the box for
+// libsql:// / https:// / wss:// (etc.) DSNs — no build tag required.
 func newLibSQLDriver(dsn string) (driver.Driver, error) {
 	return libsqldriver.New(dsn)
 }

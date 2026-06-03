@@ -1,4 +1,4 @@
-//go:build integration && libsql
+//go:build integration
 
 package drel_test
 

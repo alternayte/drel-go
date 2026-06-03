@@ -16,8 +16,7 @@ real-world usage feedback, and focused PRs are all very welcome.
 ## Building
 
 ```bash
-go build ./...                 # core + CLI (default: Postgres + SQLite)
-go build -tags libsql ./...    # also compile the LibSQL/Turso driver
+go build ./...                 # core + CLI (Postgres + SQLite + LibSQL/Turso)
 go vet ./...
 gofmt -l .                     # should print nothing
 ```
@@ -31,20 +30,17 @@ The CLI lives in `./cmd/drel`.
 go test ./...
 go test -race ./...
 
-# Postgres integration suite (needs Docker)
+# Integration suite — Postgres + a real libsql-server round-trip (needs Docker)
 go test -tags integration ./...
-
-# LibSQL/Turso round-trip against a real libsql-server (needs Docker)
-go test -tags 'integration libsql' -run TestIntegration_LibSQL ./...
 
 # Benchmarks (needs Docker)
 go test -tags integration -bench . -benchmem .
 ```
 
-Integration tests are gated behind the `integration` build tag and the LibSQL
-test additionally behind `libsql`, so the default `go test ./...` stays fast and
-Docker-free. **Please add tests for new query paths** — several real bugs (e.g.
-int64/int mismatches) only surface against a real database.
+Integration tests are gated behind the `integration` build tag, so the default
+`go test ./...` stays fast and Docker-free. **Please add tests for new query
+paths** — several real bugs (e.g. int64/int mismatches) only surface against a
+real database.
 
 ## Code generation
 
