@@ -51,6 +51,35 @@ func akOrderMeta() ModelMeta[akOrder] {
 	}
 }
 
+func TestAppAssignedInsert_ZeroKey_FailsLoudly(t *testing.T) {
+	ctx := context.Background()
+	eng, err := NewEngine(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if _, err := eng.Exec(ctx, `CREATE TABLE ak_orders (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := akOrderMeta()
+	meta.GenerateKey = nil // no generator: app is expected to supply the key, but we "forget"
+
+	err = eng.Transaction(ctx, func(tx *Tx) error {
+		o := &akOrder{Name: "no-key"} // key never set, stays zero
+		NewTxRepository(tx, meta).Add(o)
+		return tx.SaveChanges(ctx)
+	})
+	if err == nil {
+		t.Fatal("expected a loud error for a zero app-assigned key, got nil")
+	}
+}
+
 func TestAppAssignedInsert_SQLite_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	eng, err := NewEngine(":memory:")

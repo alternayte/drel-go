@@ -46,6 +46,12 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 
 		appAssigned := te.meta.KeyStrategy == KeyAppAssigned
 		if appAssigned {
+			// An app-assigned key must be set by now (by a generator at Add time or
+			// by the application). A zero key means it was forgotten — fail loudly
+			// rather than persisting a zero/empty primary key.
+			if te.meta.KeyIsZero != nil && te.meta.KeyIsZero(te.entity) {
+				return nil, fmt.Errorf("drel: insert %s: app-assigned primary key is zero (no key generator registered and no key was set)", te.meta.Table)
+			}
 			// Include the (already-stamped) PK in the INSERT and read back only
 			// the DB-generated timestamps — never the id.
 			cols = append([]string{te.meta.PKColumn}, cols...)
