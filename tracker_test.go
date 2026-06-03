@@ -207,3 +207,24 @@ func TestMarkAdded_DoesNotRestampNonZeroKey(t *testing.T) {
 		t.Fatalf("expected preset id preserved, got %q", w.ID())
 	}
 }
+
+func TestStampKey_RegistryOverridesMetaGenerator(t *testing.T) {
+	type widget struct{ Model[string] }
+	const table = "override_widgets"
+	defer clearKeyConfig(table)
+	meta := &ModelMetaBase{
+		Table:       table,
+		KeyStrategy: KeyAppAssigned,
+		GenerateKey: func() any { return "meta-default" },
+		SetKey:      func(e any, k any) { e.(*widget).SetID(k.(string)) },
+		KeyIsZero:   func(e any) bool { return e.(*widget).ID() == "" },
+	}
+	setKeyConfig(table, keyConfig{Strategy: KeyAppAssigned, Generate: func() any { return "registry-override" }})
+
+	ct := newChangeTracker()
+	w := &widget{}
+	ct.MarkAdded(w, meta)
+	if w.ID() != "registry-override" {
+		t.Fatalf("expected registry override to win, got %q", w.ID())
+	}
+}
