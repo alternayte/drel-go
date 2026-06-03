@@ -1,0 +1,257 @@
+// Example: outbox
+//
+// Demonstrates the transactional outbox pattern with drel.Engine.UseOutbox.
+// Domain events recorded during a business transaction are written to an outbox
+// table *in the same transaction* as the data changes that produced them. This
+// gives a reliable, exactly-once hand-off to external systems (a CDC pipeline
+// like Debezium, a message bus, or a polling relay) without dual-write races:
+// either the order AND its event commit together, or neither does.
+//
+// Key concepts shown:
+//   - UseOutbox: register an outbox table; every SaveChanges persists the
+//     pending domain events into it within the same transaction.
+//   - Atomicity: when a transaction rolls back, no outbox row is left behind —
+//     you never publish an event for work that didn't commit.
+//   - Relay: a polling worker reads unprocessed rows, "publishes" them, and
+//     stamps processed_at. A second poll returns nothing — exactly-once.
+//
+// Runs against in-memory SQLite (pure-Go modernc.org/sqlite, no CGO and no
+// external database needed).
+//
+// Usage:
+//
+//	cd examples/outbox
+//	go run ../../cmd/drel generate   # generates orders/order_drel.go + db/drel_gen.go
+//	go run .
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+
+	"github.com/alternayte/drel"
+	"github.com/alternayte/drel/examples/outbox/db"
+	"github.com/alternayte/drel/examples/outbox/orders"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// ":memory:" is auto-detected as SQLite. No DATABASE_URL needed.
+	database, err := db.Open(":memory:")
+	if err != nil {
+		log.Fatalf("open: %v", err)
+	}
+	defer database.Close()
+
+	setup(ctx, database)
+
+	// Register the outbox. From now on, every committed transaction also writes
+	// its domain events into the "outbox" table, transactionally. The default
+	// mapper stores Type = Go type name and Payload = the event as JSON.
+	database.UseOutbox("outbox")
+
+	placeOrders(ctx, database)
+	showOutbox(ctx, database, "after placing & shipping orders")
+
+	demoRollbackIsAtomic(ctx, database)
+	showOutbox(ctx, database, "after a rolled-back transaction (unchanged)")
+
+	relay(ctx, database)
+	relay(ctx, database) // second pass: nothing left — exactly-once hand-off
+}
+
+// ---------------------------------------------------------------------------
+// Place & ship orders — events land in the outbox atomically
+// ---------------------------------------------------------------------------
+
+func placeOrders(ctx context.Context, database *db.DB) {
+	fmt.Println("=== Place orders ===")
+
+	type spec struct {
+		customer string
+		total    int
+	}
+	for _, s := range []spec{{"Alice", 4200}, {"Bob", 1599}} {
+		err := database.Transaction(ctx, func(tx *drel.Tx) error {
+			repo := drel.NewTxRepository(tx, orders.OrderMeta)
+			o := orders.NewOrder(s.customer, s.total)
+			repo.Add(o)
+
+			// Flush so the INSERT runs and o.ID() is assigned before we record
+			// the event — the outbox message then carries the real order id.
+			if err := tx.SaveChanges(ctx); err != nil {
+				return err
+			}
+			o.Place()
+			fmt.Printf("  placed order %d for %s (%d cents)\n", o.ID(), o.Customer, o.Total)
+			return nil
+			// Auto-flush at tx end: OrderPlaced is collected and the outbox hook
+			// inserts it within this same transaction, then commit.
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Ship Alice's order (id 1) — records OrderShipped, also via the outbox.
+	err := database.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, orders.OrderMeta)
+		o, err := repo.Find(ctx, 1)
+		if err != nil {
+			return err
+		}
+		o.Ship("UPS")
+		fmt.Printf("  shipped order %d via %s\n", o.ID(), "UPS")
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Atomicity: a rolled-back transaction leaves no outbox row
+// ---------------------------------------------------------------------------
+
+func demoRollbackIsAtomic(ctx context.Context, database *db.DB) {
+	fmt.Println("\n=== Rollback is atomic ===")
+
+	ordersBefore := count(ctx, database, "SELECT COUNT(*) FROM orders")
+	outboxBefore := count(ctx, database, "SELECT COUNT(*) FROM outbox")
+
+	// Place an order and record its event, then fail the transaction. Because
+	// the outbox write happens inside the same transaction, the rollback drops
+	// the order AND its event together — no orphaned message escapes.
+	errBoom := errors.New("payment declined")
+	err := database.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, orders.OrderMeta)
+		o := orders.NewOrder("Mallory", 999999)
+		repo.Add(o)
+		if err := tx.SaveChanges(ctx); err != nil {
+			return err
+		}
+		o.Place()
+		return errBoom // force rollback
+	})
+	fmt.Printf("  transaction failed as expected: %v\n", errors.Is(err, errBoom))
+
+	ordersAfter := count(ctx, database, "SELECT COUNT(*) FROM orders")
+	outboxAfter := count(ctx, database, "SELECT COUNT(*) FROM outbox")
+	fmt.Printf("  orders: %d -> %d, outbox: %d -> %d (both unchanged)\n",
+		ordersBefore, ordersAfter, outboxBefore, outboxAfter)
+}
+
+// ---------------------------------------------------------------------------
+// Relay: poll unprocessed messages, publish, mark processed (exactly-once)
+// ---------------------------------------------------------------------------
+
+func relay(ctx context.Context, database *db.DB) {
+	fmt.Println("\n=== Relay poll ===")
+
+	rows, err := database.Query(ctx,
+		`SELECT id, type, payload FROM outbox WHERE processed_at IS NULL ORDER BY id`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	type message struct {
+		id      int
+		typ     string
+		payload string
+	}
+	var batch []message
+	for rows.Next() {
+		var m message
+		if err := rows.Scan(&m.id, &m.typ, &m.payload); err != nil {
+			rows.Close()
+			log.Fatal(err)
+		}
+		batch = append(batch, m)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	if len(batch) == 0 {
+		fmt.Println("  nothing to publish — outbox drained")
+		return
+	}
+
+	for _, m := range batch {
+		// A real relay would publish to Kafka/NATS/etc. here. We just print.
+		fmt.Printf("  publish #%d %-12s %s\n", m.id, m.typ, m.payload)
+		if _, err := database.Exec(ctx,
+			`UPDATE outbox SET processed_at = CURRENT_TIMESTAMP WHERE id = ?`, m.id); err != nil {
+			log.Fatal(err)
+		}
+	}
+	fmt.Printf("  published %d message(s)\n", len(batch))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func showOutbox(ctx context.Context, database *db.DB, when string) {
+	fmt.Printf("\n=== Outbox contents (%s) ===\n", when)
+	rows, err := database.Query(ctx,
+		`SELECT id, type, payload, processed_at IS NOT NULL FROM outbox ORDER BY id`)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var (
+			id        int
+			typ       string
+			payload   string
+			processed bool
+		)
+		if err := rows.Scan(&id, &typ, &payload, &processed); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("  #%d %-12s processed=%-5v %s\n", id, typ, processed, payload)
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+	if n == 0 {
+		fmt.Println("  (empty)")
+	}
+}
+
+func count(ctx context.Context, database *db.DB, sql string) int {
+	var n int
+	if err := database.QueryRow(ctx, sql).Scan(&n); err != nil {
+		log.Fatal(err)
+	}
+	return n
+}
+
+func setup(ctx context.Context, database *db.DB) {
+	mustExec(ctx, database, `CREATE TABLE orders (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		customer   TEXT    NOT NULL,
+		total      INTEGER NOT NULL,
+		status     TEXT    NOT NULL DEFAULT 'placed',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	mustExec(ctx, database, `CREATE INDEX idx_orders_status ON orders (status)`)
+
+	// drel.OutboxSchema returns dialect-appropriate DDL for the outbox table:
+	// (id, type, payload, created_at, processed_at). A relay stamps processed_at.
+	mustExec(ctx, database, drel.OutboxSchema("outbox", "sqlite"))
+}
+
+func mustExec(ctx context.Context, database *db.DB, sql string) {
+	if _, err := database.Exec(ctx, sql); err != nil {
+		log.Fatalf("setup: %v", err)
+	}
+}

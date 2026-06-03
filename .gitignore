@@ -41,6 +41,8 @@ db/drel_gen.go
 
 # Compiled example binaries (from `go build .` in an example dir)
 examples/sqlite-todo/sqlite-todo
+examples/outbox/outbox
+examples/observability/observability
 
 # SQLite test databases
 *.db

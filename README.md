@@ -139,6 +139,8 @@ See [examples/](examples/) for working samples:
 - [relationships](examples/relationships/) -- associations and includes
 - [bulk-ops](examples/bulk-ops/) -- batch operations
 - [multi-model](examples/multi-model/) -- domain events, transaction hooks
+- [outbox](examples/outbox/) -- transactional outbox: events persisted atomically with data, plus a polling relay
+- [observability](examples/observability/) -- structured query logging, tracing spans, and dev-mode diagnostics
 
 ## Dialects
 

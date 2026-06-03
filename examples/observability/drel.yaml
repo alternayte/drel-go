@@ -1,0 +1,7 @@
+packages:
+  - ./catalog
+
+output:
+  db: ./db/drel_gen.go
+
+dialect: sqlite
