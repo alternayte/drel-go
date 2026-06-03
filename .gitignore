@@ -29,9 +29,8 @@ Thumbs.db
 .env.*
 *.pem
 
-# Internal review and skill artifacts (never commit)
-docs/review/
-docs/superpowers/
+# Docs are local-only (PRD, internal review, and skill artifacts — never commit)
+docs/
 
 # Generated drel files (codegen output, regenerated via `drel generate`)
 *_drel.go
