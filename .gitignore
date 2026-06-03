@@ -43,6 +43,7 @@ db/drel_gen.go
 examples/sqlite-todo/sqlite-todo
 examples/outbox/outbox
 examples/observability/observability
+examples/uuid-keys/uuid-keys
 
 # SQLite test databases
 *.db

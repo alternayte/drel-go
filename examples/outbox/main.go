@@ -34,6 +34,7 @@ import (
 	"github.com/alternayte/drel"
 	"github.com/alternayte/drel/examples/outbox/db"
 	"github.com/alternayte/drel/examples/outbox/orders"
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -74,37 +75,34 @@ func placeOrders(ctx context.Context, database *db.DB) {
 		customer string
 		total    int
 	}
+	var placedIDs []uuid.UUID
 	for _, s := range []spec{{"Alice", 4200}, {"Bob", 1599}} {
 		err := database.Transaction(ctx, func(tx *drel.Tx) error {
-			repo := drel.NewTxRepository(tx, orders.OrderMeta)
 			o := orders.NewOrder(s.customer, s.total)
-			repo.Add(o)
-
-			// Flush so the INSERT runs and o.ID() is assigned before we record
-			// the event — the outbox message then carries the real order id.
-			if err := tx.SaveChanges(ctx); err != nil {
-				return err
-			}
+			// Add() stamps a UUIDv7 id immediately — o.ID() is valid right away,
+			// no mid-transaction flush needed to "get the id".
+			drel.Repo(tx, orders.OrderMeta).Add(o)
 			o.Place()
-			fmt.Printf("  placed order %d for %s (%d cents)\n", o.ID(), o.Customer, o.Total)
+			placedIDs = append(placedIDs, o.ID())
+			fmt.Printf("  placed order %s for %s (%d cents)\n", o.ID(), o.Customer, o.Total)
 			return nil
-			// Auto-flush at tx end: OrderPlaced is collected and the outbox hook
-			// inserts it within this same transaction, then commit.
+			// Auto-flush at tx end: the INSERT and the OrderPlaced outbox row are
+			// written within this same transaction, then commit.
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	// Ship Alice's order (id 1) — records OrderShipped, also via the outbox.
+	// Ship the first placed order — records OrderShipped, also via the outbox.
 	err := database.Transaction(ctx, func(tx *drel.Tx) error {
-		repo := drel.NewTxRepository(tx, orders.OrderMeta)
-		o, err := repo.Find(ctx, 1)
+		repo := drel.Repo(tx, orders.OrderMeta)
+		o, err := repo.Find(ctx, placedIDs[0])
 		if err != nil {
 			return err
 		}
 		o.Ship("UPS")
-		fmt.Printf("  shipped order %d via %s\n", o.ID(), "UPS")
+		fmt.Printf("  shipped order %s via %s\n", o.ID(), "UPS")
 		return nil
 	})
 	if err != nil {
@@ -127,12 +125,8 @@ func demoRollbackIsAtomic(ctx context.Context, database *db.DB) {
 	// the order AND its event together — no orphaned message escapes.
 	errBoom := errors.New("payment declined")
 	err := database.Transaction(ctx, func(tx *drel.Tx) error {
-		repo := drel.NewTxRepository(tx, orders.OrderMeta)
 		o := orders.NewOrder("Mallory", 999999)
-		repo.Add(o)
-		if err := tx.SaveChanges(ctx); err != nil {
-			return err
-		}
+		drel.Repo(tx, orders.OrderMeta).Add(o)
 		o.Place()
 		return errBoom // force rollback
 	})
@@ -236,7 +230,7 @@ func count(ctx context.Context, database *db.DB, sql string) int {
 
 func setup(ctx context.Context, database *db.DB) {
 	mustExec(ctx, database, `CREATE TABLE orders (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		id         TEXT    PRIMARY KEY,
 		customer   TEXT    NOT NULL,
 		total      INTEGER NOT NULL,
 		status     TEXT    NOT NULL DEFAULT 'placed',

@@ -1,6 +1,9 @@
 package orders
 
-import "github.com/alternayte/drel"
+import (
+	"github.com/alternayte/drel"
+	"github.com/google/uuid"
+)
 
 // Domain events. Each is recorded by an Order method and, on commit, written to
 // the transactional outbox table by drel.Engine.UseOutbox. The default outbox
@@ -10,22 +13,23 @@ import "github.com/alternayte/drel"
 
 // OrderPlaced is recorded when a new order is accepted.
 type OrderPlaced struct {
-	OrderID  int    `json:"order_id"`
-	Customer string `json:"customer"`
-	Total    int    `json:"total_cents"`
+	OrderID  uuid.UUID `json:"order_id"`
+	Customer string    `json:"customer"`
+	Total    int       `json:"total_cents"`
 }
 
 // OrderShipped is recorded when an order is dispatched to a carrier.
 type OrderShipped struct {
-	OrderID int    `json:"order_id"`
-	Carrier string `json:"carrier"`
+	OrderID uuid.UUID `json:"order_id"`
+	Carrier string    `json:"carrier"`
 }
 
 // Order is a SQLite-backed model that raises domain events from its behaviour.
-// Embedding drel.Model[int] provides ID(), RecordEvent and the change-tracking
-// hooks the outbox relies on.
+// Embedding drel.Model[uuid.UUID] gives it an application-assigned UUIDv7
+// primary key (stamped at Add() time), plus ID(), RecordEvent and the
+// change-tracking hooks the outbox relies on.
 type Order struct {
-	drel.Model[int]
+	drel.Model[uuid.UUID]
 	Customer string `db:"customer"`
 	Total    int    `db:"total"`
 	Status   string `db:"status,index"`
@@ -36,8 +40,8 @@ func NewOrder(customer string, total int) *Order {
 	return &Order{Customer: customer, Total: total, Status: "placed"}
 }
 
-// Place records an OrderPlaced event. Call it after the order has been flushed
-// (so ID() is populated) — see main.go for the ordering.
+// Place records an OrderPlaced event. The UUID id is assigned at Add() time, so
+// ID() is already valid here — no flush required first.
 func (o *Order) Place() {
 	o.RecordEvent(OrderPlaced{OrderID: o.ID(), Customer: o.Customer, Total: o.Total})
 }

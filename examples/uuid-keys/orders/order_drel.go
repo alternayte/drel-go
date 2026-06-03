@@ -14,14 +14,12 @@ var Orders = struct {
 	ID        drel.Column[uuid.UUID]
 	Customer  drel.StringColumn
 	Total     drel.OrderedColumn[int]
-	Status    drel.StringColumn
 	CreatedAt drel.Column[time.Time]
 	UpdatedAt drel.Column[time.Time]
 }{
 	ID:        drel.NewCol[uuid.UUID]("id"),
 	Customer:  drel.NewStringCol("customer"),
 	Total:     drel.NewOrderedCol[int]("total"),
-	Status:    drel.NewStringCol("status"),
 	CreatedAt: drel.NewCol[time.Time]("created_at"),
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
@@ -29,7 +27,7 @@ var Orders = struct {
 func scanOrder(row drel.Row) (*Order, error) {
 	p := &Order{}
 	idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()
-	err := row.Scan(idPtr, &p.Customer, &p.Total, &p.Status, createdAtPtr, updatedAtPtr)
+	err := row.Scan(idPtr, &p.Customer, &p.Total, createdAtPtr, updatedAtPtr)
 	if err != nil {
 		return nil, err
 	}
@@ -39,11 +37,10 @@ func scanOrder(row drel.Row) (*Order, error) {
 type orderSnapshot struct {
 	Customer string
 	Total    int
-	Status   string
 }
 
 func snapshotOrder(p *Order) any {
-	return orderSnapshot{Customer: p.Customer, Total: p.Total, Status: p.Status}
+	return orderSnapshot{Customer: p.Customer, Total: p.Total}
 }
 
 func diffOrder(p *Order, snap any) []drel.FieldChange {
@@ -54,9 +51,6 @@ func diffOrder(p *Order, snap any) []drel.FieldChange {
 	}
 	if p.Total != s.Total {
 		changes = append(changes, drel.FieldChange{Column: "total", Value: p.Total})
-	}
-	if p.Status != s.Status {
-		changes = append(changes, drel.FieldChange{Column: "status", Value: p.Status})
 	}
 	return changes
 }
@@ -74,17 +68,15 @@ func orderColumnValue(p *Order, idx int) any {
 	case 2:
 		return p.Total
 	case 3:
-		return p.Status
-	case 4:
 		return p.CreatedAt()
-	case 5:
+	case 4:
 		return p.UpdatedAt()
 	}
 	return nil
 }
 
 func orderInsertColumns(p *Order) ([]string, []any) {
-	return []string{"customer", "total", "status"}, []any{p.Customer, p.Total, p.Status}
+	return []string{"customer", "total"}, []any{p.Customer, p.Total}
 }
 
 func orderScanReturning(p *Order, row drel.Row) error {
@@ -104,7 +96,7 @@ func orderScanGenerated(p *Order, row drel.Row) error {
 
 var OrderMeta = drel.ModelMeta[Order]{
 	Table:         "orders",
-	Columns:       []string{"id", "customer", "total", "status", "created_at", "updated_at"},
+	Columns:       []string{"id", "customer", "total", "created_at", "updated_at"},
 	PKColumn:      "id",
 	Scan:          scanOrder,
 	Snapshot:      snapshotOrder,

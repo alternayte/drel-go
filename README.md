@@ -141,6 +141,10 @@ See [examples/](examples/) for working samples:
 - [multi-model](examples/multi-model/) -- domain events, transaction hooks
 - [outbox](examples/outbox/) -- transactional outbox: events persisted atomically with data, plus a polling relay
 - [observability](examples/observability/) -- structured query logging, tracing spans, and dev-mode diagnostics
+- [uuid-keys](examples/uuid-keys/) -- application-assigned UUIDv7 primary keys
+
+Primary keys: integer auto-increment by default; use `drel.Model[uuid.UUID]`
+for app-assigned UUIDv7 (stamped at `Add()`).
 
 ## Dialects
 
