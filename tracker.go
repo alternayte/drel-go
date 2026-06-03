@@ -91,6 +91,7 @@ func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
 	if _, exists := ct.index[entity]; exists {
 		return
 	}
+	stampKey(entity, meta)
 	te := &trackedEntity{
 		entity: entity,
 		state:  StateAdded,
@@ -98,6 +99,27 @@ func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
 	}
 	ct.entities = append(ct.entities, te)
 	ct.index[entity] = te
+}
+
+// stampKey assigns an app-assigned primary key before insert when one is needed
+// and not already set. The per-table registry (drel.SetKeyStrategy /
+// SetKeyGenerator) takes precedence over the meta's codegen defaults.
+func stampKey(entity any, meta *ModelMetaBase) {
+	strategy := meta.KeyStrategy
+	gen := meta.GenerateKey
+	if cfg, ok := keyConfigFor(meta.Table); ok {
+		strategy = cfg.Strategy
+		gen = cfg.Generate
+	}
+	if strategy != KeyAppAssigned || gen == nil {
+		return
+	}
+	if meta.SetKey == nil || meta.KeyIsZero == nil {
+		return
+	}
+	if meta.KeyIsZero(entity) {
+		meta.SetKey(entity, gen())
+	}
 }
 
 // Attach begins tracking an externally-constructed entity in the given state.

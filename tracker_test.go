@@ -168,3 +168,42 @@ func TestTracker_DiffMultipleFieldChanges(t *testing.T) {
 	changes := testMeta.Diff(e, snap)
 	assert.Len(t, changes, 2)
 }
+
+func TestMarkAdded_StampsAppAssignedKey(t *testing.T) {
+	type widget struct{ Model[string] }
+	meta := &ModelMetaBase{
+		Table:       "stamp_widgets",
+		KeyStrategy: KeyAppAssigned,
+		GenerateKey: func() any { return "stamped" },
+		SetKey:      func(e any, k any) { e.(*widget).SetID(k.(string)) },
+		KeyIsZero:   func(e any) bool { return e.(*widget).ID() == "" },
+	}
+
+	ct := newChangeTracker()
+	w := &widget{}
+	ct.MarkAdded(w, meta)
+
+	if w.ID() != "stamped" {
+		t.Fatalf("expected stamped id, got %q", w.ID())
+	}
+}
+
+func TestMarkAdded_DoesNotRestampNonZeroKey(t *testing.T) {
+	type widget struct{ Model[string] }
+	meta := &ModelMetaBase{
+		Table:       "stamp_widgets2",
+		KeyStrategy: KeyAppAssigned,
+		GenerateKey: func() any { return "stamped" },
+		SetKey:      func(e any, k any) { e.(*widget).SetID(k.(string)) },
+		KeyIsZero:   func(e any) bool { return e.(*widget).ID() == "" },
+	}
+
+	ct := newChangeTracker()
+	w := &widget{}
+	w.SetID("preset")
+	ct.MarkAdded(w, meta)
+
+	if w.ID() != "preset" {
+		t.Fatalf("expected preset id preserved, got %q", w.ID())
+	}
+}
