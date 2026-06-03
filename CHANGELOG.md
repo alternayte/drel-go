@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 to [Semantic Versioning](https://semver.org/). While the major version is `0`,
 minor versions may contain breaking changes.
 
+## [0.3.2] - 2026-06-03
+
+Production-hardening.
+
+### Added
+- **Typed, dialect-neutral errors.** `errors.Is(err, drel.ErrUniqueViolation)`
+  and `ErrForeignKeyViolation` / `ErrNotNullViolation` / `ErrCheckViolation` /
+  `ErrSerializationFailure`, classified uniformly across Postgres (SQLSTATE),
+  SQLite (result codes), and LibSQL (message match). The original driver error
+  (e.g. `*pgconn.PgError`) remains reachable via `errors.As`.
+- **Connection pool configuration:** `WithMaxConns`, `WithConnMaxLifetime`,
+  `WithConnMaxIdleTime` (applied to Postgres, SQLite, and LibSQL pools).
+
+### Fixed
+- **Bulk parameter-limit overflow.** `BulkInsert`/`BulkUpsert` sized batches at a
+  fixed 1000 rows, which overflowed the per-statement parameter limit for wide
+  tables (e.g. >65 columns on Postgres, fewer on SQLite). Batch size is now
+  derived from the column count.
+
 ## [0.3.1] - 2026-06-03
 
 ### Changed
@@ -98,6 +117,7 @@ Initial release: Postgres (pgx) core, code generation (model scanning, query
 builders, scan/snapshot/diff), basic CRUD, snapshot-based change tracking,
 implicit transactions, and the type-safe query builder.
 
+[0.3.2]: https://github.com/alternayte/drel-go/releases/tag/v0.3.2
 [0.3.1]: https://github.com/alternayte/drel-go/releases/tag/v0.3.1
 [0.3.0]: https://github.com/alternayte/drel-go/releases/tag/v0.3.0
 [0.1.0]: https://github.com/alternayte/drel-go/releases/tag/v0.1.0

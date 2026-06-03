@@ -42,7 +42,7 @@ type SQLiteDriver struct {
 
 // New opens a SQLite database at the given DSN and enables WAL mode.
 // No context is required for connection — SQLite is an embedded database.
-func New(dsn string) (*SQLiteDriver, error) {
+func New(dsn string, pc ...driver.PoolConfig) (*SQLiteDriver, error) {
 	inMemory := isInMemory(dsn)
 	db, err := sql.Open("sqlite", withPragmas(dsn, inMemory))
 	if err != nil {
@@ -53,6 +53,16 @@ func New(dsn string) (*SQLiteDriver, error) {
 		// A pooled second connection to :memory: would open a separate empty
 		// database. Pin to one connection so all work shares the same DB.
 		db.SetMaxOpenConns(1)
+	} else if len(pc) > 0 {
+		if pc[0].MaxConns > 0 {
+			db.SetMaxOpenConns(pc[0].MaxConns)
+		}
+		if pc[0].ConnMaxLifetime > 0 {
+			db.SetConnMaxLifetime(pc[0].ConnMaxLifetime)
+		}
+		if pc[0].ConnMaxIdleTime > 0 {
+			db.SetConnMaxIdleTime(pc[0].ConnMaxIdleTime)
+		}
 	}
 
 	if err := db.Ping(); err != nil {

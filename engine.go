@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alternayte/drel/internal/dberr"
 	"github.com/alternayte/drel/internal/dialect"
 	"github.com/alternayte/drel/internal/dialect/postgres"
 	dialectsqlite "github.com/alternayte/drel/internal/dialect/sqlite"
@@ -51,7 +52,8 @@ type engineConfig struct {
 	replicaDSNs []string
 	replicaDrvs []driver.Driver
 
-	authToken string
+	authToken  string
+	poolConfig driver.PoolConfig
 }
 
 // detectDialect inspects the DSN and returns "sqlite" or "postgres".
@@ -97,7 +99,7 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 		case "libsql":
 			// libSQL is SQLite-compatible: reuse the SQLite dialect.
 			if drv == nil {
-				d, err := newLibSQLDriver(applyAuthToken(dsn, cfg.authToken))
+				d, err := newLibSQLDriver(applyAuthToken(dsn, cfg.authToken), cfg.poolConfig)
 				if err != nil {
 					return nil, fmt.Errorf("drel: open: %w", err)
 				}
@@ -108,7 +110,7 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 			}
 		case "sqlite":
 			if drv == nil {
-				d, err := sqlitedriver.New(dsn)
+				d, err := sqlitedriver.New(dsn, cfg.poolConfig)
 				if err != nil {
 					return nil, fmt.Errorf("drel: open: %w", err)
 				}
@@ -119,7 +121,7 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 			}
 		default: // "postgres"
 			if drv == nil {
-				d, err := pgxdriver.New(cfg.ctx, dsn)
+				d, err := pgxdriver.New(cfg.ctx, dsn, cfg.poolConfig)
 				if err != nil {
 					return nil, fmt.Errorf("drel: open: %w", err)
 				}
@@ -135,7 +137,7 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	// them; writes and transactions always use the primary.
 	var replicas []driver.Driver
 	for _, rdsn := range cfg.replicaDSNs {
-		rd, err := openDriverForDSN(cfg.ctx, rdsn)
+		rd, err := openDriverForDSN(cfg.ctx, rdsn, cfg.poolConfig)
 		if err != nil {
 			for _, r := range replicas {
 				r.Close()
@@ -157,15 +159,31 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 
 // openDriverForDSN opens a driver for a DSN using the same dialect detection as
 // the primary connection.
-func openDriverForDSN(ctx context.Context, dsn string) (driver.Driver, error) {
+func openDriverForDSN(ctx context.Context, dsn string, pc driver.PoolConfig) (driver.Driver, error) {
 	switch detectDialect(dsn) {
 	case "libsql":
-		return newLibSQLDriver(dsn)
+		return newLibSQLDriver(dsn, pc)
 	case "sqlite":
-		return sqlitedriver.New(dsn)
+		return sqlitedriver.New(dsn, pc)
 	default:
-		return pgxdriver.New(ctx, dsn)
+		return pgxdriver.New(ctx, dsn, pc)
 	}
+}
+
+// WithMaxConns sets the maximum number of open database connections in the pool.
+func WithMaxConns(n int) Option {
+	return func(cfg *engineConfig) { cfg.poolConfig.MaxConns = n }
+}
+
+// WithConnMaxLifetime sets the maximum lifetime of a pooled connection before it
+// is recycled (useful behind connection poolers / for failover).
+func WithConnMaxLifetime(d time.Duration) Option {
+	return func(cfg *engineConfig) { cfg.poolConfig.ConnMaxLifetime = d }
+}
+
+// WithConnMaxIdleTime sets how long a connection may sit idle before being closed.
+func WithConnMaxIdleTime(d time.Duration) Option {
+	return func(cfg *engineConfig) { cfg.poolConfig.ConnMaxIdleTime = d }
 }
 
 // WithAuthToken sets the authentication token for a libSQL/Turso connection.
@@ -281,7 +299,7 @@ func (e *Engine) execInternal(ctx context.Context, sql string, args ...any) (int
 	n, err := e.drv.Exec(ctx, sql, args...)
 	endSpan(err)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
-	return n, err
+	return n, dberr.Classify(err)
 }
 
 func (e *Engine) queryInternal(ctx context.Context, sql string, args ...any) (Rows, error) {
@@ -296,7 +314,7 @@ func (e *Engine) queryRouted(ctx context.Context, primary bool, sql string, args
 	rows, err := e.readDriver(primary).Query(ctx, sql, args...)
 	endSpan(err)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
-	return rows, err
+	return rows, dberr.Classify(err)
 }
 
 func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
@@ -309,7 +327,7 @@ func (e *Engine) queryRowRouted(ctx context.Context, primary bool, sql string, a
 	row := e.readDriver(primary).QueryRow(ctx, sql, args...)
 	endSpan(nil)
 	e.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
-	return row
+	return classifyRow{row: row}
 }
 
 func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dberr"
 	"github.com/alternayte/drel/internal/driver"
 )
 
@@ -43,21 +44,21 @@ func (tx *Tx) execInternal(ctx context.Context, sql string, args ...any) (int64,
 	start := time.Now()
 	n, err := tx.dbTx.Exec(ctx, sql, args...)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
-	return n, err
+	return n, dberr.Classify(err)
 }
 
 func (tx *Tx) queryInternal(ctx context.Context, sql string, args ...any) (driver.Rows, error) {
 	start := time.Now()
 	rows, err := tx.dbTx.Query(ctx, sql, args...)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
-	return rows, err
+	return rows, dberr.Classify(err)
 }
 
 func (tx *Tx) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
 	start := time.Now()
 	row := tx.dbTx.QueryRow(ctx, sql, args...)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
-	return row
+	return classifyRow{row: row}
 }
 
 // HardRemove marks a tracked entity for permanent (hard) deletion on the next

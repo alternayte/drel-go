@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/alternayte/drel/internal/dberr"
 )
 
 // SetClause pairs a column name with a value for use in bulk updates and upserts.
@@ -45,6 +47,28 @@ func UpdateOnConflict[C interface{ Name() string }](cols ...C) UpsertOption {
 
 const bulkBatchSize = 1000
 
+// maxBulkParams is a conservative cap on bound parameters per statement, safe
+// across dialects: SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 32766 and
+// Postgres allows 65535. Staying under the smaller keeps wide-table bulk
+// operations from overflowing the limit.
+const maxBulkParams = 32766
+
+// safeBatchSize returns the largest row count whose parameter total stays within
+// maxBulkParams, capped at bulkBatchSize. numCols is the bound parameters per row.
+func safeBatchSize(numCols int) int {
+	if numCols <= 0 {
+		return bulkBatchSize
+	}
+	n := maxBulkParams / numCols
+	if n < 1 {
+		n = 1
+	}
+	if n > bulkBatchSize {
+		n = bulkBatchSize
+	}
+	return n
+}
+
 // BulkInsert inserts multiple entities in batches, bypassing change tracking.
 // Returns the total number of rows affected.
 func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
@@ -61,9 +85,12 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	firstCols, _ := r.meta.InsertColumns(entities[0])
+	batchSize := safeBatchSize(len(firstCols))
+
 	total := 0
-	for i := 0; i < len(entities); i += bulkBatchSize {
-		end := i + bulkBatchSize
+	for i := 0; i < len(entities); i += batchSize {
+		end := i + batchSize
 		if end > len(entities) {
 			end = len(entities)
 		}
@@ -84,7 +111,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
-			return total, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, execErr)
+			return total, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
 		total += int(affected)
 	}
@@ -127,9 +154,12 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	firstCols, _ := r.meta.InsertColumns(entities[0])
+	batchSize := safeBatchSize(len(firstCols))
+
 	total := 0
-	for i := 0; i < len(entities); i += bulkBatchSize {
-		end := i + bulkBatchSize
+	for i := 0; i < len(entities); i += batchSize {
+		end := i + batchSize
 		if end > len(entities) {
 			end = len(entities)
 		}
@@ -150,7 +180,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
-			return total, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, execErr)
+			return total, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
 		total += int(affected)
 	}

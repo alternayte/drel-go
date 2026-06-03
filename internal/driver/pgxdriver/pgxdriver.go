@@ -14,9 +14,26 @@ type PgxDriver struct {
 	pool *pgxpool.Pool
 }
 
-// New creates a new PgxDriver by connecting to the given DSN.
-func New(ctx context.Context, dsn string) (*PgxDriver, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+// New creates a new PgxDriver by connecting to the given DSN. An optional
+// PoolConfig overrides pool sizing/lifetime (DSN pool_* params still apply for
+// fields left zero).
+func New(ctx context.Context, dsn string, pc ...driver.PoolConfig) (*PgxDriver, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("pgxdriver: parse dsn: %w", err)
+	}
+	if len(pc) > 0 {
+		if pc[0].MaxConns > 0 {
+			cfg.MaxConns = int32(pc[0].MaxConns)
+		}
+		if pc[0].ConnMaxLifetime > 0 {
+			cfg.MaxConnLifetime = pc[0].ConnMaxLifetime
+		}
+		if pc[0].ConnMaxIdleTime > 0 {
+			cfg.MaxConnIdleTime = pc[0].ConnMaxIdleTime
+		}
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pgxdriver: connect: %w", err)
 	}

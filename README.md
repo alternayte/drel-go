@@ -119,6 +119,12 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
   dev-mode diagnostics (N+1, unbounded queries, missing-index hints), and an
   OpenTelemetry-adaptable `Tracer`.
 - **CLI** -- `drel init`, `generate`, `migrate`, `seed`.
+- **Typed errors** -- `errors.Is(err, drel.ErrUniqueViolation)` (and FK /
+  not-null / check / serialization-failure / not-found / concurrency-conflict),
+  classified uniformly across Postgres, SQLite, and LibSQL; the original driver
+  error stays reachable via `errors.As`.
+- **Connection pool control** -- `WithMaxConns`, `WithConnMaxLifetime`,
+  `WithConnMaxIdleTime`.
 - **Raw SQL escape hatches** -- `Engine.Exec`, `Engine.Query`,
   `Engine.QueryRow`, `RawQuery[T]`, and `Tx.Exec`, `Tx.QueryRow` for anything
   the ORM does not cover.

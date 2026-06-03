@@ -7,6 +7,6 @@ import (
 
 // newLibSQLDriver opens a libSQL/Turso driver. libSQL works out of the box for
 // libsql:// / https:// / wss:// (etc.) DSNs — no build tag required.
-func newLibSQLDriver(dsn string) (driver.Driver, error) {
-	return libsqldriver.New(dsn)
+func newLibSQLDriver(dsn string, pc driver.PoolConfig) (driver.Driver, error) {
+	return libsqldriver.New(dsn, pc)
 }

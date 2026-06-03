@@ -17,10 +17,21 @@ type LibSQLDriver struct {
 }
 
 // New opens a libSQL database at the given DSN (e.g. "libsql://name.turso.io?authToken=...").
-func New(dsn string) (*LibSQLDriver, error) {
+func New(dsn string, pc ...driver.PoolConfig) (*LibSQLDriver, error) {
 	db, err := sql.Open("libsql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("libsqldriver: open: %w", err)
+	}
+	if len(pc) > 0 {
+		if pc[0].MaxConns > 0 {
+			db.SetMaxOpenConns(pc[0].MaxConns)
+		}
+		if pc[0].ConnMaxLifetime > 0 {
+			db.SetConnMaxLifetime(pc[0].ConnMaxLifetime)
+		}
+		if pc[0].ConnMaxIdleTime > 0 {
+			db.SetConnMaxIdleTime(pc[0].ConnMaxIdleTime)
+		}
 	}
 	if err := db.Ping(); err != nil {
 		db.Close()

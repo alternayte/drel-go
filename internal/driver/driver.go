@@ -1,6 +1,17 @@
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+// PoolConfig configures a driver's connection pool. Zero values mean "use the
+// driver default".
+type PoolConfig struct {
+	MaxConns        int           // maximum open connections
+	ConnMaxLifetime time.Duration // recycle connections older than this
+	ConnMaxIdleTime time.Duration // close connections idle longer than this
+}
 
 // IsolationLevel represents a transaction isolation level.
 type IsolationLevel int
