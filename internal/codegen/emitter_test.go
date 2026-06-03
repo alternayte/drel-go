@@ -389,6 +389,43 @@ func TestEmitModelFile_TypedRepository_UUIDKey(t *testing.T) {
 	assert.Contains(t, out, "func (r *AccountRepository) FindByID(ctx context.Context, id uuid.UUID) (*Account, error) {")
 }
 
+func TestEmitModelFile_IntPK_AutoIncrement(t *testing.T) {
+	m := ModelInfo{
+		Name: "Tag", PkgName: "models", PKType: "int", TableName: "tags",
+		Fields: []FieldInfo{{Name: "Name", GoType: "string", ColumnName: "name", LocalGoType: "string"}},
+	}
+	out := EmitModelFile(m)
+	if strings.Contains(out, "KeyStrategy") {
+		t.Fatal("int PK must not emit a KeyStrategy (defaults to auto-increment)")
+	}
+	if strings.Contains(out, "tagScanGenerated") {
+		t.Fatal("int PK must not emit ScanGenerated")
+	}
+}
+
+func TestEmitModelFile_UUIDPK_AppAssigned(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PkgName: "models",
+		PKType: "uuid.UUID", PKTypePkg: "github.com/google/uuid",
+		TableName: "accounts",
+		Fields:    []FieldInfo{{Name: "Name", GoType: "string", ColumnName: "name", LocalGoType: "string"}},
+	}
+	out := EmitModelFile(m)
+	for _, want := range []string{
+		"KeyStrategy: drel.KeyAppAssigned,",
+		"GenerateKey: drel.UUIDv7Key,",
+		"p.SetID(key.(uuid.UUID))",
+		"func accountKeyIsZero(p *Account) bool {",
+		"func accountScanGenerated(p *Account, row drel.Row) error {",
+		"ScanGenerated: accountScanGenerated,",
+		"KeyIsZero:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {

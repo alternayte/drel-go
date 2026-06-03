@@ -217,6 +217,11 @@ func EmitModelFile(m ModelInfo) string {
 	// --- Scan returning ---
 	emitScanReturning(&b, m, lower)
 
+	// --- Key funcs (app-assigned PKs only) ---
+	if isAppAssignedPK(m.PKType) {
+		emitKeyFuncs(&b, m, lower)
+	}
+
 	// --- ModelMeta ---
 	emitMeta(&b, m, lower, varPlural, allCols)
 
@@ -414,6 +419,32 @@ func emitScanReturning(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString("}\n\n")
 }
 
+// isAppAssignedPK reports whether the model's PK is application-assigned
+// (anything other than an integer type, e.g. uuid.UUID or string).
+func isAppAssignedPK(pkType string) bool {
+	switch pkType {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
+		return false
+	default:
+		return true
+	}
+}
+
+func emitKeyFuncs(b *strings.Builder, m ModelInfo, lower string) {
+	// emitTypedRepos renders FindByID with the raw m.PKType (e.g. "uuid.UUID");
+	// use the same so the type matches the generated import alias.
+	pkType := m.PKType
+
+	b.WriteString(fmt.Sprintf("func %sKeyIsZero(p *%s) bool {\n", lower, m.Name))
+	b.WriteString(fmt.Sprintf("\tvar zero %s\n", pkType))
+	b.WriteString("\treturn p.ID() == zero\n}\n\n")
+
+	b.WriteString(fmt.Sprintf("func %sScanGenerated(p *%s, row drel.Row) error {\n", lower, m.Name))
+	b.WriteString("\t_, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
+	b.WriteString("\treturn row.Scan(createdAtPtr, updatedAtPtr)\n}\n\n")
+}
+
 func emitTypedRepos(b *strings.Builder, m ModelInfo) {
 	pkType := m.PKType
 
@@ -459,6 +490,17 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString(fmt.Sprintf("\tInsertColumns: %sInsertColumns,\n", lower))
 	b.WriteString(fmt.Sprintf("\tScanReturning: %sScanReturning,\n", lower))
 	b.WriteString(fmt.Sprintf("\tColumnValue:   %sColumnValue,\n", lower))
+
+	if isAppAssignedPK(m.PKType) {
+		pkType := m.PKType
+		b.WriteString("\tKeyStrategy: drel.KeyAppAssigned,\n")
+		if m.PKType == "uuid.UUID" {
+			b.WriteString("\tGenerateKey: drel.UUIDv7Key,\n")
+		}
+		b.WriteString(fmt.Sprintf("\tSetKey:      func(p *%s, key any) { p.SetID(key.(%s)) },\n", m.Name, pkType))
+		b.WriteString(fmt.Sprintf("\tKeyIsZero:   %sKeyIsZero,\n", lower))
+		b.WriteString(fmt.Sprintf("\tScanGenerated: %sScanGenerated,\n", lower))
+	}
 
 	if m.HasSoftDelete {
 		b.WriteString("\tHasSoftDelete: true,\n")
