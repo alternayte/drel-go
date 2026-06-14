@@ -266,33 +266,6 @@ func validateCursorColumns(p cursorPayload, order []ast.OrderByExpr) error {
 	return nil
 }
 
-// finishCursorPage trims the over-fetched row, determines HasMore, and encodes
-// the NextCursor from the last returned item's ordering-key values.
-func finishCursorPage[T any](meta *ModelMeta[T], order []ast.OrderByExpr, items []*T, pageSize int) (*CursorPage[T], error) {
-	hasMore := len(items) > pageSize
-	if hasMore {
-		items = items[:pageSize]
-	}
-	page := &CursorPage[T]{Items: items, HasMore: hasMore}
-	if hasMore && len(items) > 0 {
-		last := items[len(items)-1]
-		vals, err := extractCursorVals(meta, order, last)
-		if err != nil {
-			return nil, err
-		}
-		cols := make([]string, len(order))
-		for i, o := range order {
-			cols[i] = o.Column
-		}
-		cursor, err := encodeCursor(cols, vals)
-		if err != nil {
-			return nil, err
-		}
-		page.NextCursor = cursor
-	}
-	return page, nil
-}
-
 // cursorForItem encodes the ordering-key cursor for a single item under the
 // given order. Used to mint PreviousCursor for backward navigation.
 func cursorForItem[T any](meta *ModelMeta[T], order []ast.OrderByExpr, item *T) (string, error) {

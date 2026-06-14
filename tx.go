@@ -222,6 +222,7 @@ type TxQueryBuilder[T any] struct {
 	limit   *int
 	offset  *int
 	after   *string
+	before  *string
 	filters []NamedFilter
 	noTrack bool
 }
@@ -245,6 +246,7 @@ func (q *TxQueryBuilder[T]) clone() *TxQueryBuilder[T] {
 		limit:   q.limit,
 		offset:  q.offset,
 		after:   q.after,
+		before:  q.before,
 		filters: append([]NamedFilter(nil), q.filters...),
 		noTrack: q.noTrack,
 	}
@@ -425,6 +427,14 @@ func (q *TxQueryBuilder[T]) After(cursor string) *TxQueryBuilder[T] {
 	return c
 }
 
+// Before positions a cursor-paginated query before the given cursor (backward).
+func (q *TxQueryBuilder[T]) Before(cursor string) *TxQueryBuilder[T] {
+	c := q.clone()
+	c.before = &cursor
+	c.after = nil
+	return c
+}
+
 // PageOffset executes an offset-based page query within the transaction.
 func (q *TxQueryBuilder[T]) PageOffset(ctx context.Context) (*OffsetPage[T], error) {
 	if q.limit == nil {
@@ -462,22 +472,34 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	pageSize := *q.limit
 	order := cursorOrder(q.orderBy, q.meta.PKColumn)
 
+	backward := q.before != nil
+	queryOrder := order
+	if backward {
+		queryOrder = invertOrder(order)
+	}
+
 	c := q.clone()
-	c.orderBy = order
+	c.orderBy = queryOrder
 	c.after = nil
-	c.offset = nil // keyset pagination is mutually exclusive with OFFSET; ignore Skip.
-	// Fetch the over-fetch (pageSize+1) without tracking so the discarded
-	// sentinel row is never added to the change tracker.
-	c.noTrack = true
+	c.before = nil
+	c.offset = nil
+	c.noTrack = true // over-fetch sentinel must never be tracked
+
+	var cursorStr *string
 	if q.after != nil {
-		payload, err := decodeCursor(*q.after)
+		cursorStr = q.after
+	} else if q.before != nil {
+		cursorStr = q.before
+	}
+	if cursorStr != nil {
+		payload, err := decodeCursor(*cursorStr)
 		if err != nil {
 			return nil, err
 		}
 		if err := validateCursorColumns(payload, order); err != nil {
 			return nil, err
 		}
-		clause, err := keysetClause(order, payload.Vals)
+		clause, err := keysetClause(queryOrder, payload.Vals)
 		if err != nil {
 			return nil, err
 		}
@@ -490,10 +512,41 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	page, err := finishCursorPage(q.meta, order, items, pageSize)
-	if err != nil {
-		return nil, err
+
+	hasBoundary := len(items) > pageSize
+	if hasBoundary {
+		items = items[:pageSize]
 	}
+	if backward {
+		reverseItems(items)
+	}
+
+	page := &CursorPage[T]{Items: items}
+	if backward {
+		page.HasPrev = hasBoundary
+		page.HasMore = true
+	} else {
+		page.HasMore = hasBoundary
+		page.HasPrev = q.after != nil
+	}
+
+	if len(items) > 0 {
+		if page.HasMore {
+			nc, err := cursorForItem(q.meta, order, items[len(items)-1])
+			if err != nil {
+				return nil, err
+			}
+			page.NextCursor = nc
+		}
+		if page.HasPrev {
+			pc, err := cursorForItem(q.meta, order, items[0])
+			if err != nil {
+				return nil, err
+			}
+			page.PreviousCursor = pc
+		}
+	}
+
 	// Track only the rows actually returned to the caller (unless opted out).
 	if !q.noTrack && q.base != nil && q.meta.Snapshot != nil {
 		for _, item := range page.Items {
