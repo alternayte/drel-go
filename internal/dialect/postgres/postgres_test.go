@@ -351,6 +351,36 @@ func TestPostgres_BuildSelect(t *testing.T) {
 			},
 		},
 		{
+			name: "order by asc nulls last",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				OrderBy: []ast.OrderByExpr{
+					{Column: "name", Direction: ast.Asc, Nulls: ast.NullsLast},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" ORDER BY "name" NULLS LAST`,
+				Args: nil,
+			},
+		},
+		{
+			name: "order by desc nulls first",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				OrderBy: []ast.OrderByExpr{
+					{Column: "rank", Direction: ast.Desc, Nulls: ast.NullsFirst},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" ORDER BY "rank" DESC NULLS FIRST`,
+				Args: nil,
+			},
+		},
+		{
 			name: "limit only",
 			node: ast.SelectNode{
 				Table:   "users",

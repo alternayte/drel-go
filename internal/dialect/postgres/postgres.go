@@ -99,6 +99,12 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 			if ob.Direction == ast.Desc {
 				b.WriteString(" DESC")
 			}
+			switch ob.Nulls {
+			case ast.NullsFirst:
+				b.WriteString(" NULLS FIRST")
+			case ast.NullsLast:
+				b.WriteString(" NULLS LAST")
+			}
 		}
 	}
 
