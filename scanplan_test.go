@@ -121,3 +121,41 @@ func TestBuildScanPlan_NoTaggedFields(t *testing.T) {
 		t.Fatalf("expected 0 columns, got %d", len(plan.columns()))
 	}
 }
+
+func TestBuildScanPlan_ByColumnIndex(t *testing.T) {
+	plan := buildScanPlan(reflect.TypeOf(scanDTO{}))
+
+	// byColumn must map each db tag to that field's within-fields position.
+	want := map[string]int{
+		"name":  0,
+		"age":   1,
+		"email": 2,
+	}
+	if len(plan.byColumn) != len(want) {
+		t.Fatalf("byColumn len = %d, want %d", len(plan.byColumn), len(want))
+	}
+	for col, idx := range want {
+		got, ok := plan.byColumn[col]
+		if !ok {
+			t.Fatalf("byColumn missing column %q", col)
+		}
+		if got != idx {
+			t.Errorf("byColumn[%q] = %d, want %d", col, got, idx)
+		}
+	}
+
+	// Untagged and db:"-" fields must not appear.
+	if _, ok := plan.byColumn["Skip"]; ok {
+		t.Error("byColumn should not contain untagged field Skip")
+	}
+	if _, ok := plan.byColumn["-"]; ok {
+		t.Error("byColumn should not contain db:\"-\" field")
+	}
+}
+
+func TestBuildScanPlan_NoTaggedFields_ByColumnEmpty(t *testing.T) {
+	plan := buildScanPlan(reflect.TypeOf(emptyDTO{}))
+	if len(plan.byColumn) != 0 {
+		t.Fatalf("expected empty byColumn, got %d entries", len(plan.byColumn))
+	}
+}

@@ -12,6 +12,10 @@ type scanField struct {
 
 type scanPlan struct {
 	fields []scanField
+	// byColumn maps a db-tag column name to the destination's index within
+	// fields (the same slice scanDest iterates). It lets scanDestFor bind
+	// projected SQL columns to DTO fields by name instead of by struct order.
+	byColumn map[string]int
 }
 
 var (
@@ -38,15 +42,17 @@ func buildScanPlan(t reflect.Type) *scanPlan {
 		t = t.Elem()
 	}
 	var fields []scanField
+	byColumn := make(map[string]int)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		tag := f.Tag.Get("db")
 		if tag == "" || tag == "-" {
 			continue
 		}
+		byColumn[tag] = len(fields)
 		fields = append(fields, scanField{column: tag, index: i})
 	}
-	return &scanPlan{fields: fields}
+	return &scanPlan{fields: fields, byColumn: byColumn}
 }
 
 func (p *scanPlan) columns() []string {
