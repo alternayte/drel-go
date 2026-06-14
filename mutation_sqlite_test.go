@@ -236,6 +236,84 @@ func TestUnitOfWork_RetryAfterFailedSaveChangesPersists(t *testing.T) {
 	assert.NotZero(t, item.ID, "the persisted row's id must be populated after the successful retry")
 }
 
+// ─── Event preservation across failed-then-retried SaveChanges ──────────────
+
+// eventItem is a tracked model that records domain events, for verifying event
+// preservation across a failed-then-retried SaveChanges.
+type eventItem struct {
+	drel.Model[int]
+	Title string
+}
+
+type eventItemCreated struct{ Title string }
+
+var eventItemMeta = drel.ModelMeta[eventItem]{
+	Table:    "event_items",
+	Columns:  []string{"id", "title", "created_at", "updated_at"},
+	PKColumn: "id",
+	Scan: func(row drel.Row) (*eventItem, error) {
+		p := &eventItem{}
+		idp, cap_, uap := p.ScanPtrs()
+		err := row.Scan(idp, &p.Title, cap_, uap)
+		return p, err
+	},
+	Snapshot: func(p *eventItem) any { return p.Title },
+	Diff: func(p *eventItem, snap any) []drel.FieldChange {
+		if p.Title != snap.(string) {
+			return []drel.FieldChange{{Column: "title", Value: p.Title}}
+		}
+		return nil
+	},
+	PKValue:       func(p *eventItem) any { return p.ID() },
+	InsertColumns: func(p *eventItem) ([]string, []any) { return []string{"title"}, []any{p.Title} },
+	ScanReturning: func(p *eventItem, row drel.Row) error {
+		idp, cap_, uap := p.ScanPtrs()
+		return row.Scan(idp, cap_, uap)
+	},
+}
+
+func setupEventItemEngine(t *testing.T) *drel.Engine {
+	t.Helper()
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { engine.Close() })
+	_, err = engine.Exec(context.Background(), `
+		CREATE TABLE event_items (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			title      TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`)
+	require.NoError(t, err)
+	return engine
+}
+
+func TestUnitOfWork_EventsPreservedAcrossFailedRetry(t *testing.T) {
+	engine := setupEventItemEngine(t)
+	ctx := context.Background()
+
+	h := &headlineRetryHook{} // fails once, then succeeds (defined in Task 3)
+	engine.OnBeforeCommit(h.hook)
+
+	var received []any
+	engine.OnAfterCommit(func(ctx context.Context, events []any) {
+		received = append(received, events...)
+	})
+
+	uow := engine.NewUnitOfWork()
+	repo := drel.NewUoWRepository(uow, eventItemMeta)
+	item := &eventItem{Title: "evt"}
+	item.RecordEvent(eventItemCreated{Title: "evt"})
+	repo.Add(item)
+
+	require.Error(t, uow.SaveChanges(ctx)) // first attempt fails at the hook
+	require.NoError(t, uow.SaveChanges(ctx)) // retry succeeds
+
+	// The domain event must reach the after-commit handler exactly once.
+	require.Len(t, received, 1)
+	assert.Equal(t, eventItemCreated{Title: "evt"}, received[0])
+}
+
 // ─── updated_at uses CURRENT_TIMESTAMP via d.Now() ──────────────────────────
 
 func TestSQLiteMutation_Update_UpdatedAtChanges(t *testing.T) {

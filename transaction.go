@@ -113,6 +113,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		return fmt.Errorf("drel: commit: %w", err)
 	}
 	tx.tracker.PostCommit()
+	clearPendingEvents(tx.tracker)
 
 	for _, hook := range e.afterCommitHooks {
 		hook(ctx, allEvents)

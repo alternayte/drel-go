@@ -242,13 +242,25 @@ func flushHookChanges(ctx context.Context, exec txExec, d dialect.Dialect, track
 	return err
 }
 
+// collectPendingEvents gathers (without clearing) the pending domain events
+// from every tracked entity. Events are cleared only after a successful commit
+// (clearPendingEvents), so a failed-then-retried SaveChanges still finds them.
 func collectPendingEvents(tracker *changeTracker) []any {
 	var events []any
 	for _, te := range tracker.entities {
 		if er, ok := te.entity.(EventRecorder); ok {
 			events = append(events, er.PendingEvents()...)
-			er.ClearEvents()
 		}
 	}
 	return events
+}
+
+// clearPendingEvents clears recorded events from every tracked entity. Called
+// on the post-commit path once events have been dispatched/persisted.
+func clearPendingEvents(tracker *changeTracker) {
+	for _, te := range tracker.entities {
+		if er, ok := te.entity.(EventRecorder); ok {
+			er.ClearEvents()
+		}
+	}
 }

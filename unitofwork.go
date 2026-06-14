@@ -82,6 +82,7 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 	}
 	committed = true
 	u.tracker.PostCommit()
+	clearPendingEvents(u.tracker)
 	u.heldEvents = nil
 
 	for _, hook := range u.engine.afterCommitHooks {

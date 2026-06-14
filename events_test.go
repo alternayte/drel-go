@@ -76,6 +76,8 @@ func TestCollectPendingEvents_FromTrackedEntities(t *testing.T) {
 	assert.Len(t, events, 2)
 	assert.Equal(t, testEvent{Name: "created"}, events[0])
 	assert.Equal(t, testEvent{Name: "updated"}, events[1])
+	assert.Len(t, u.PendingEvents(), 2)
+	clearPendingEvents(tracker)
 	assert.Empty(t, u.PendingEvents())
 }
 
