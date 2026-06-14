@@ -269,3 +269,21 @@ func TestTracker_RemoveLoadedStillDeletes(t *testing.T) {
 	require.NoError(t, ct.MarkDeleted(e))
 	assert.Equal(t, StateDeleted, ct.index[e].state)
 }
+
+func TestTracker_ForceUpdateClearedAfterFinalize(t *testing.T) {
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Attached", Age: 10}
+	// Attach as Modified sets forceUpdate (full-column UPDATE on first flush).
+	ct.Attach(e, StateModified, testMeta)
+	te := ct.index[e]
+	require.NotNil(t, te)
+	require.True(t, te.forceUpdate, "Attach(StateModified) must set forceUpdate")
+
+	// Finalizing after a successful commit must clear forceUpdate so a later
+	// mutation diffs only the changed columns instead of writing every column.
+	ct.PostFlush()
+
+	assert.False(t, te.forceUpdate,
+		"forceUpdate must be cleared after finalize so later mutations diff")
+	assert.Equal(t, StateUnchanged, te.state)
+}
