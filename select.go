@@ -48,7 +48,10 @@ func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...Colum
 	rt := reflect.TypeOf((*R)(nil)).Elem()
 	for rows.Next() {
 		v := reflect.New(rt)
-		dests := plan.scanDest(v)
+		dests, err := plan.scanDestFor(v, colNames)
+		if err != nil {
+			return nil, err
+		}
 		if err := rows.Scan(dests...); err != nil {
 			return nil, fmt.Errorf("drel: select scan: %w", err)
 		}

@@ -249,3 +249,42 @@ func TestBoolColumn_ColRef(t *testing.T) {
 	ref := col.ColRef()
 	assert.Equal(t, "active", ref.Name())
 }
+
+// DTO declares fields in the REVERSE of the projection order. With positional
+// binding the price string lands in Name and vice-versa; with name binding each
+// value lands in its tagged field.
+type priceNameDTO struct {
+	Price float64 `db:"price"`
+	Name  string  `db:"name"`
+}
+
+func TestSelect_BindsByNameNotStructOrder(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	priceCol := drel.NewOrderedCol[float64]("price")
+	qb := repo.Where(priceCol.GT(10.0)).OrderBy(priceCol.Asc())
+
+	// Projection order (name, price) differs from struct order (Price, Name).
+	results, err := drel.Select[priceNameDTO](ctx, qb,
+		drel.ColRef("name"), drel.ColRef("price"))
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	assert.Equal(t, "Gadget D", results[0].Name)
+	assert.InDelta(t, 14.99, results[0].Price, 0.001)
+	assert.Equal(t, "Widget B", results[1].Name)
+	assert.InDelta(t, 19.99, results[1].Price, 0.001)
+}
+
+func TestSelect_UnknownColumnFailsLoudly(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.OrderBy(drel.NewStringCol("name").Asc())
+	// "price" has no field in nameOnlyDTO.
+	_, err := drel.Select[nameOnlyDTO](ctx, qb,
+		drel.ColRef("name"), drel.ColRef("price"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
+}
