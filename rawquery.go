@@ -8,6 +8,12 @@ import (
 
 // RawQuery executes arbitrary SQL and scans results into []*T.
 // Uses $1, $2 placeholder format — rewritten to ? for SQLite automatically.
+//
+// IMPORTANT: results are bound to T's fields in struct-declaration order (the
+// `db`-tagged fields, top to bottom), NOT by matching result-set column names.
+// You MUST write the SELECT column list in the same order as T declares its
+// tagged fields, or values land in the wrong fields. Unlike Select/GroupBy,
+// which bind by name, RawQuery cannot inspect the result-set column names today.
 func RawQuery[T any](ctx context.Context, e *Engine, sql string, args ...any) ([]*T, error) {
 	if needsPlaceholderRewrite(e) {
 		sql = rewritePlaceholders(sql)
@@ -36,6 +42,10 @@ func RawQuery[T any](ctx context.Context, e *Engine, sql string, args ...any) ([
 
 // RawQueryRow executes arbitrary SQL expecting exactly one row, scanned into *T.
 // Uses $1, $2 placeholder format — rewritten to ? for SQLite automatically.
+//
+// IMPORTANT: like RawQuery, the single row is bound to T's fields in
+// struct-declaration order, NOT by result-set column name. Order the SELECT
+// columns to match T's tagged-field order.
 func RawQueryRow[T any](ctx context.Context, e *Engine, sql string, args ...any) (*T, error) {
 	if needsPlaceholderRewrite(e) {
 		sql = rewritePlaceholders(sql)
