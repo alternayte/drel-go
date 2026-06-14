@@ -382,6 +382,36 @@ func TestSQLite_BuildSelect(t *testing.T) {
 			},
 		},
 		{
+			name: "order by asc nulls last",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id"},
+				Type:    ast.QuerySelect,
+				OrderBy: []ast.OrderByExpr{
+					{Column: "name", Direction: ast.Asc, Nulls: ast.NullsLast},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id" FROM "users" ORDER BY "name" NULLS LAST`,
+				Args: nil,
+			},
+		},
+		{
+			name: "order by desc nulls first",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id"},
+				Type:    ast.QuerySelect,
+				OrderBy: []ast.OrderByExpr{
+					{Column: "rank", Direction: ast.Desc, Nulls: ast.NullsFirst},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id" FROM "users" ORDER BY "rank" DESC NULLS FIRST`,
+				Args: nil,
+			},
+		},
+		{
 			name: "limit and offset",
 			node: ast.SelectNode{
 				Table:   "users",

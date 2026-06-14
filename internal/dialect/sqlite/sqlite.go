@@ -98,6 +98,14 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 			if ob.Direction == ast.Desc {
 				b.WriteString(" DESC")
 			}
+			// SQLite supports NULLS FIRST/LAST since 3.30 (2019); libSQL/Turso
+			// ship newer. Required for null-aware keyset pagination parity.
+			switch ob.Nulls {
+			case ast.NullsFirst:
+				b.WriteString(" NULLS FIRST")
+			case ast.NullsLast:
+				b.WriteString(" NULLS LAST")
+			}
 		}
 	}
 
