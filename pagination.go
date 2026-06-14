@@ -21,6 +21,9 @@ var ErrPaginationNeedsLimit = errors.New("drel: pagination requires Take/Limit t
 // ErrInvalidCursor is returned when a cursor string cannot be decoded.
 var ErrInvalidCursor = errors.New("drel: invalid cursor")
 
+// ErrInvalidPageSize is returned when a pagination page size (Take/Limit) is <= 0.
+var ErrInvalidPageSize = errors.New("drel: page size (Take/Limit) must be > 0")
+
 // OffsetPage holds a page of results from offset-based pagination.
 type OffsetPage[T any] struct {
 	Items      []*T
@@ -158,9 +161,10 @@ func cursorOrder(orderBy []ast.OrderByExpr, pkColumn string) []ast.OrderByExpr {
 
 // buildOffsetPage assembles an OffsetPage from a fetched slice and the total count.
 func buildOffsetPage[T any](items []*T, total, pageSize, offset int) *OffsetPage[T] {
-	page := offset/pageSize + 1
+	page := 1
 	totalPages := 0
 	if pageSize > 0 {
+		page = offset/pageSize + 1
 		totalPages = (total + pageSize - 1) / pageSize
 	}
 	return &OffsetPage[T]{

@@ -244,6 +244,28 @@ func TestCursorPage_InvalidCursor(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrInvalidCursor)
 }
 
+func TestPageOffset_RejectsZeroAndNegativeTake(t *testing.T) {
+	_, repo := setupPageRows(t, 5)
+	ctx := context.Background()
+
+	_, err := repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(0).PageOffset(ctx)
+	assert.ErrorIs(t, err, drel.ErrInvalidPageSize)
+
+	_, err = repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(-3).PageOffset(ctx)
+	assert.ErrorIs(t, err, drel.ErrInvalidPageSize)
+}
+
+func TestCursorPage_RejectsZeroAndNegativeTake(t *testing.T) {
+	_, repo := setupPageRows(t, 5)
+	ctx := context.Background()
+
+	_, err := repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(0).Page(ctx)
+	assert.ErrorIs(t, err, drel.ErrInvalidPageSize)
+
+	_, err = repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(-1).Page(ctx)
+	assert.ErrorIs(t, err, drel.ErrInvalidPageSize)
+}
+
 func TestCursorPage_IgnoresSkipOnFirstPage(t *testing.T) {
 	_, repo := setupPageRows(t, 25)
 	ctx := context.Background()

@@ -248,6 +248,9 @@ func (q *QueryBuilder[T]) PageOffset(ctx context.Context) (*OffsetPage[T], error
 	if q.limit == nil {
 		return nil, ErrPaginationNeedsLimit
 	}
+	if *q.limit <= 0 {
+		return nil, ErrInvalidPageSize
+	}
 	total, err := q.Count(ctx)
 	if err != nil {
 		return nil, err
@@ -271,6 +274,9 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	}
 	if q.limit == nil {
 		return nil, ErrPaginationNeedsLimit
+	}
+	if *q.limit <= 0 {
+		return nil, ErrInvalidPageSize
 	}
 	pageSize := *q.limit
 	order := cursorOrder(q.orderBy, q.meta.PKColumn)
