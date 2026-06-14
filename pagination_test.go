@@ -306,6 +306,44 @@ func TestCursorPage_IgnoresSkipAcrossWalk(t *testing.T) {
 	assert.Equal(t, 25, seen[len(seen)-1])
 }
 
+func TestCursorPage_MultiColumnKeyset_NoSkipsNoDupes(t *testing.T) {
+	_, repo := setupPageRows(t, 30)
+	ctx := context.Background()
+
+	// Two distinct user columns (rank asc, name desc) + implicit PK = 3 levels.
+	// rank repeats (i%3) forcing the name + PK tiebreaks to be exercised.
+	seen := make([]int, 0, 30)
+	cursor := ""
+	pages := 0
+	for {
+		q := repo.OrderBy(
+			drel.NewOrderedCol[int]("rank").Asc(),
+			drel.NewStringCol("name").Desc(),
+		).Take(4)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		require.NoError(t, err)
+		pages++
+		require.LessOrEqual(t, pages, 12, "cursor not advancing on 3-level keyset")
+		for _, it := range page.Items {
+			seen = append(seen, it.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	require.Len(t, seen, 30)
+	dedup := map[int]bool{}
+	for _, id := range seen {
+		require.False(t, dedup[id], "row %d returned twice across 3-level keyset walk", id)
+		dedup[id] = true
+	}
+}
+
 // nullRankRow has a nullable rank column to exercise null-aware keyset paging.
 type nullRankRow struct {
 	ID   int
