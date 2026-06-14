@@ -477,7 +477,11 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 		if err := validateCursorColumns(payload, order); err != nil {
 			return nil, err
 		}
-		c.wheres = append(c.wheres, keysetClause(order, payload.Vals))
+		clause, err := keysetClause(order, payload.Vals)
+		if err != nil {
+			return nil, err
+		}
+		c.wheres = append(c.wheres, clause)
 	}
 	fetch := pageSize + 1
 	c.limit = &fetch

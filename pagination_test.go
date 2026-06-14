@@ -305,3 +305,112 @@ func TestCursorPage_IgnoresSkipAcrossWalk(t *testing.T) {
 	assert.Equal(t, 1, seen[0])
 	assert.Equal(t, 25, seen[len(seen)-1])
 }
+
+// nullRankRow has a nullable rank column to exercise null-aware keyset paging.
+type nullRankRow struct {
+	ID   int
+	Rank *int
+}
+
+var nullRankMeta = drel.ModelMeta[nullRankRow]{
+	Table:    "null_rank_rows",
+	Columns:  []string{"id", "rank"},
+	PKColumn: "id",
+	Scan: func(r drel.Row) (*nullRankRow, error) {
+		x := &nullRankRow{}
+		return x, r.Scan(&x.ID, &x.Rank)
+	},
+	PKValue: func(x *nullRankRow) any { return x.ID },
+	ColumnValue: func(x *nullRankRow, i int) any {
+		switch i {
+		case 0:
+			return x.ID
+		case 1:
+			if x.Rank == nil {
+				return nil
+			}
+			return *x.Rank
+		}
+		return nil
+	},
+}
+
+func setupNullRankRows(t *testing.T) (*drel.Engine, *drel.Repository[nullRankRow]) {
+	t.Helper()
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `CREATE TABLE null_rank_rows (id INTEGER PRIMARY KEY AUTOINCREMENT, rank INTEGER)`)
+	require.NoError(t, err)
+	// 10 rows: ids 1..10; even ids get a rank, odd ids get NULL.
+	for i := 1; i <= 10; i++ {
+		if i%2 == 0 {
+			_, err = engine.Exec(ctx, `INSERT INTO null_rank_rows (rank) VALUES (?)`, i)
+		} else {
+			_, err = engine.Exec(ctx, `INSERT INTO null_rank_rows (rank) VALUES (NULL)`)
+		}
+		require.NoError(t, err)
+	}
+	return engine, drel.NewRepository(engine, nullRankMeta)
+}
+
+func TestCursorPage_NullableColumn_NullsLast_WalksAllRows(t *testing.T) {
+	_, repo := setupNullRankRows(t)
+	ctx := context.Background()
+
+	seen := make([]int, 0, 10)
+	cursor := ""
+	pages := 0
+	for {
+		q := repo.OrderBy(drel.NewOrderedCol[int]("rank").Asc().NullsLast()).Take(3)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		require.NoError(t, err)
+		pages++
+		require.LessOrEqual(t, pages, 10, "cursor not advancing")
+		for _, it := range page.Items {
+			seen = append(seen, it.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	// All 10 rows, exactly once — including the 5 NULL-rank rows.
+	require.Len(t, seen, 10)
+	dedup := map[int]bool{}
+	for _, id := range seen {
+		require.False(t, dedup[id], "row %d returned twice", id)
+		dedup[id] = true
+	}
+}
+
+func TestCursorPage_NullableColumn_DefaultNulls_Errors(t *testing.T) {
+	_, repo := setupNullRankRows(t)
+	ctx := context.Background()
+
+	// Walk forward until the cursor lands on a NULL rank value, then the next
+	// page must surface ErrCursorColumnNullable because NULL placement is unpinned.
+	cursor := ""
+	var lastErr error
+	for i := 0; i < 12; i++ {
+		q := repo.OrderBy(drel.NewOrderedCol[int]("rank").Asc()).Take(3)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	assert.ErrorIs(t, lastErr, drel.ErrCursorColumnNullable)
+}

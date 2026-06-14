@@ -180,13 +180,29 @@ func keysetEqTerm(o ast.OrderByExpr, v any) (ast.WhereClause, error) {
 // (NULLS LAST sitting on a NULL), so the caller omits that OR branch.
 func keysetStrictTerm(o ast.OrderByExpr, v any) (term ast.WhereClause, ok bool, err error) {
 	op := ast.OpGT
+	nullsLast := o.Nulls == ast.NullsLast
 	if o.Direction == ast.Desc {
 		op = ast.OpLT
+		// For DESC, Postgres default is NULLS FIRST (NULLs sort before values).
+		// We only need the IS NULL extension for NULLS LAST with DESC.
 	}
 	if v != nil {
-		// Non-NULL cursor value: plain strict comparison is correct for every
-		// NULLS placement (NULL rows compare UNKNOWN, never matching the eq
-		// tiebreak, and are reached only via a NULL cursor value).
+		// Non-NULL cursor value: for columns where NULLs sort AFTER the current
+		// value (NULLS LAST), the strict advancing term must include IS NULL so
+		// NULL rows are not silently dropped by the WHERE clause (SQL NULL
+		// comparisons evaluate to UNKNOWN, never to TRUE).
+		// For NULLS FIRST the NULLs already appeared before this value, so
+		// plain col op v is sufficient.
+		if nullsLast {
+			// (col op v OR col IS NULL)
+			return ast.WhereClause{
+				LogicalOp: ast.LogicalOr,
+				Children: []ast.WhereClause{
+					{Comparison: &ast.ComparisonNode{Column: o.Column, Op: op, Value: v}},
+					{Comparison: &ast.ComparisonNode{Column: o.Column, Op: ast.OpIsNull}},
+				},
+			}, true, nil
+		}
 		return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: o.Column, Op: op, Value: v}}, true, nil
 	}
 	// NULL cursor value: depends on NULL placement.
