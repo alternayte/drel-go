@@ -150,13 +150,22 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 	node.Columns = groupCols
 	node.GroupBy = groupCols
 
-	for _, a := range aggs {
+	aliases := make([]string, len(aggs))
+	for i, a := range aggs {
+		aliases[i] = a.alias
 		node.Aggregates = append(node.Aggregates, ast.AggregateExpr{
 			Func:   a.agg.fn,
 			Column: a.agg.column,
 			Alias:  a.alias,
 		})
 	}
+
+	// Output column order is the group columns followed by the aggregate
+	// aliases — the same emit order BuildSelect produces. Bind scan
+	// destinations to this list by name.
+	scanCols := make([]string, 0, len(groupCols)+len(aliases))
+	scanCols = append(scanCols, groupCols...)
+	scanCols = append(scanCols, aliases...)
 
 	if cfg.having != nil {
 		clause := cfg.having.ToAST()
@@ -174,7 +183,10 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 	var items []*R
 	for rows.Next() {
 		v := reflect.New(rt)
-		dests := plan.scanDest(v)
+		dests, err := plan.scanDestFor(v, scanCols)
+		if err != nil {
+			return nil, err
+		}
 		if err := rows.Scan(dests...); err != nil {
 			return nil, fmt.Errorf("drel: groupby scan: %w", err)
 		}

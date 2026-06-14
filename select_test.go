@@ -288,3 +288,44 @@ func TestSelect_UnknownColumnFailsLoudly(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
+
+// DTO declares the aggregate alias BEFORE the group column — the reverse of the
+// emit order (group col, then alias). Positional binding swaps them; name
+// binding does not.
+type statsCategoryDTO struct {
+	TotalPrice float64 `db:"total_price"`
+	Category   string  `db:"category"`
+}
+
+func TestGroupBy_BindsByNameNotStructOrder(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.OrderBy(drel.NewStringCol("category").Asc())
+	results, err := drel.GroupBy[statsCategoryDTO](ctx, qb,
+		[]drel.GroupSpec{drel.Group(drel.ColRef("category"))},
+		[]drel.AliasedAgg{drel.As("total_price", drel.Sum(drel.ColRef("price")))},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	assert.Equal(t, "accessories", results[0].Category)
+	assert.InDelta(t, 20.98, results[0].TotalPrice, 0.001)
+	assert.Equal(t, "electronics", results[1].Category)
+	assert.InDelta(t, 29.98, results[1].TotalPrice, 0.001)
+}
+
+func TestGroupBy_UnknownColumnFailsLoudly(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.OrderBy(drel.NewStringCol("category").Asc())
+	// Alias "wrong_alias" has no matching field in categoryStatsDTO
+	// (which tags total_price), so the projected alias column is unknown.
+	_, err := drel.GroupBy[categoryStatsDTO](ctx, qb,
+		[]drel.GroupSpec{drel.Group(drel.ColRef("category"))},
+		[]drel.AliasedAgg{drel.As("wrong_alias", drel.Sum(drel.ColRef("price")))},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
+}
