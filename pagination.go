@@ -24,6 +24,12 @@ var ErrInvalidCursor = errors.New("drel: invalid cursor")
 // ErrInvalidPageSize is returned when a pagination page size (Take/Limit) is <= 0.
 var ErrInvalidPageSize = errors.New("drel: page size (Take/Limit) must be > 0")
 
+// ErrCursorColumnNullable is returned when a keyset cursor must page across a
+// NULL-valued ordering key whose NULL placement is not pinned. Pin it with
+// NullsFirst()/NullsLast() on that OrderBy column so paging is deterministic.
+var ErrCursorColumnNullable = errors.New(
+	"drel: cursor pagination over a NULL-valued ordering key requires NullsFirst()/NullsLast() on that column")
+
 // OffsetPage holds a page of results from offset-based pagination.
 type OffsetPage[T any] struct {
 	Items      []*T
@@ -112,37 +118,88 @@ func decodeCursor(s string) (cursorPayload, error) {
 // and the cursor values of the last row of the previous page. For ORDER BY
 // (c1 d1, c2 d2, ...) the predicate is the lexicographic row comparison:
 //
-//	(c1 OP1 v1)
-//	OR (c1 = v1 AND c2 OP2 v2)
-//	OR (c1 = v1 AND c2 = v2 AND c3 OP3 v3) ...
+//	(S1)
+//	OR (E1 AND S2)
+//	OR (E1 AND E2 AND S3) ...
 //
-// where OPk is ">" for ascending and "<" for descending columns.
-func keysetClause(order []ast.OrderByExpr, vals []any) ast.WhereClause {
+// where Ek is the null-aware equality term for column k (col = vk, or col IS NULL
+// when vk is nil) and Sk is the strict "this column advances past the cursor"
+// term. Sk and Ek are NULL-aware so nullable ordering columns never drop rows.
+func keysetClause(order []ast.OrderByExpr, vals []any) (ast.WhereClause, error) {
 	var orTerms []ast.WhereClause
 	for k := range order {
 		var andTerms []ast.WhereClause
 		for j := 0; j < k; j++ {
-			andTerms = append(andTerms, ast.WhereClause{
-				Comparison: &ast.ComparisonNode{Column: order[j].Column, Op: ast.OpEq, Value: vals[j]},
-			})
+			eq, err := keysetEqTerm(order[j], vals[j])
+			if err != nil {
+				return ast.WhereClause{}, err
+			}
+			andTerms = append(andTerms, eq)
 		}
-		op := ast.OpGT
-		if order[k].Direction == ast.Desc {
-			op = ast.OpLT
+		strict, ok, err := keysetStrictTerm(order[k], vals[k])
+		if err != nil {
+			return ast.WhereClause{}, err
 		}
-		andTerms = append(andTerms, ast.WhereClause{
-			Comparison: &ast.ComparisonNode{Column: order[k].Column, Op: op, Value: vals[k]},
-		})
+		if !ok {
+			// No row can strictly advance past the cursor on this column
+			// (e.g. NULLS LAST sitting on a NULL): contributes no OR term.
+			continue
+		}
+		andTerms = append(andTerms, strict)
 		if len(andTerms) == 1 {
 			orTerms = append(orTerms, andTerms[0])
 		} else {
 			orTerms = append(orTerms, ast.WhereClause{LogicalOp: ast.LogicalAnd, Children: andTerms})
 		}
 	}
-	if len(orTerms) == 1 {
-		return orTerms[0]
+	if len(orTerms) == 0 {
+		// Cursor sits at the very end under the given ordering: match nothing.
+		// A guaranteed-false predicate keeps the page empty rather than full.
+		return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: order[0].Column, Op: ast.OpIsNull}}, nil
 	}
-	return ast.WhereClause{LogicalOp: ast.LogicalOr, Children: orTerms}
+	if len(orTerms) == 1 {
+		return orTerms[0], nil
+	}
+	return ast.WhereClause{LogicalOp: ast.LogicalOr, Children: orTerms}, nil
+}
+
+// keysetEqTerm builds the null-aware equality tiebreak term for a prefix column:
+// "col = v" when v is non-nil, "col IS NULL" when v is nil.
+func keysetEqTerm(o ast.OrderByExpr, v any) (ast.WhereClause, error) {
+	if v == nil {
+		if o.Nulls == ast.NullsDefault {
+			return ast.WhereClause{}, ErrCursorColumnNullable
+		}
+		return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: o.Column, Op: ast.OpIsNull}}, nil
+	}
+	return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: o.Column, Op: ast.OpEq, Value: v}}, nil
+}
+
+// keysetStrictTerm builds the "this column strictly advances past the cursor"
+// term. ok is false when no row can be strictly after the cursor on this column
+// (NULLS LAST sitting on a NULL), so the caller omits that OR branch.
+func keysetStrictTerm(o ast.OrderByExpr, v any) (term ast.WhereClause, ok bool, err error) {
+	op := ast.OpGT
+	if o.Direction == ast.Desc {
+		op = ast.OpLT
+	}
+	if v != nil {
+		// Non-NULL cursor value: plain strict comparison is correct for every
+		// NULLS placement (NULL rows compare UNKNOWN, never matching the eq
+		// tiebreak, and are reached only via a NULL cursor value).
+		return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: o.Column, Op: op, Value: v}}, true, nil
+	}
+	// NULL cursor value: depends on NULL placement.
+	switch o.Nulls {
+	case ast.NullsLast:
+		// NULLs are last; nothing is strictly after a NULL on this column.
+		return ast.WhereClause{}, false, nil
+	case ast.NullsFirst:
+		// NULLs are first; strictly after a NULL means any non-NULL value.
+		return ast.WhereClause{Comparison: &ast.ComparisonNode{Column: o.Column, Op: ast.OpIsNotNull}}, true, nil
+	default:
+		return ast.WhereClause{}, false, ErrCursorColumnNullable
+	}
 }
 
 // cursorOrder returns the effective ordering for cursor pagination: the builder's
@@ -230,7 +287,13 @@ func extractCursorVals[T any](meta *ModelMeta[T], order []ast.OrderByExpr, entit
 		if idx < 0 {
 			return nil, fmt.Errorf("drel: cursor pagination: order column %q not found on %s", o.Column, meta.Table)
 		}
-		vals[i] = meta.ColumnValue(entity, idx)
+		v := meta.ColumnValue(entity, idx)
+		if tv, ok := v.(time.Time); ok {
+			// Drop the monotonic clock reading and normalize the location so the
+			// gob-encoded cursor compares cleanly against the DB-stored value.
+			v = tv.Round(0).UTC()
+		}
+		vals[i] = v
 	}
 	return vals, nil
 }
