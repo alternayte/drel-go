@@ -97,14 +97,6 @@ func TestSelect_UnknownColumn_Postgres(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	// Insert a row so that rows.Next() fires and scanDestFor is reached.
-	// Without data the query returns zero rows and the unknown-column check
-	// is never evaluated (it lives inside the scan loop).
-	_, err = engine.Exec(ctx,
-		"INSERT INTO proj_products (name, category, price) VALUES ($1,$2,$3)",
-		"Probe", "test", 1.00)
-	require.NoError(t, err)
-
 	repo := drel.NewRepository(engine, pgProjMeta)
 	qb := repo.OrderBy(drel.NewStringCol("name").Asc())
 

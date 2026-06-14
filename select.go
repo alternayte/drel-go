@@ -34,6 +34,10 @@ func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...Colum
 		colNames[i] = c.name
 	}
 
+	if err := plan.validateColumns(colNames); err != nil {
+		return nil, err
+	}
+
 	node := q.buildAST(ast.QuerySelect)
 	node.Columns = colNames
 
@@ -166,6 +170,10 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 	scanCols := make([]string, 0, len(groupCols)+len(aliases))
 	scanCols = append(scanCols, groupCols...)
 	scanCols = append(scanCols, aliases...)
+
+	if err := plan.validateColumns(scanCols); err != nil {
+		return nil, err
+	}
 
 	if cfg.having != nil {
 		clause := cfg.having.ToAST()

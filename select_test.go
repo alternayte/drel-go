@@ -329,3 +329,35 @@ func TestGroupBy_UnknownColumnFailsLoudly(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
+
+func TestSelect_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	// Filter matches no rows (max seeded price is 19.99).
+	priceCol := drel.NewOrderedCol[float64]("price")
+	qb := repo.Where(priceCol.GT(1000.0))
+
+	// "price" has no field in nameOnlyDTO — must fail even with zero rows.
+	_, err := drel.Select[nameOnlyDTO](ctx, qb,
+		drel.ColRef("name"), drel.ColRef("price"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
+}
+
+func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	// Filter matches no rows, so the GROUP BY produces zero groups.
+	priceCol := drel.NewOrderedCol[float64]("price")
+	qb := repo.Where(priceCol.GT(1000.0))
+
+	// Alias "wrong_alias" has no matching field in categoryStatsDTO.
+	_, err := drel.GroupBy[categoryStatsDTO](ctx, qb,
+		[]drel.GroupSpec{drel.Group(drel.ColRef("category"))},
+		[]drel.AliasedAgg{drel.As("wrong_alias", drel.Sum(drel.ColRef("price")))},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
+}

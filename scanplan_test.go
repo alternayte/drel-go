@@ -219,3 +219,22 @@ func TestScanDestFor_UnknownColumnErrors(t *testing.T) {
 		t.Errorf("error %q should name the offending column", err.Error())
 	}
 }
+
+func TestValidateColumns(t *testing.T) {
+	plan := buildScanPlan(reflect.TypeOf(scanDTO{}))
+
+	if err := plan.validateColumns([]string{"email", "name", "age"}); err != nil {
+		t.Fatalf("validateColumns(known) returned error: %v", err)
+	}
+
+	err := plan.validateColumns([]string{"name", "nonexistent"})
+	if err == nil {
+		t.Fatal("validateColumns: expected error for unknown column, got nil")
+	}
+	if !errors.Is(err, ErrUnknownProjectionColumn) {
+		t.Errorf("error = %v, want errors.Is ErrUnknownProjectionColumn", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error %q should name the offending column", err.Error())
+	}
+}

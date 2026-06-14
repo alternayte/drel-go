@@ -75,6 +75,19 @@ func (p *scanPlan) scanDest(v reflect.Value) []any {
 	return dests
 }
 
+// validateColumns returns ErrUnknownProjectionColumn for the first requested
+// column that has no matching db-tagged DTO field. Select/GroupBy call this
+// before executing the query so an unknown projected column fails loudly even
+// when the result set is empty (scanDestFor only runs per row).
+func (p *scanPlan) validateColumns(columns []string) error {
+	for _, col := range columns {
+		if _, ok := p.byColumn[col]; !ok {
+			return fmt.Errorf("%w: %q", ErrUnknownProjectionColumn, col)
+		}
+	}
+	return nil
+}
+
 // scanDestFor returns scan destinations ordered to match the given SQL column
 // names (the emit order of the SELECT). Each column is bound by name to the DTO
 // field whose `db` tag equals it, so the SELECT-emit order and the scan order
@@ -84,16 +97,15 @@ func (p *scanPlan) scanDest(v reflect.Value) []any {
 // rather than a silent misbind — silently dropping a column is how the original
 // positional-binding corruption hid.
 func (p *scanPlan) scanDestFor(v reflect.Value, columns []string) ([]any, error) {
+	if err := p.validateColumns(columns); err != nil {
+		return nil, err
+	}
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	dests := make([]any, len(columns))
 	for i, col := range columns {
-		fi, ok := p.byColumn[col]
-		if !ok {
-			return nil, fmt.Errorf("%w: %q", ErrUnknownProjectionColumn, col)
-		}
-		dests[i] = v.Field(p.fields[fi].index).Addr().Interface()
+		dests[i] = v.Field(p.fields[p.byColumn[col]].index).Addr().Interface()
 	}
 	return dests, nil
 }
