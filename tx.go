@@ -459,6 +459,7 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	c := q.clone()
 	c.orderBy = order
 	c.after = nil
+	c.offset = nil // keyset pagination is mutually exclusive with OFFSET; ignore Skip.
 	// Fetch the over-fetch (pageSize+1) without tracking so the discarded
 	// sentinel row is never added to the change tracker.
 	c.noTrack = true

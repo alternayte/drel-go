@@ -243,3 +243,43 @@ func TestCursorPage_InvalidCursor(t *testing.T) {
 	_, err := repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(2).After("not-a-valid-cursor!!!").Page(ctx)
 	assert.ErrorIs(t, err, drel.ErrInvalidCursor)
 }
+
+func TestCursorPage_IgnoresSkipOnFirstPage(t *testing.T) {
+	_, repo := setupPageRows(t, 25)
+	ctx := context.Background()
+
+	// Skip(5) must be ignored by keyset Page; the first page must start at id 1.
+	page, err := repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Skip(5).Take(3).Page(ctx)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 3)
+	assert.Equal(t, 1, page.Items[0].ID)
+	assert.Equal(t, 2, page.Items[1].ID)
+	assert.Equal(t, 3, page.Items[2].ID)
+}
+
+func TestCursorPage_IgnoresSkipAcrossWalk(t *testing.T) {
+	_, repo := setupPageRows(t, 25)
+	ctx := context.Background()
+
+	// A Skip set on the builder must not drop rows across the whole cursor walk.
+	seen := make([]int, 0, 25)
+	cursor := ""
+	for {
+		q := repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Skip(5).Take(7)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		require.NoError(t, err)
+		for _, it := range page.Items {
+			seen = append(seen, it.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	require.Len(t, seen, 25)
+	assert.Equal(t, 1, seen[0])
+	assert.Equal(t, 25, seen[len(seen)-1])
+}

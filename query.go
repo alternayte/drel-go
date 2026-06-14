@@ -278,6 +278,7 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	c := q.clone()
 	c.orderBy = order
 	c.after = nil
+	c.offset = nil // keyset pagination is mutually exclusive with OFFSET; ignore Skip.
 	if q.after != nil {
 		payload, err := decodeCursor(*q.after)
 		if err != nil {
