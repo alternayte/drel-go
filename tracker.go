@@ -166,6 +166,13 @@ func (ct *changeTracker) MarkDeleted(entity any) error {
 	if !exists {
 		return fmt.Errorf("%w: cannot remove an entity that is not tracked", ErrEntityNotTracked)
 	}
+	// An entity staged for insert that is then removed before flush should
+	// cancel out entirely (EF Core semantics): detach it so no SQL is emitted.
+	// A subsequent MarkAdded re-tracks it (the pointer index entry is now gone).
+	if te.state == StateAdded {
+		ct.Detach(entity)
+		return nil
+	}
 	te.state = StateDeleted
 	te.everDirty = true
 	return nil

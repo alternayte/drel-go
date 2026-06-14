@@ -228,3 +228,44 @@ func TestStampKey_RegistryOverridesMetaGenerator(t *testing.T) {
 		t.Fatalf("expected registry override to win, got %q", w.ID())
 	}
 }
+
+func TestTracker_AddThenRemoveCancels(t *testing.T) {
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Ghost", Age: 1}
+	ct.MarkAdded(e, testMeta)
+
+	require.NoError(t, ct.MarkDeleted(e))
+
+	// The add/remove must cancel: the entity is no longer tracked and produces
+	// no pending changes (so no stray DELETE against a zero PK is emitted).
+	_, exists := ct.index[e]
+	assert.False(t, exists, "Add then Remove must detach the entity entirely")
+	assert.Len(t, ct.entities, 0)
+	pc := ct.GetPendingChanges()
+	assert.Empty(t, pc.Added)
+	assert.Empty(t, pc.Deleted)
+}
+
+func TestTracker_AddRemoveAddReAdds(t *testing.T) {
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Phoenix", Age: 2}
+	ct.MarkAdded(e, testMeta)
+	require.NoError(t, ct.MarkDeleted(e))
+
+	// Re-adding after a cancel must track it again as Added.
+	ct.MarkAdded(e, testMeta)
+	te, exists := ct.index[e]
+	require.True(t, exists)
+	assert.Equal(t, StateAdded, te.state)
+	pc := ct.GetPendingChanges()
+	assert.Len(t, pc.Added, 1)
+}
+
+func TestTracker_RemoveLoadedStillDeletes(t *testing.T) {
+	// Removing a loaded (tracked-from-query) entity must still mark it deleted.
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Real", Age: 3}
+	ct.Track(e, testSnapshot{Name: "Real", Age: 3}, testMeta)
+	require.NoError(t, ct.MarkDeleted(e))
+	assert.Equal(t, StateDeleted, ct.index[e].state)
+}
