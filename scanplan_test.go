@@ -1,7 +1,9 @@
 package drel
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -157,5 +159,63 @@ func TestBuildScanPlan_NoTaggedFields_ByColumnEmpty(t *testing.T) {
 	plan := buildScanPlan(reflect.TypeOf(emptyDTO{}))
 	if len(plan.byColumn) != 0 {
 		t.Fatalf("expected empty byColumn, got %d entries", len(plan.byColumn))
+	}
+}
+
+func TestScanDestFor_OrdersByColumnNames(t *testing.T) {
+	plan := buildScanPlan(reflect.TypeOf(scanDTO{}))
+	dto := &scanDTO{}
+	v := reflect.ValueOf(dto)
+
+	// Request columns in an order different from struct declaration order.
+	dests, err := plan.scanDestFor(v, []string{"email", "name", "age"})
+	if err != nil {
+		t.Fatalf("scanDestFor returned error: %v", err)
+	}
+	if len(dests) != 3 {
+		t.Fatalf("dests len = %d, want 3", len(dests))
+	}
+
+	// dests[0] must address the Email field, dests[1] Name, dests[2] Age.
+	emailPtr, ok := dests[0].(*string)
+	if !ok {
+		t.Fatalf("dests[0] is %T, want *string (Email)", dests[0])
+	}
+	*emailPtr = "e@x.com"
+	namePtr, ok := dests[1].(*string)
+	if !ok {
+		t.Fatalf("dests[1] is %T, want *string (Name)", dests[1])
+	}
+	*namePtr = "alice"
+	agePtr, ok := dests[2].(*int)
+	if !ok {
+		t.Fatalf("dests[2] is %T, want *int (Age)", dests[2])
+	}
+	*agePtr = 30
+
+	if dto.Email != "e@x.com" {
+		t.Errorf("Email = %q, want %q", dto.Email, "e@x.com")
+	}
+	if dto.Name != "alice" {
+		t.Errorf("Name = %q, want %q", dto.Name, "alice")
+	}
+	if dto.Age != 30 {
+		t.Errorf("Age = %d, want %d", dto.Age, 30)
+	}
+}
+
+func TestScanDestFor_UnknownColumnErrors(t *testing.T) {
+	plan := buildScanPlan(reflect.TypeOf(scanDTO{}))
+	v := reflect.ValueOf(&scanDTO{})
+
+	_, err := plan.scanDestFor(v, []string{"name", "nonexistent"})
+	if err == nil {
+		t.Fatal("scanDestFor: expected error for unknown column, got nil")
+	}
+	if !errors.Is(err, ErrUnknownProjectionColumn) {
+		t.Errorf("error = %v, want errors.Is ErrUnknownProjectionColumn", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error %q should name the offending column", err.Error())
 	}
 }

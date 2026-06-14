@@ -1,6 +1,7 @@
 package drel
 
 import (
+	"fmt"
 	"reflect"
 	"sync"
 )
@@ -72,4 +73,27 @@ func (p *scanPlan) scanDest(v reflect.Value) []any {
 		dests[i] = v.Field(f.index).Addr().Interface()
 	}
 	return dests
+}
+
+// scanDestFor returns scan destinations ordered to match the given SQL column
+// names (the emit order of the SELECT). Each column is bound by name to the DTO
+// field whose `db` tag equals it, so the SELECT-emit order and the scan order
+// are derived from the same column list and can never diverge.
+//
+// A requested column with no matching field is a loud ErrUnknownProjectionColumn
+// rather than a silent misbind — silently dropping a column is how the original
+// positional-binding corruption hid.
+func (p *scanPlan) scanDestFor(v reflect.Value, columns []string) ([]any, error) {
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	dests := make([]any, len(columns))
+	for i, col := range columns {
+		fi, ok := p.byColumn[col]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", ErrUnknownProjectionColumn, col)
+		}
+		dests[i] = v.Field(p.fields[fi].index).Addr().Interface()
+	}
+	return dests, nil
 }
