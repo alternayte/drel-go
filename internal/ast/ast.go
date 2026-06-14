@@ -56,9 +56,22 @@ type WhereClause struct {
 	RawArgs    []any
 }
 
+// NullsOrder controls placement of NULL values within an ORDER BY clause.
+// NullsDefault omits the clause and lets the database apply its default
+// (Postgres: NULLS LAST for ASC, NULLS FIRST for DESC; SQLite: NULLS FIRST
+// for ASC, NULLS LAST for DESC).
+type NullsOrder int
+
+const (
+	NullsDefault NullsOrder = iota
+	NullsFirst
+	NullsLast
+)
+
 type OrderByExpr struct {
 	Column    string
 	Direction Direction
+	Nulls     NullsOrder
 }
 
 type AggFunc int
