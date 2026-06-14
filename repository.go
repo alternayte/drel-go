@@ -166,6 +166,11 @@ func (r *Repository[T]) After(cursor string) *QueryBuilder[T] {
 	return r.newBuilder().After(cursor)
 }
 
+// Before starts a cursor-paginated query positioned before the given cursor (backward).
+func (r *Repository[T]) Before(cursor string) *QueryBuilder[T] {
+	return r.newBuilder().Before(cursor)
+}
+
 // All returns all records for this model.
 func (r *Repository[T]) All(ctx context.Context) ([]*T, error) {
 	return r.newBuilder().All(ctx)

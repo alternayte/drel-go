@@ -22,6 +22,7 @@ type QueryBuilder[T any] struct {
 	limit   *int
 	offset  *int
 	after   *string
+	before  *string
 	filters []NamedFilter
 	primary bool
 
@@ -48,6 +49,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		limit:   q.limit,
 		offset:  q.offset,
 		after:   q.after,
+		before:  q.before,
 		filters: append([]NamedFilter(nil), q.filters...),
 		primary: q.primary,
 		tracker: q.tracker,
@@ -242,6 +244,17 @@ func (q *QueryBuilder[T]) After(cursor string) *QueryBuilder[T] {
 	return c
 }
 
+// Before positions a cursor-paginated query immediately before the row encoded
+// by the cursor, walking backward. Mutually exclusive with After. Combine with
+// OrderBy and Take, then call Page; results are returned in natural (forward)
+// order with PreviousCursor/HasPrev set for further backward navigation.
+func (q *QueryBuilder[T]) Before(cursor string) *QueryBuilder[T] {
+	c := q.clone()
+	c.before = &cursor
+	c.after = nil
+	return c
+}
+
 // PageOffset executes an offset-based page query. Take (or Limit) sets the page
 // size and Skip sets the offset. It runs a COUNT to populate Total/TotalPages.
 func (q *QueryBuilder[T]) PageOffset(ctx context.Context) (*OffsetPage[T], error) {
@@ -266,8 +279,12 @@ func (q *QueryBuilder[T]) PageOffset(ctx context.Context) (*OffsetPage[T], error
 	return buildOffsetPage(items, total, *q.limit, offset), nil
 }
 
-// Page executes a keyset (cursor) page query. OrderBy is required; Take sets the
-// page size. When After is set the page begins past that cursor.
+// Page executes a keyset (cursor) page query. OrderBy is required and Take must
+// be > 0. Any Skip/offset on the builder is ignored (keyset and OFFSET are
+// mutually exclusive). When After is set the page begins past that cursor; when
+// Before is set it walks backward and results are returned in natural order.
+// Paging over a nullable ordering column requires NullsFirst()/NullsLast() on
+// that column, otherwise Page returns ErrCursorColumnNullable.
 func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	if len(q.orderBy) == 0 {
 		return nil, ErrCursorPaginationNeedsOrderBy
@@ -281,19 +298,33 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	pageSize := *q.limit
 	order := cursorOrder(q.orderBy, q.meta.PKColumn)
 
+	backward := q.before != nil
+	queryOrder := order
+	if backward {
+		queryOrder = invertOrder(order)
+	}
+
 	c := q.clone()
-	c.orderBy = order
+	c.orderBy = queryOrder
 	c.after = nil
+	c.before = nil
 	c.offset = nil // keyset pagination is mutually exclusive with OFFSET; ignore Skip.
+
+	var cursorStr *string
 	if q.after != nil {
-		payload, err := decodeCursor(*q.after)
+		cursorStr = q.after
+	} else if q.before != nil {
+		cursorStr = q.before
+	}
+	if cursorStr != nil {
+		payload, err := decodeCursor(*cursorStr)
 		if err != nil {
 			return nil, err
 		}
 		if err := validateCursorColumns(payload, order); err != nil {
 			return nil, err
 		}
-		clause, err := keysetClause(order, payload.Vals)
+		clause, err := keysetClause(queryOrder, payload.Vals)
 		if err != nil {
 			return nil, err
 		}
@@ -301,18 +332,48 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	}
 	fetch := pageSize + 1
 	c.limit = &fetch
-	// Fetch the over-fetch untracked so the discarded sentinel row is never
-	// added to the tracker; track only the returned page below.
-	c.tracker = nil
+	c.tracker = nil // over-fetch sentinel must never be tracked
 
 	items, err := c.All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	page, err := finishCursorPage(q.meta, order, items, pageSize)
-	if err != nil {
-		return nil, err
+
+	hasBoundary := len(items) > pageSize
+	if hasBoundary {
+		items = items[:pageSize]
 	}
+	if backward {
+		// Backward query ran in inverted order; restore natural order.
+		reverseItems(items)
+	}
+
+	page := &CursorPage[T]{Items: items}
+	if backward {
+		page.HasPrev = hasBoundary
+		page.HasMore = true // we arrived here from a later page
+	} else {
+		page.HasMore = hasBoundary
+		page.HasPrev = q.after != nil
+	}
+
+	if len(items) > 0 {
+		if page.HasMore {
+			nc, err := cursorForItem(q.meta, order, items[len(items)-1])
+			if err != nil {
+				return nil, err
+			}
+			page.NextCursor = nc
+		}
+		if page.HasPrev {
+			pc, err := cursorForItem(q.meta, order, items[0])
+			if err != nil {
+				return nil, err
+			}
+			page.PreviousCursor = pc
+		}
+	}
+
 	if q.tracker != nil && q.base != nil && q.meta.Snapshot != nil {
 		for _, item := range page.Items {
 			q.tracker.Track(item, q.meta.Snapshot(item), q.base)

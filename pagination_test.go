@@ -427,6 +427,39 @@ func TestCursorPage_NullableColumn_NullsLast_WalksAllRows(t *testing.T) {
 	}
 }
 
+func TestCursorPage_BackwardWalk_MatchesForward(t *testing.T) {
+	_, repo := setupPageRows(t, 20)
+	ctx := context.Background()
+
+	// Forward to the 3rd page to obtain a cursor positioned mid-set.
+	col := func() *drel.QueryBuilder[pageRow] {
+		return repo.OrderBy(drel.NewOrderedCol[int]("id").Asc()).Take(5)
+	}
+	p1, err := col().Page(ctx)
+	require.NoError(t, err)
+	require.True(t, p1.HasMore)
+	p2, err := col().After(p1.NextCursor).Page(ctx)
+	require.NoError(t, err)
+	require.True(t, p2.HasMore)
+	// p2 items should be ids 6..10.
+	assert.Equal(t, 6, p2.Items[0].ID)
+	assert.Equal(t, 10, p2.Items[len(p2.Items)-1].ID)
+
+	// p2 must report a previous page exists, with a usable PreviousCursor.
+	assert.True(t, p2.HasPrev)
+	require.NotEmpty(t, p2.PreviousCursor)
+
+	// Walk backward from p2 using Before -> must return p1's rows (ids 1..5) in
+	// natural ascending order.
+	back, err := col().Before(p2.PreviousCursor).Page(ctx)
+	require.NoError(t, err)
+	gotIDs := make([]int, len(back.Items))
+	for i, it := range back.Items {
+		gotIDs[i] = it.ID
+	}
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, gotIDs)
+}
+
 func TestCursorPage_NullableColumn_DefaultNulls_Errors(t *testing.T) {
 	_, repo := setupNullRankRows(t)
 	ctx := context.Background()

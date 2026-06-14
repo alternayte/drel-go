@@ -42,9 +42,11 @@ type OffsetPage[T any] struct {
 
 // CursorPage holds a page of results from keyset (cursor) pagination.
 type CursorPage[T any] struct {
-	Items      []*T
-	NextCursor string // empty when there are no more results
-	HasMore    bool
+	Items          []*T
+	NextCursor     string // empty when there are no more results
+	PreviousCursor string // empty when there is no previous page
+	HasMore        bool
+	HasPrev        bool
 }
 
 func init() {
@@ -289,6 +291,51 @@ func finishCursorPage[T any](meta *ModelMeta[T], order []ast.OrderByExpr, items 
 		page.NextCursor = cursor
 	}
 	return page, nil
+}
+
+// cursorForItem encodes the ordering-key cursor for a single item under the
+// given order. Used to mint PreviousCursor for backward navigation.
+func cursorForItem[T any](meta *ModelMeta[T], order []ast.OrderByExpr, item *T) (string, error) {
+	vals, err := extractCursorVals(meta, order, item)
+	if err != nil {
+		return "", err
+	}
+	cols := make([]string, len(order))
+	for i, o := range order {
+		cols[i] = o.Column
+	}
+	return encodeCursor(cols, vals)
+}
+
+// invertOrder returns a copy of order with every direction flipped, used to run
+// a backward keyset query.
+func invertOrder(order []ast.OrderByExpr) []ast.OrderByExpr {
+	out := make([]ast.OrderByExpr, len(order))
+	for i, o := range order {
+		o.Direction = ast.Asc
+		if order[i].Direction == ast.Asc {
+			o.Direction = ast.Desc
+		}
+		o.Column = order[i].Column
+		// Flip NULLS placement too so the inverted scan is a true mirror.
+		switch order[i].Nulls {
+		case ast.NullsFirst:
+			o.Nulls = ast.NullsLast
+		case ast.NullsLast:
+			o.Nulls = ast.NullsFirst
+		default:
+			o.Nulls = ast.NullsDefault
+		}
+		out[i] = o
+	}
+	return out
+}
+
+// reverseItems reverses a slice in place.
+func reverseItems[T any](items []*T) {
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
 }
 
 // extractCursorVals reads the ordering-key column values from an entity, in the
