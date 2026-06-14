@@ -452,3 +452,64 @@ func TestCursorPage_NullableColumn_DefaultNulls_Errors(t *testing.T) {
 	}
 	assert.ErrorIs(t, lastErr, drel.ErrCursorColumnNullable)
 }
+
+type floatRow struct {
+	ID    int
+	Score float64
+}
+
+var floatRowMeta = drel.ModelMeta[floatRow]{
+	Table:    "float_rows",
+	Columns:  []string{"id", "score"},
+	PKColumn: "id",
+	Scan: func(r drel.Row) (*floatRow, error) {
+		x := &floatRow{}
+		return x, r.Scan(&x.ID, &x.Score)
+	},
+	PKValue: func(x *floatRow) any { return x.ID },
+	ColumnValue: func(x *floatRow, i int) any {
+		if i == 0 {
+			return x.ID
+		}
+		return x.Score
+	},
+}
+
+func TestCursorPage_FloatOrderKey_RoundTrips(t *testing.T) {
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	defer engine.Close()
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `CREATE TABLE float_rows (id INTEGER PRIMARY KEY AUTOINCREMENT, score REAL NOT NULL)`)
+	require.NoError(t, err)
+	// Duplicate scores force the PK tiebreaker through a gob-encoded float cursor.
+	for i := 1; i <= 12; i++ {
+		_, err = engine.Exec(ctx, `INSERT INTO float_rows (score) VALUES (?)`, float64(i%3)+0.5)
+		require.NoError(t, err)
+	}
+	repo := drel.NewRepository(engine, floatRowMeta)
+
+	seen := make([]int, 0, 12)
+	cursor := ""
+	for {
+		q := repo.OrderBy(drel.NewOrderedCol[float64]("score").Asc()).Take(5)
+		if cursor != "" {
+			q = q.After(cursor)
+		}
+		page, err := q.Page(ctx)
+		require.NoError(t, err)
+		for _, it := range page.Items {
+			seen = append(seen, it.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	require.Len(t, seen, 12)
+	dedup := map[int]bool{}
+	for _, id := range seen {
+		require.False(t, dedup[id], "row %d returned twice", id)
+		dedup[id] = true
+	}
+}
