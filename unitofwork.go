@@ -54,16 +54,19 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 
 	events, err := flushChanges(ctx, tx, u.engine.dialect(), u.tracker)
 	if err != nil {
+		u.tracker.resetFlushed()
 		return err
 	}
 	allEvents := append(tx.heldEvents, events...)
 
 	for _, hook := range u.engine.beforeCommitHooks {
 		if err := hook(ctx, tx, allEvents); err != nil {
+			u.tracker.resetFlushed()
 			return err
 		}
 	}
 	if err := flushHookChanges(ctx, tx, u.engine.dialect(), u.tracker); err != nil {
+		u.tracker.resetFlushed()
 		return err
 	}
 
@@ -74,9 +77,11 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 	}
 
 	if err := dbTx.Commit(ctx); err != nil {
+		u.tracker.resetFlushed()
 		return fmt.Errorf("drel: commit: %w", err)
 	}
 	committed = true
+	u.tracker.PostCommit()
 	u.heldEvents = nil
 
 	for _, hook := range u.engine.afterCommitHooks {

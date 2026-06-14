@@ -219,8 +219,21 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 		}
 	}
 
+	// Read pending events without clearing them (the entities remain the source
+	// of truth across a failed-then-retried SaveChanges). Mark emitted entities
+	// flushed so a second flush in the same live transaction does not re-emit.
+	// The tracker is finalized (PostCommit) by the commit-owning wrapper only
+	// after a successful Commit.
 	events := collectPendingEvents(tracker)
-	tracker.PostFlush()
+	for _, te := range pc.Added {
+		te.flushed = true
+	}
+	for _, te := range pc.Modified {
+		te.flushed = true
+	}
+	for _, te := range pc.Deleted {
+		te.flushed = true
+	}
 	return events, nil
 }
 

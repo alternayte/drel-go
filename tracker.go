@@ -59,6 +59,7 @@ type trackedEntity struct {
 	forceUpdate bool // attached as Modified: UPDATE all columns rather than diffing
 	loaded      bool // tracked from a query (not Added) — eligible for unused-tracking hint
 	everDirty   bool // ever transitioned to Modified/Deleted during this transaction
+	flushed     bool // SQL emitted this flush; skip on re-flush, finalized by PostCommit
 }
 
 type changeTracker struct {
@@ -227,6 +228,11 @@ type pendingChanges struct {
 func (ct *changeTracker) GetPendingChanges() pendingChanges {
 	var pc pendingChanges
 	for _, te := range ct.entities {
+		if te.flushed {
+			// Already emitted in an earlier flush within this same live
+			// transaction; do not re-emit until PostCommit finalizes.
+			continue
+		}
 		switch te.state {
 		case StateAdded:
 			pc.Added = append(pc.Added, te)
@@ -281,7 +287,22 @@ func snapshotOf(te *trackedEntity) any {
 	return te.meta.Snapshot(te.entity)
 }
 
-func (ct *changeTracker) PostFlush() {
+// resetFlushed clears the per-flush "emitted" marker on every tracked entity.
+// Called on a pre-commit failure so a retry re-emits the staged changes. State
+// and snapshots were never mutated by flushChanges, so clearing the marker is
+// sufficient to restore the pre-flush view.
+func (ct *changeTracker) resetFlushed() {
+	for _, te := range ct.entities {
+		te.flushed = false
+	}
+}
+
+// PostCommit finalizes the tracker after a successful commit: surviving
+// entities are re-snapshotted and marked Unchanged, deleted entities are
+// dropped, and the per-flush forceUpdate/flushed markers are cleared. It must
+// run only after dbTx.Commit returns nil; on rollback the tracker is left
+// intact (use resetFlushed) so a retry re-emits.
+func (ct *changeTracker) PostCommit() {
 	surviving := ct.entities[:0]
 	for _, te := range ct.entities {
 		switch te.state {
@@ -289,15 +310,22 @@ func (ct *changeTracker) PostFlush() {
 			te.snapshot = snapshotOf(te)
 			te.state = StateUnchanged
 			te.everDirty = false
+			te.forceUpdate = false
+			te.flushed = false
+			te.loaded = true
 			surviving = append(surviving, te)
 		case StateModified:
 			te.snapshot = snapshotOf(te)
 			te.state = StateUnchanged
 			te.everDirty = false
+			te.forceUpdate = false
+			te.flushed = false
+			te.loaded = true
 			surviving = append(surviving, te)
 		case StateDeleted:
 			delete(ct.index, te.entity)
 		case StateUnchanged:
+			te.flushed = false
 			surviving = append(surviving, te)
 		}
 	}

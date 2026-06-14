@@ -195,6 +195,47 @@ func TestIsNoRows_SqlErrNoRows(t *testing.T) {
 	assert.Equal(t, "no rows in result set", pgxLike.Error())
 }
 
+// ─── Retry after failed SaveChanges ─────────────────────────────────────────
+
+// headlineRetryHook is a before-commit hook that fails exactly once, then
+// succeeds, to simulate a transient commit/hook failure followed by a retry.
+type headlineRetryHook struct{ failed bool }
+
+func (h *headlineRetryHook) hook(ctx context.Context, tx *drel.Tx, events []any) error {
+	if !h.failed {
+		h.failed = true
+		return errors.New("transient before-commit failure")
+	}
+	return nil
+}
+
+func TestUnitOfWork_RetryAfterFailedSaveChangesPersists(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx := context.Background()
+
+	h := &headlineRetryHook{}
+	engine.OnBeforeCommit(h.hook)
+
+	uow := engine.NewUnitOfWork()
+	repo := drel.NewUoWRepository(uow, sqliteItemMeta)
+	item := &sqliteItem{Title: "retry-me"}
+	repo.Add(item)
+
+	// First SaveChanges fails at the before-commit hook -> rollback.
+	err := uow.SaveChanges(ctx)
+	require.Error(t, err)
+
+	// The staged Add must survive: a retry on the SAME unit of work re-emits
+	// the INSERT and persists exactly one row.
+	require.NoError(t, uow.SaveChanges(ctx))
+
+	check := drel.NewRepository(engine, sqliteItemMeta)
+	n, err := check.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "retry after a failed SaveChanges must persist the staged Add exactly once")
+	assert.NotZero(t, item.ID, "the persisted row's id must be populated after the successful retry")
+}
+
 // ─── updated_at uses CURRENT_TIMESTAMP via d.Now() ──────────────────────────
 
 func TestSQLiteMutation_Update_UpdatedAtChanges(t *testing.T) {

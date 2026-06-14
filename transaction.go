@@ -84,17 +84,20 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 
 	events, err := flushChanges(ctx, tx, e.dialect(), tx.tracker)
 	if err != nil {
+		tx.tracker.resetFlushed()
 		return err
 	}
 	allEvents := append(tx.heldEvents, events...)
 
 	for _, hook := range e.beforeCommitHooks {
 		if err := hook(ctx, tx, allEvents); err != nil {
+			tx.tracker.resetFlushed()
 			return err
 		}
 	}
 
 	if err := flushHookChanges(ctx, tx, e.dialect(), tx.tracker); err != nil {
+		tx.tracker.resetFlushed()
 		return err
 	}
 
@@ -106,8 +109,10 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 	}
 
 	if err := dbTx.Commit(ctx); err != nil {
+		tx.tracker.resetFlushed()
 		return fmt.Errorf("drel: commit: %w", err)
 	}
+	tx.tracker.PostCommit()
 
 	for _, hook := range e.afterCommitHooks {
 		hook(ctx, allEvents)

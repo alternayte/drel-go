@@ -138,7 +138,7 @@ func TestTracker_PostFlushResetsStates(t *testing.T) {
 	ct.Track(deleted, testSnapshot{Name: "Gone", Age: 4}, testMeta)
 	ct.DetectChanges()
 	ct.MarkDeleted(deleted)
-	ct.PostFlush()
+	ct.PostCommit()
 	assert.Equal(t, StateUnchanged, ct.index[added].state)
 	assert.Equal(t, StateUnchanged, ct.index[modified].state)
 	_, deletedExists := ct.index[deleted]
@@ -281,7 +281,7 @@ func TestTracker_ForceUpdateClearedAfterFinalize(t *testing.T) {
 
 	// Finalizing after a successful commit must clear forceUpdate so a later
 	// mutation diffs only the changed columns instead of writing every column.
-	ct.PostFlush()
+	ct.PostCommit()
 
 	assert.False(t, te.forceUpdate,
 		"forceUpdate must be cleared after finalize so later mutations diff")
