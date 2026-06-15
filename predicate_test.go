@@ -37,3 +37,28 @@ func TestNot_WrapsOnePredicate(t *testing.T) {
 	assert.Equal(t, ast.LogicalNot, clause.LogicalOp)
 	require.Len(t, clause.Children, 1)
 }
+
+func TestTrue_IsEmptyNoOpClause(t *testing.T) {
+	clause := drel.True().ToAST()
+	assert.Nil(t, clause.Comparison)
+	assert.Nil(t, clause.Raw)
+	assert.Nil(t, clause.Children)
+}
+
+func TestWhereIf_ReturnsPredWhenTrue(t *testing.T) {
+	p := drel.NewCol[int]("age").Eq(18)
+	got := drel.WhereIf(true, p)
+	clause := got.ToAST()
+	require.NotNil(t, clause.Comparison)
+	assert.Equal(t, "age", clause.Comparison.Column)
+	assert.Equal(t, ast.OpEq, clause.Comparison.Op)
+}
+
+func TestWhereIf_ReturnsNoOpWhenFalse(t *testing.T) {
+	p := drel.NewCol[int]("age").Eq(18)
+	got := drel.WhereIf(false, p)
+	clause := got.ToAST()
+	assert.Nil(t, clause.Comparison)
+	assert.Nil(t, clause.Raw)
+	assert.Nil(t, clause.Children)
+}
