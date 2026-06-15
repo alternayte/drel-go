@@ -1006,3 +1006,16 @@ func TestSQLite_AdvisoryLockSQL_Unsupported(t *testing.T) {
 	assert.False(t, supported)
 	assert.Equal(t, dialect.Result{}, res)
 }
+
+func TestSQLite_BuildSelectDistinct(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:    "users",
+		Columns:  []string{"city"},
+		Distinct: true,
+		Type:     ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT DISTINCT "city" FROM "users"`, result.SQL)
+	assert.Nil(t, result.Args)
+}

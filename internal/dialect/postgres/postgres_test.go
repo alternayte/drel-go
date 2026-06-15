@@ -885,3 +885,16 @@ func TestPostgres_AdvisoryLockSQL_Try(t *testing.T) {
 	assert.Equal(t, "SELECT pg_try_advisory_xact_lock($1)", res.SQL)
 	assert.Equal(t, []any{int64(7)}, res.Args)
 }
+
+func TestBuildSelectDistinct(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:    "users",
+		Columns:  []string{"city"},
+		Distinct: true,
+		Type:     ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t, `SELECT DISTINCT "city" FROM "users"`, result.SQL)
+	assert.Nil(t, result.Args)
+}

@@ -57,6 +57,9 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 		b.WriteString(quoteIdent(node.Table))
 	default:
 		b.WriteString("SELECT ")
+		if node.Distinct {
+			b.WriteString("DISTINCT ")
+		}
 		for i, col := range node.Columns {
 			if i > 0 {
 				b.WriteString(", ")

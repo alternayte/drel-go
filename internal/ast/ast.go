@@ -85,9 +85,11 @@ const (
 )
 
 type AggregateExpr struct {
-	Func   AggFunc
-	Column string
-	Alias  string
+	Func         AggFunc
+	Column       string
+	Alias        string
+	Distinct     bool
+	CoalesceZero bool
 }
 
 // PartitionLimit requests a per-partition row cap rendered with a window
@@ -99,6 +101,21 @@ type PartitionLimit struct {
 	PartitionBy string        // foreign-key column to partition by
 	OrderBy     []OrderByExpr // ordering within each partition (defaults to PK at the call site)
 	Limit       int           // rows kept per partition
+}
+
+// JoinType is the kind of SQL join used in a projection.
+type JoinType int
+
+const (
+	JoinInner JoinType = iota
+	JoinLeft
+)
+
+// JoinNode is a single JOIN clause in a projection SELECT.
+type JoinNode struct {
+	Table string   // joined table
+	Type  JoinType // INNER / LEFT
+	On    string   // raw, already-qualified ON expression, e.g. `"orders"."user_id" = "users"."id"`
 }
 
 type SelectNode struct {
@@ -113,4 +130,6 @@ type SelectNode struct {
 	Having         *WhereClause
 	Aggregates     []AggregateExpr
 	PartitionLimit *PartitionLimit
+	Distinct       bool
+	Joins          []JoinNode
 }
