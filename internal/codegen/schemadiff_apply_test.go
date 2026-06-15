@@ -121,3 +121,32 @@ func TestDiffSchemas_NoChange(t *testing.T) {
 	assert.Empty(t, up)
 	assert.Empty(t, down)
 }
+
+// TestIntEnum_AppliesToRealSQLite proves the generated integer-enum DDL is valid
+// SQLite and that the unquoted numeric CHECK enforces the value set.
+func TestIntEnum_AppliesToRealSQLite(t *testing.T) {
+	ctx := context.Background()
+	drv, err := sqlitedriver.New(":memory:")
+	require.NoError(t, err)
+	defer drv.Close()
+
+	models := []codegen.ModelInfo{{
+		Name: "Ticket", TableName: "tickets", PKType: "int",
+		Fields: []codegen.FieldInfo{
+			{Name: "Priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+				IsExported: true, IsEnum: true, EnumIsInt: true, EnumBaseType: "int",
+				EnumValues: []string{"0", "1", "2"}},
+		},
+	}}
+
+	_, err = drv.Exec(ctx, codegen.GenerateSchema(models, "sqlite"))
+	require.NoError(t, err, "int-enum CREATE TABLE must be valid SQLite")
+
+	// A valid value inserts.
+	_, err = drv.Exec(ctx, "INSERT INTO tickets (priority) VALUES (1)")
+	require.NoError(t, err)
+
+	// An out-of-range integer is rejected by the CHECK.
+	_, err = drv.Exec(ctx, "INSERT INTO tickets (priority) VALUES (5)")
+	assert.Error(t, err, "CHECK should reject an int outside the enum value set")
+}
