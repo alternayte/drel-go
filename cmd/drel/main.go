@@ -66,6 +66,12 @@ func printUsage() { fprintUsage(os.Stderr) }
 func printUsageStdout() { fprintUsage(os.Stdout) }
 
 const defaultConfig = `# drel configuration — see https://github.com/alternayte/drel
+#
+# To run codegen with ` + "`go generate ./...`" + `, add this directive to a
+# top-level .go file (e.g. tools.go or your main package):
+#
+#     //go:generate drel generate
+#
 packages:
   - ./features/users
   # - ./features/posts
@@ -76,6 +82,14 @@ output:
 
 dialect: postgres               # postgres | sqlite
 `
+
+// initGoGenerateHint returns the post-init instruction telling the user how to
+// enable `go generate ./...` support via the //go:generate directive.
+func initGoGenerateHint() string {
+	return "drel: to enable `go generate ./...`, add this line to a top-level .go file:\n" +
+		"\n" +
+		"    //go:generate drel generate\n"
+}
 
 func runInit(parsed parsedCmd) {
 	configPath := parsed.ConfigPath
@@ -91,6 +105,7 @@ func runInit(parsed parsedCmd) {
 	}
 	fmt.Printf("drel: wrote %s\n", configPath)
 	fmt.Println("drel: edit the packages list, then run `drel generate`")
+	fmt.Print(initGoGenerateHint())
 }
 
 func runSeed(parsed parsedCmd) {
