@@ -125,6 +125,22 @@ func (d *SQLiteDriver) Close() {
 	d.db.Close()
 }
 
+// Ping verifies a working connection to the database.
+func (d *SQLiteDriver) Ping(ctx context.Context) error {
+	return d.db.PingContext(ctx)
+}
+
+// Stat returns a snapshot of the database/sql connection pool.
+func (d *SQLiteDriver) Stat() driver.PoolStat {
+	s := d.db.Stats()
+	return driver.PoolStat{
+		MaxConns:      int32(s.MaxOpenConnections),
+		AcquiredConns: int32(s.InUse),
+		IdleConns:     int32(s.Idle),
+		TotalConns:    int32(s.OpenConnections),
+	}
+}
+
 // sqliteRows wraps *sql.Rows to satisfy driver.Rows.
 type sqliteRows struct {
 	rows *sql.Rows

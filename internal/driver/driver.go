@@ -13,6 +13,16 @@ type PoolConfig struct {
 	ConnMaxIdleTime time.Duration // close connections idle longer than this
 }
 
+// PoolStat is a dialect-neutral snapshot of connection-pool utilisation, used
+// for health/metrics endpoints. Counts come from pgxpool.Stat (Postgres) or
+// sql.DB.Stats (SQLite/libSQL).
+type PoolStat struct {
+	MaxConns      int32 // configured maximum open connections (0 = driver default / unlimited)
+	AcquiredConns int32 // connections currently checked out / in use
+	IdleConns     int32 // connections currently idle in the pool
+	TotalConns    int32 // total connections currently held (acquired + idle + constructing)
+}
+
 // IsolationLevel represents a transaction isolation level.
 type IsolationLevel int
 
@@ -94,5 +104,9 @@ type Driver interface {
 	Exec(ctx context.Context, sql string, args ...any) (int64, error)
 	Begin(ctx context.Context) (Tx, error)
 	BeginTx(ctx context.Context, opts TxOptions) (Tx, error)
+	// Ping verifies a working connection to the database, used by health probes.
+	Ping(ctx context.Context) error
+	// Stat returns a snapshot of connection-pool utilisation.
+	Stat() PoolStat
 	Close()
 }

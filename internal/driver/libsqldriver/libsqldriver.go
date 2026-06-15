@@ -80,6 +80,22 @@ func (d *LibSQLDriver) BeginTx(ctx context.Context, opts driver.TxOptions) (driv
 
 func (d *LibSQLDriver) Close() { d.db.Close() }
 
+// Ping verifies a working connection to the database.
+func (d *LibSQLDriver) Ping(ctx context.Context) error {
+	return d.db.PingContext(ctx)
+}
+
+// Stat returns a snapshot of the database/sql connection pool.
+func (d *LibSQLDriver) Stat() driver.PoolStat {
+	s := d.db.Stats()
+	return driver.PoolStat{
+		MaxConns:      int32(s.MaxOpenConnections),
+		AcquiredConns: int32(s.InUse),
+		IdleConns:     int32(s.Idle),
+		TotalConns:    int32(s.OpenConnections),
+	}
+}
+
 type libsqlRows struct{ rows *sql.Rows }
 
 func (r *libsqlRows) Next() bool             { return r.rows.Next() }

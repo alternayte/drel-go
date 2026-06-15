@@ -136,6 +136,22 @@ func (d *PgxDriver) Close() {
 	d.pool.Close()
 }
 
+// Ping verifies a working connection to the database.
+func (d *PgxDriver) Ping(ctx context.Context) error {
+	return d.pool.Ping(ctx)
+}
+
+// Stat returns a snapshot of the pgxpool connection pool.
+func (d *PgxDriver) Stat() driver.PoolStat {
+	s := d.pool.Stat()
+	return driver.PoolStat{
+		MaxConns:      s.MaxConns(),
+		AcquiredConns: s.AcquiredConns(),
+		IdleConns:     s.IdleConns(),
+		TotalConns:    s.TotalConns(),
+	}
+}
+
 type pgxRows struct {
 	rows interface {
 		Next() bool

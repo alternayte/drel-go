@@ -136,6 +136,27 @@ func TestTransaction_Rollback(t *testing.T) {
 	assert.Equal(t, 0, count)
 }
 
+func TestSQLiteDriver_PingAndStat(t *testing.T) {
+	d, err := sqlitedriver.New(":memory:")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+
+	if err := d.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+
+	st := d.Stat()
+	// In-memory SQLite pins MaxOpenConns to 1.
+	if st.MaxConns != 1 {
+		t.Fatalf("Stat().MaxConns = %d, want 1", st.MaxConns)
+	}
+	if st.TotalConns < 0 || st.IdleConns < 0 || st.AcquiredConns < 0 {
+		t.Fatalf("Stat() returned negative counts: %+v", st)
+	}
+}
+
 func TestBeginTx_ReadOnly(t *testing.T) {
 	ctx := context.Background()
 	d := newTestDriver(t)
