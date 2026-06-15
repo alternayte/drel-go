@@ -477,6 +477,66 @@ func TestDiffSchemas_GrowIntEnum_ProducesMigration(t *testing.T) {
 	}
 }
 
+func TestDiffSchemas_CheckChange_Postgres(t *testing.T) {
+	old := Schema{Tables: []Table{
+		pgTable("products",
+			Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+			Column{Name: "price", Type: "integer", NotNull: true, Check: "price > 0"},
+		),
+	}}
+	newS := Schema{Tables: []Table{
+		pgTable("products",
+			Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+			Column{Name: "price", Type: "integer", NotNull: true, Check: "price >= 1"},
+		),
+	}}
+	up, down := DiffSchemas(old, newS, "postgres")
+
+	assert.Contains(t, up, `ALTER TABLE "products" DROP CONSTRAINT IF EXISTS "chk_products_price";`)
+	assert.Contains(t, up, `ALTER TABLE "products" ADD CONSTRAINT "chk_products_price" CHECK (price >= 1);`)
+	// Down reverses to the old expression.
+	assert.Contains(t, down, `ALTER TABLE "products" ADD CONSTRAINT "chk_products_price" CHECK (price > 0);`)
+	assert.Contains(t, down, `ALTER TABLE "products" DROP CONSTRAINT IF EXISTS "chk_products_price";`)
+	// No leftover WARNING comment on the Postgres path.
+	assert.NotContains(t, up, "WARNING: CHECK constraint")
+}
+
+func TestDiffSchemas_AddCheckToExistingColumn_Postgres(t *testing.T) {
+	old := Schema{Tables: []Table{
+		pgTable("products",
+			Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+			Column{Name: "price", Type: "integer", NotNull: true},
+		),
+	}}
+	newS := Schema{Tables: []Table{
+		pgTable("products",
+			Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+			Column{Name: "price", Type: "integer", NotNull: true, Check: "price > 0"},
+		),
+	}}
+	up, down := DiffSchemas(old, newS, "postgres")
+	assert.Contains(t, up, `ALTER TABLE "products" ADD CONSTRAINT "chk_products_price" CHECK (price > 0);`)
+	assert.Contains(t, down, `ALTER TABLE "products" DROP CONSTRAINT IF EXISTS "chk_products_price";`)
+}
+
+func TestDiffSchemas_CheckChange_SQLite_WarnsOnly(t *testing.T) {
+	old := Schema{Tables: []Table{
+		{Name: "products", Columns: []Column{
+			{Name: "id", Type: "INTEGER PRIMARY KEY", NotNull: true, PK: true},
+			{Name: "price", Type: "INTEGER", NotNull: true, Check: "price > 0"},
+		}},
+	}}
+	newS := Schema{Tables: []Table{
+		{Name: "products", Columns: []Column{
+			{Name: "id", Type: "INTEGER PRIMARY KEY", NotNull: true, PK: true},
+			{Name: "price", Type: "INTEGER", NotNull: true, Check: "price >= 1"},
+		}},
+	}}
+	up, _ := DiffSchemas(old, newS, "sqlite")
+	assert.Contains(t, up, "WARNING: SQLite cannot ALTER CHECK")
+	assert.NotContains(t, up, "ADD CONSTRAINT")
+}
+
 func TestDiffSchemas_DropToEmpty_CoversPivotsAndEnums(t *testing.T) {
 	desired := Schema{
 		Enums: []EnumDef{{Name: "status", Values: []string{"active", "archived"}}},

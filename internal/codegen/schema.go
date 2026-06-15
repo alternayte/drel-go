@@ -492,12 +492,32 @@ func diffColumn(table string, old, new Column, dialect string) (up, down []strin
 	}
 
 	if old.Check != new.Check {
-		// CHECK constraints are inline column constraints in our model; changing
-		// one requires a table rebuild on both dialects, which we don't attempt.
-		up = append(up, fmt.Sprintf(`-- WARNING: CHECK constraint on %s.%s changed (%q -> %q); apply the new constraint manually (requires a table rebuild)`,
-			quoteIdent(table), quoteIdent(new.Name), old.Check, new.Check))
-		down = append(down, fmt.Sprintf(`-- WARNING: CHECK constraint on %s.%s changed (%q -> %q); apply the new constraint manually (requires a table rebuild)`,
-			quoteIdent(table), quoteIdent(new.Name), new.Check, old.Check))
+		if dialect == "sqlite" {
+			up = append(up, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER CHECK constraint on %s.%s (%q -> %q); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), old.Check, new.Check))
+			down = append(down, fmt.Sprintf(`-- WARNING: SQLite cannot ALTER CHECK constraint on %s.%s (%q -> %q); recreate the table manually`,
+				quoteIdent(table), quoteIdent(new.Name), new.Check, old.Check))
+		} else {
+			name := checkConstraintName(table, new.Name)
+			// UP: drop the old constraint (if any), add the new one (if any).
+			if old.Check != "" {
+				up = append(up, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;",
+					quoteIdent(table), quoteIdent(name)))
+			}
+			if new.Check != "" {
+				up = append(up, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);",
+					quoteIdent(table), quoteIdent(name), new.Check))
+			}
+			// DOWN: drop the new constraint (if any), restore the old one (if any).
+			if new.Check != "" {
+				down = append(down, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;",
+					quoteIdent(table), quoteIdent(name)))
+			}
+			if old.Check != "" {
+				down = append(down, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);",
+					quoteIdent(table), quoteIdent(name), old.Check))
+			}
+		}
 	}
 
 	return up, down
