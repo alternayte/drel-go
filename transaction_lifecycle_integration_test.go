@@ -5,6 +5,7 @@ package drel_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alternayte/drel"
@@ -100,4 +101,49 @@ func TestIntegration_Savepoint_ReleaseAndRollback(t *testing.T) {
 	exists, err := repo.Where(testmodels.Products.Name.Eq("dropped")).Exists(ctx)
 	require.NoError(t, err)
 	assert.False(t, exists)
+}
+
+// Two concurrent SERIALIZABLE transactions that read-then-write overlapping
+// rows must produce a 40001 serialization failure on at least one, and that
+// error must classify as drel.ErrSerializationFailure (including the
+// commit-time case, which is the class real Postgres surfaces).
+func TestIntegration_SerializableConflict_Classifies(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	ctx := context.Background()
+
+	// Barrier so both txns read before either writes, forcing a conflict.
+	var afterRead sync.WaitGroup
+	afterRead.Add(2)
+
+	bump := func() error {
+		return engine.Transaction(ctx, func(tx *drel.Tx) error {
+			var total int
+			if e := tx.QueryRow(ctx, "SELECT COALESCE(SUM(price),0) FROM products").Scan(&total); e != nil {
+				return e
+			}
+			afterRead.Done()
+			afterRead.Wait() // both have read; now both write -> conflict
+			_, e := tx.Exec(ctx,
+				"INSERT INTO products (name, price, in_stock) VALUES ($1, $2, $3)",
+				"sum", total, true)
+			return e
+		}, drel.WithIsolation(drel.Serializable))
+	}
+
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); errs[0] = bump() }()
+	go func() { defer wg.Done(); errs[1] = bump() }()
+	wg.Wait()
+
+	serialized := false
+	for _, e := range errs {
+		if e != nil && assert.ErrorIs(t, e, drel.ErrSerializationFailure) {
+			serialized = true
+		}
+	}
+	require.True(t, serialized,
+		"at least one concurrent SERIALIZABLE txn must fail with ErrSerializationFailure; got errs=%v", errs)
 }
