@@ -58,3 +58,52 @@ func TestEngineQueryTimeout_FiresOnSlowExec(t *testing.T) {
 		t.Fatal("expected a deadline-exceeded error from the engine default timeout")
 	}
 }
+
+// TestEngineQueryTimeout_MultiRowDrainCompletes proves that a generous engine
+// default timeout does not cancel the context before the caller finishes
+// draining a multi-row result set. This is the regression test for the bug
+// where queryRoutedTimeout called defer cancel() and therefore cancelled the
+// context the instant it returned the Rows handle.
+func TestEngineQueryTimeout_MultiRowDrainCompletes(t *testing.T) {
+	// Use a generous timeout — we want to prove rows drain successfully, not
+	// that the timeout fires.
+	e, err := NewEngine(":memory:", WithQueryTimeout(5*time.Second))
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer e.Close()
+
+	ctx := context.Background()
+
+	// Seed a table with 500 rows.
+	if _, err := e.Exec(ctx, "CREATE TABLE nums (n INTEGER)"); err != nil {
+		t.Fatalf("CREATE: %v", err)
+	}
+	for i := 0; i < 500; i++ {
+		if _, err := e.Exec(ctx, "INSERT INTO nums (n) VALUES (?)", i); err != nil {
+			t.Fatalf("INSERT %d: %v", i, err)
+		}
+	}
+
+	// Engine.Query — the rows must drain without context.canceled.
+	rows, err := e.Query(ctx, "SELECT n FROM nums ORDER BY n")
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var n int
+		if scanErr := rows.Scan(&n); scanErr != nil {
+			t.Fatalf("Scan row %d: %v", count, scanErr)
+		}
+		count++
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		t.Fatalf("rows.Err() after drain: %v (engine default timeout must not cancel before Close)", iterErr)
+	}
+	if count != 500 {
+		t.Fatalf("expected 500 rows, got %d", count)
+	}
+}

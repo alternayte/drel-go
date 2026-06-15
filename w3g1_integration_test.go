@@ -10,6 +10,9 @@ import (
 	"github.com/alternayte/drel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func TestIntegration_W3G1_HealthAndStats(t *testing.T) {
@@ -93,4 +96,56 @@ func TestIntegration_W3G1_QueryTimeout(t *testing.T) {
 	if iterErr == nil {
 		t.Fatal("a short caller deadline must abort the slow query — no error on Query or iteration")
 	}
+}
+
+// TestIntegration_W3G1_EngineDefaultTimeoutMultiRowSuccess proves that a
+// generous engine-default WithQueryTimeout does NOT cancel a multi-row result
+// set before the caller finishes draining it. This is the positive regression
+// test for the bug where queryRoutedTimeout called defer cancel() and cancelled
+// the context the instant it returned the Rows handle.
+func TestIntegration_W3G1_EngineDefaultTimeoutMultiRowSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	// Spin up a fresh Postgres container and connect with a 5s engine-default
+	// timeout. We cannot reuse setupTestDB's engine because it does not set
+	// WithQueryTimeout. Use generate_series so no table setup is required.
+	container, err := tcpostgres.Run(ctx,
+		"postgres:16-alpine",
+		tcpostgres.WithDatabase("dreltest"),
+		tcpostgres.WithUsername("test"),
+		tcpostgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = container.Terminate(ctx) })
+
+	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	timedEngine, err := drel.NewEngine(connStr,
+		drel.WithContext(ctx),
+		drel.WithQueryTimeout(5*time.Second),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { timedEngine.Close() })
+
+	// generate_series(1,500) yields 500 rows; the 5 s engine default must not
+	// fire before the caller has had a chance to drain them all.
+	rows, err := timedEngine.Query(ctx, "SELECT n FROM generate_series(1, 500) AS gs(n)")
+	require.NoError(t, err, "engine-default timeout must not abort query start")
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var n int
+		require.NoError(t, rows.Scan(&n))
+		count++
+	}
+	require.NoError(t, rows.Err(),
+		"rows.Err() must be nil after full drain — engine default timeout must not cancel before Close()")
+	assert.Equal(t, 500, count, "all 500 rows must be returned")
 }

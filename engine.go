@@ -376,14 +376,22 @@ func (e *Engine) queryRoutedTimeout(ctx context.Context, primary bool, timeout t
 	if timeout <= 0 {
 		timeout = e.queryTimeout
 	}
-	ctx, cancel := applyTimeout(ctx, timeout)
-	defer cancel()
-	ctx, endSpan := e.startSpan(ctx, "drel.query")
+	// A multi-row Rows handle is drained by the caller after this function
+	// returns, so we must NOT defer cancel() here — doing so would cancel the
+	// context the instant we return the Rows, aborting iteration. Instead we
+	// wrap the Rows in a timeoutRows that fires cancel on Close(), mirroring
+	// the timeoutRow pattern used on the single-row path.
+	rowCtx, cancel := applyTimeout(ctx, timeout)
+	rowCtx, endSpan := e.startSpan(rowCtx, "drel.query")
 	start := time.Now()
-	rows, err := e.readDriver(primary).Query(ctx, sql, args...)
+	rows, err := e.readDriver(primary).Query(rowCtx, sql, args...)
 	endSpan(err)
-	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
-	return rows, dberr.Classify(err)
+	e.notifyQueryHooks(rowCtx, sql, args, time.Since(start), err)
+	if err != nil {
+		cancel() // query failed — release the context now
+		return nil, dberr.Classify(err)
+	}
+	return timeoutRows{rows: rows, cancel: cancel}, nil
 }
 
 func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
@@ -437,4 +445,22 @@ func (r timeoutRow) Scan(dest ...any) error {
 	err := r.row.Scan(dest...)
 	r.cancel()
 	return err
+}
+
+// timeoutRows wraps a multi-row Rows result and defers the context cancel until
+// Close is called. This is the multi-row equivalent of timeoutRow: because the
+// caller drains rows after queryRoutedTimeout returns, we cannot cancel the
+// context in that function — we must hold the cancel alive until the caller
+// signals it is done by calling Close. The cancel is idempotent.
+type timeoutRows struct {
+	rows   Rows
+	cancel context.CancelFunc
+}
+
+func (r timeoutRows) Next() bool          { return r.rows.Next() }
+func (r timeoutRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
+func (r timeoutRows) Err() error          { return r.rows.Err() }
+func (r timeoutRows) Close() {
+	r.rows.Close()
+	r.cancel()
 }
