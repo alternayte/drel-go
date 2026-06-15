@@ -31,6 +31,8 @@ type Engine struct {
 	eventSinks        []func(ctx context.Context, tx *Tx, events []any) error
 	queryHooks        []QueryHook
 
+	afterCommitSink func(ctx context.Context, err error)
+
 	logger        *slog.Logger
 	tracer        Tracer
 	devMode       bool
@@ -54,6 +56,8 @@ type engineConfig struct {
 	ctx context.Context
 	drv driver.Driver
 	dia dialect.Dialect
+
+	afterCommitSink func(ctx context.Context, err error)
 
 	logger        *slog.Logger
 	queryLog      bool
@@ -516,6 +520,16 @@ func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
 
 func (e *Engine) OnAfterCommit(hook AfterCommitHook) {
 	e.afterCommitHooks = append(e.afterCommitHooks, hook)
+}
+
+// WithAfterCommitErrorSink registers a callback that receives errors and
+// recovered panics from after-commit hooks. After-commit hooks run after the
+// commit has already succeeded, so their failures cannot roll back the
+// transaction — durable side-effects belong in the outbox. The sink is the only
+// signal for such failures; if unset they are dropped. The sink itself is
+// recovered, so a panicking sink cannot crash the caller.
+func WithAfterCommitErrorSink(fn func(ctx context.Context, err error)) Option {
+	return func(cfg *engineConfig) { cfg.afterCommitSink = fn }
 }
 
 // addEventSink registers a function that receives all committed events (including

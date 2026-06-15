@@ -61,6 +61,7 @@ func (e *Engine) installObservability(cfg *engineConfig) {
 	e.tracer = cfg.tracer
 	e.devMode = cfg.devMode
 	e.slowThreshold = cfg.slowThreshold
+	e.afterCommitSink = cfg.afterCommitSink
 
 	if e.devMode {
 		if e.logger == nil {
