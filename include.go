@@ -395,6 +395,10 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 		}
 		batch := values[i:end]
 
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		inClause := ast.WhereClause{
 			Comparison: &ast.ComparisonNode{
 				Column: column,
@@ -505,6 +509,10 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 			end = len(pkValues)
 		}
 		batch := pkValues[i:end]
+
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 
 		node := ast.SelectNode{
 			Table:   rel.JoinTable,
