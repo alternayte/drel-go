@@ -248,6 +248,9 @@ func TestParseDBTag_Options(t *testing.T) {
 		{"named index", `db:"x,index=ix"`, "x", dbTagOpts{indexed: true, indexName: "ix"}},
 		{"check", `db:"y,check=y > 0"`, "y", dbTagOpts{check: "y > 0"}},
 		{"plain", `db:"name"`, "name", dbTagOpts{}},
+		{"check with in-list", `db:"role,check=role IN ('admin','user')"`, "role", dbTagOpts{check: "role IN ('admin','user')"}},
+		{"check with func commas", `db:"x,check=substr(x,1,2) = 'ab'"`, "x", dbTagOpts{check: "substr(x,1,2) = 'ab'"}},
+		{"unique then check with comma", `db:"role,unique,check=role IN ('a','b')"`, "role", dbTagOpts{unique: true, check: "role IN ('a','b')"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

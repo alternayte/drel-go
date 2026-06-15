@@ -311,12 +311,15 @@ type dbTagOpts struct {
 }
 
 // parseDBTag splits a db struct tag into its column name and options. The first
-// comma-separated element is the column name; subsequent elements are options:
+// comma-separated element is the column name; subsequent elements are options
+// tokenized by splitTagOptions (comma-safe: ignores commas inside single-quoted
+// strings or parentheses so values like check=role IN ('a','b') survive intact):
 //
 //	db:"email,unique"                 — unique index
 //	db:"age,index"                    — single-column index (auto-named)
 //	db:"role,index=idx_role_age"      — named index; fields sharing the name compose
 //	db:"age,check=age >= 0"           — column CHECK constraint
+//	db:"role,check=role IN ('a','b')" — IN-list CHECK with embedded commas
 //
 // Returns an empty column name when no db tag is present.
 func parseDBTag(rawTag string) (string, dbTagOpts) {
@@ -325,11 +328,21 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 	if !ok || raw == "" {
 		return "", dbTagOpts{}
 	}
-	parts := strings.Split(raw, ",")
-	col := strings.TrimSpace(parts[0])
+	// The column name is the first comma-separated segment; options follow.
+	name := raw
+	rest := ""
+	if i := strings.IndexByte(raw, ','); i >= 0 {
+		name = raw[:i]
+		rest = raw[i+1:]
+	}
+	col := strings.TrimSpace(name)
+
 	var opts dbTagOpts
-	for _, p := range parts[1:] {
+	for _, p := range splitTagOptions(rest) {
 		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
 		switch {
 		case p == "unique":
 			opts.unique = true
@@ -347,6 +360,41 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 		}
 	}
 	return col, opts
+}
+
+// splitTagOptions splits a db-tag option list on commas, ignoring commas that
+// appear inside single-quoted strings or parentheses so that option values like
+// check=role IN ('a','b') and check=substr(x,1,2) survive intact.
+func splitTagOptions(s string) []string {
+	var parts []string
+	var cur strings.Builder
+	depth := 0
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'':
+			inQuote = !inQuote
+			cur.WriteByte(c)
+		case c == '(' && !inQuote:
+			depth++
+			cur.WriteByte(c)
+		case c == ')' && !inQuote:
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteByte(c)
+		case c == ',' && depth == 0 && !inQuote:
+			parts = append(parts, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		parts = append(parts, cur.String())
+	}
+	return parts
 }
 
 // rawDBTag returns the raw db struct tag value (the full comma list, unsplit).
