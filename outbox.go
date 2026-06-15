@@ -78,11 +78,22 @@ func eventTypeName(v any) string {
 	return t.Name()
 }
 
-// OutboxSchema returns CREATE TABLE DDL for an outbox table for the given
-// dialect ("postgres" or "sqlite"). The payload column is TEXT for portability
-// (JSON is stored as a string); processed_at is left for a relay to stamp.
+// OutboxSchema returns CREATE TABLE (and a partial index) DDL for an outbox
+// table for the given dialect ("postgres" or "sqlite"). The payload column is
+// TEXT for portability (JSON is stored as a string); processed_at is left for a
+// relay to stamp.
+//
+// A partial index on unprocessed rows is emitted so the canonical relay poll
+//
+//	SELECT id, type, payload FROM <table> WHERE processed_at IS NULL ORDER BY id;
+//
+// uses an index seek rather than a sequential scan that grows with total outbox
+// size (processed rows are typically retained for audit).
 func OutboxSchema(table, dialect string) string {
 	q := `"` + table + `"`
+	idx := `"idx_` + table + `_unprocessed"`
+	index := fmt.Sprintf(
+		`CREATE INDEX %s ON %s ("id") WHERE "processed_at" IS NULL;`+"\n", idx, q)
 	if dialect == "sqlite" {
 		return fmt.Sprintf(`CREATE TABLE %s (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +102,7 @@ func OutboxSchema(table, dialect string) string {
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "processed_at" DATETIME
 );
-`, q)
+%s`, q, index)
 	}
 	return fmt.Sprintf(`CREATE TABLE %s (
     "id" BIGSERIAL PRIMARY KEY,
@@ -100,5 +111,5 @@ func OutboxSchema(table, dialect string) string {
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "processed_at" TIMESTAMPTZ
 );
-`, q)
+%s`, q, index)
 }

@@ -71,6 +71,43 @@ func TestOutbox_WritesWithinTransaction(t *testing.T) {
 	assert.JSONEq(t, `{"Name":"widget"}`, payload)
 }
 
+func TestOutboxSchema_EmitsPartialIndexSQLite(t *testing.T) {
+	ddl := drel.OutboxSchema("outbox", "sqlite")
+	// Table is still created.
+	assert.Contains(t, ddl, `CREATE TABLE "outbox"`)
+	// A partial index on unprocessed rows must be emitted so the relay's
+	// `WHERE processed_at IS NULL` poll does not full-scan a growing table.
+	assert.Contains(t, ddl,
+		`CREATE INDEX "idx_outbox_unprocessed" ON "outbox" ("id") WHERE "processed_at" IS NULL;`)
+}
+
+func TestOutboxSchema_EmitsPartialIndexPostgres(t *testing.T) {
+	ddl := drel.OutboxSchema("outbox", "postgres")
+	assert.Contains(t, ddl, `CREATE TABLE "outbox"`)
+	assert.Contains(t, ddl,
+		`CREATE INDEX "idx_outbox_unprocessed" ON "outbox" ("id") WHERE "processed_at" IS NULL;`)
+}
+
+// TestOutboxSchema_IndexExecutesAgainstSQLite proves the emitted DDL (table +
+// index) is valid SQLite that a relay can rely on.
+func TestOutboxSchema_IndexExecutesAgainstSQLite(t *testing.T) {
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	defer engine.Close()
+	ctx := context.Background()
+
+	_, err = engine.Exec(ctx, drel.OutboxSchema("ob", "sqlite"))
+	require.NoError(t, err)
+
+	// The partial index must exist on the table.
+	var name string
+	err = engine.QueryRow(ctx,
+		`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='ob' AND name='idx_ob_unprocessed'`).
+		Scan(&name)
+	require.NoError(t, err)
+	assert.Equal(t, "idx_ob_unprocessed", name)
+}
+
 func TestOutbox_RollbackDiscardsMessages(t *testing.T) {
 	engine, err := drel.NewEngine(":memory:")
 	require.NoError(t, err)
