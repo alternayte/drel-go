@@ -290,3 +290,53 @@ type Account struct {
 	assert.Equal(t, "ix_name", byCol["first"].IndexName)
 	assert.Equal(t, "score > 0", byCol["score"].CheckExpr)
 }
+
+func TestScanner_RejectsUnsignedPK(t *testing.T) {
+	for _, pk := range []string{"uint", "uint8", "uint16", "uint32", "uint64"} {
+		t.Run(pk, func(t *testing.T) {
+			dir := setupTestModule(t, map[string]string{
+				"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Widget struct {
+	drel.Model[` + pk + `]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+			})
+
+			_, err := ScanPackages([]string{"./models"}, dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unsigned integer primary keys")
+			assert.Contains(t, err.Error(), "Widget")
+			assert.Contains(t, err.Error(), pk)
+		})
+	}
+}
+
+func TestScanner_AcceptsSignedAndUUIDPK(t *testing.T) {
+	// Signed integer PKs (the common case) must pass the guard.
+	// UUID PKs are covered by the emitter tests; we don't import uuid here
+	// because the test module's go.mod only resolves via drel's replace directive.
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Signed struct {
+	drel.Model[int64]
+	name string ` + "`db:\"name\"`" + `
+}
+
+type Also struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 2)
+}

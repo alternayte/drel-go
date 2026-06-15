@@ -75,6 +75,13 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 			Dir:        pkgDir,
 		}
 
+		switch mi.PKType {
+		case "uint", "uint8", "uint16", "uint32", "uint64":
+			return nil, fmt.Errorf(
+				"codegen: model %s: unsigned integer primary keys (%s) are not supported; use a signed integer (auto-increment) or uuid.UUID / string (app-assigned)",
+				mi.Name, mi.PKType)
+		}
+
 		mi.TableName = inferTableName(tn.Name())
 		mi.HasSoftDelete, mi.HasVersioned, mi.HasAudit = detectEmbeds(st)
 		mi.Fields = extractFields(st, pkg.PkgPath)
