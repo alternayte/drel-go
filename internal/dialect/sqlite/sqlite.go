@@ -121,7 +121,7 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 		}
 	}
 
-	if node.Where != nil {
+	if node.Where != nil && !isEmptyClause(*node.Where) {
 		b.WriteString(" WHERE ")
 		writeWhere(&b, &args, *node.Where)
 	}
@@ -136,7 +136,7 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 				b.WriteString(quoteIdent(col))
 			}
 		}
-		if node.Having != nil {
+		if node.Having != nil && !isEmptyClause(*node.Having) {
 			b.WriteString(" HAVING ")
 			writeWhere(&b, &args, *node.Having)
 		}
@@ -183,6 +183,21 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 	}
 
 	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+// isEmptyClause reports whether a WhereClause contributes nothing to SQL.
+// A zero-value WhereClause (Predicate{}) has Children == nil and no Comparison
+// or Raw; it is empty. A WhereClause with a non-nil (possibly empty) Children
+// slice represents an explicit And()/Or() and is NOT empty — the emitter renders
+// it as the logical identity constant.
+func isEmptyClause(clause ast.WhereClause) bool {
+	if clause.Comparison != nil || clause.Raw != nil {
+		return false
+	}
+	if clause.Children != nil {
+		return false
+	}
+	return true
 }
 
 func writeOrderBy(b *strings.Builder, orderBy []ast.OrderByExpr) {
@@ -273,11 +288,23 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause) {
 		b.WriteString(")")
 	case ast.LogicalAnd, ast.LogicalOr:
 		sep := " AND "
+		identity := "1"
 		if clause.LogicalOp == ast.LogicalOr {
 			sep = " OR "
+			identity = "0"
+		}
+		nonEmpty := make([]ast.WhereClause, 0, len(clause.Children))
+		for _, child := range clause.Children {
+			if !isEmptyClause(child) {
+				nonEmpty = append(nonEmpty, child)
+			}
+		}
+		if len(nonEmpty) == 0 {
+			b.WriteString(identity)
+			return
 		}
 		b.WriteString("(")
-		for i, child := range clause.Children {
+		for i, child := range nonEmpty {
 			if i > 0 {
 				b.WriteString(sep)
 			}

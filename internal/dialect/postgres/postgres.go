@@ -127,7 +127,7 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 		}
 	}
 
-	if node.Where != nil {
+	if node.Where != nil && !isEmptyClause(*node.Where) {
 		b.WriteString(" WHERE ")
 		paramIdx = writeWhere(&b, &args, *node.Where, paramIdx)
 	}
@@ -142,7 +142,7 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 				b.WriteString(quoteIdent(col))
 			}
 		}
-		if node.Having != nil {
+		if node.Having != nil && !isEmptyClause(*node.Having) {
 			b.WriteString(" HAVING ")
 			paramIdx = writeWhere(&b, &args, *node.Having, paramIdx)
 		}
@@ -189,6 +189,26 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 	}
 
 	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+// isEmptyClause reports whether a WhereClause contributes nothing to SQL:
+// no comparison, no raw fragment, and Children is nil (zero-value Predicate{}).
+// A WhereClause with a non-nil (but possibly empty) Children slice is NOT empty —
+// it represents an explicit And()/Or() call, which the emitter renders as the
+// logical identity (TRUE for And, FALSE for Or). This distinction matters because
+// LogicalAnd == 0, so we cannot tell apart Predicate{} from And() by LogicalOp
+// alone; the nil vs. non-nil Children slice is the carrier.
+func isEmptyClause(clause ast.WhereClause) bool {
+	if clause.Comparison != nil || clause.Raw != nil {
+		return false
+	}
+	if clause.Children != nil {
+		// Non-nil slice means an explicit And()/Or(); recurse to check if all
+		// children are themselves empty — the emitter will collapse them to an
+		// identity constant, which is valid SQL.
+		return false
+	}
+	return true
 }
 
 func writeOrderBy(b *strings.Builder, orderBy []ast.OrderByExpr) {
@@ -287,11 +307,23 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 		b.WriteString(")")
 	case ast.LogicalAnd, ast.LogicalOr:
 		sep := " AND "
+		identity := "TRUE"
 		if clause.LogicalOp == ast.LogicalOr {
 			sep = " OR "
+			identity = "FALSE"
+		}
+		nonEmpty := make([]ast.WhereClause, 0, len(clause.Children))
+		for _, child := range clause.Children {
+			if !isEmptyClause(child) {
+				nonEmpty = append(nonEmpty, child)
+			}
+		}
+		if len(nonEmpty) == 0 {
+			b.WriteString(identity)
+			return paramIdx
 		}
 		b.WriteString("(")
-		for i, child := range clause.Children {
+		for i, child := range nonEmpty {
 			if i > 0 {
 				b.WriteString(sep)
 			}

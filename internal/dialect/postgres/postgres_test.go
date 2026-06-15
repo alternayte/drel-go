@@ -775,6 +775,60 @@ func TestPostgres_BuildSoftDeleteVersioned(t *testing.T) {
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
 
+func TestPostgres_BuildSelect_EmptyClauses(t *testing.T) {
+	pg := New()
+
+	// Zero-value WhereClause (from Predicate{}) -> no WHERE at all.
+	zeroNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{},
+	}
+	got := pg.BuildSelect(zeroNode)
+	assert.Equal(t, `SELECT "id" FROM "users"`, got.SQL)
+	assert.Empty(t, got.Args)
+
+	// Empty And() -> all-empty children -> TRUE.
+	// Note: And() with no args produces Children: []WhereClause{} (non-nil empty slice).
+	emptyAnd := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{LogicalOp: ast.LogicalAnd, Children: []ast.WhereClause{}},
+	}
+	got = pg.BuildSelect(emptyAnd)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE TRUE`, got.SQL)
+
+	// Empty Or() -> all-empty children -> FALSE.
+	// Note: Or() with no args produces Children: []WhereClause{} (non-nil empty slice).
+	emptyOr := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{LogicalOp: ast.LogicalOr, Children: []ast.WhereClause{}},
+	}
+	got = pg.BuildSelect(emptyOr)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE FALSE`, got.SQL)
+
+	// Real predicate ANDed with a zero Predicate{} -> just the real predicate.
+	mixed := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			LogicalOp: ast.LogicalAnd,
+			Children: []ast.WhereClause{
+				{Comparison: &ast.ComparisonNode{Column: "name", Op: ast.OpEq, Value: "x"}},
+				{}, // zero Predicate{}
+			},
+		},
+	}
+	got = pg.BuildSelect(mixed)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE ("name" = $1)`, got.SQL)
+	assert.Equal(t, []any{"x"}, got.Args)
+}
+
 func TestPostgres_BuildSelect_EmptyIn(t *testing.T) {
 	pg := New()
 

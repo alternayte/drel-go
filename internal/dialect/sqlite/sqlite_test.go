@@ -971,6 +971,56 @@ func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
 
+func TestSQLite_BuildSelect_EmptyClauses(t *testing.T) {
+	s := New()
+
+	zeroNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{},
+	}
+	got := s.BuildSelect(zeroNode)
+	assert.Equal(t, `SELECT "id" FROM "users"`, got.SQL)
+	assert.Empty(t, got.Args)
+
+	// Note: And() with no args produces Children: []WhereClause{} (non-nil empty slice).
+	emptyAnd := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{LogicalOp: ast.LogicalAnd, Children: []ast.WhereClause{}},
+	}
+	got = s.BuildSelect(emptyAnd)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE 1`, got.SQL)
+
+	// Note: Or() with no args produces Children: []WhereClause{} (non-nil empty slice).
+	emptyOr := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where:   &ast.WhereClause{LogicalOp: ast.LogicalOr, Children: []ast.WhereClause{}},
+	}
+	got = s.BuildSelect(emptyOr)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE 0`, got.SQL)
+
+	mixed := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			LogicalOp: ast.LogicalAnd,
+			Children: []ast.WhereClause{
+				{Comparison: &ast.ComparisonNode{Column: "name", Op: ast.OpEq, Value: "x"}},
+				{},
+			},
+		},
+	}
+	got = s.BuildSelect(mixed)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE ("name" = ?)`, got.SQL)
+	assert.Equal(t, []any{"x"}, got.Args)
+}
+
 func TestSQLite_BuildSelect_EmptyIn(t *testing.T) {
 	s := New()
 
