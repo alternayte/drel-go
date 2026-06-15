@@ -38,3 +38,9 @@ func (t *pgxTx) Commit(ctx context.Context) error {
 func (t *pgxTx) Rollback(ctx context.Context) error {
 	return t.tx.Rollback(ctx)
 }
+
+// CopyFrom performs a high-throughput bulk load via the pgx COPY protocol inside
+// this transaction. It implements driver.TxBulkCopier.
+func (t *pgxTx) CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
+	return t.tx.CopyFrom(ctx, pgx.Identifier{table}, columns, pgx.CopyFromRows(rows))
+}

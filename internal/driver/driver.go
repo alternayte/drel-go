@@ -72,6 +72,21 @@ type Pipeliner interface {
 	SendBatch(ctx context.Context, items []BatchItem) (BatchResults, error)
 }
 
+// BulkCopier is an optional Driver capability: high-throughput bulk load via
+// the native COPY protocol (e.g. pgx CopyFrom). Drivers that do not implement
+// it fall back to multi-row INSERT. CopyFrom returns the number of rows copied.
+type BulkCopier interface {
+	CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error)
+}
+
+// TxBulkCopier is the transaction-scoped counterpart of BulkCopier: it lets the
+// runtime run a COPY inside an already-open transaction so the load commits or
+// rolls back atomically with the surrounding work. Txs that do not implement it
+// fall back to multi-row INSERT.
+type TxBulkCopier interface {
+	CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error)
+}
+
 // Driver abstracts database access for the drel engine.
 type Driver interface {
 	QueryRow(ctx context.Context, sql string, args ...any) Row

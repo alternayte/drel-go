@@ -99,6 +99,12 @@ func (d *PgxDriver) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.
 	return &pgxTx{tx: tx}, nil
 }
 
+// CopyFrom performs a high-throughput bulk load via the pgx COPY protocol on a
+// pooled connection. It implements driver.BulkCopier.
+func (d *PgxDriver) CopyFrom(ctx context.Context, table string, columns []string, rows [][]any) (int64, error) {
+	return d.pool.CopyFrom(ctx, pgx.Identifier{table}, columns, pgx.CopyFromRows(rows))
+}
+
 // SendBatch sends all queued queries in a single pipelined round-trip using the
 // pgx batch protocol. Results must be read in order via the returned
 // BatchResults before it is closed.
