@@ -574,3 +574,105 @@ func TestIntegration_Include_FilterAware_SoftDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, aliceAll.Books, 3)
 }
+
+func TestIntegration_Include_Limit_PerParent(t *testing.T) {
+	engine := setupRelationDB(t)
+	seedRelationData(t, engine)
+	repo := drel.NewRepository(engine, authorMeta)
+	ctx := context.Background()
+
+	spec := drel.NewIncludeSpec(booksRelation).
+		OrderBy(drel.NewStringCol("title").Asc()).
+		Limit(2)
+
+	authors, err := repo.Include(spec).OrderBy(drel.NewOrderedCol[int]("id").Asc()).All(ctx)
+	require.NoError(t, err)
+	require.Len(t, authors, 2)
+
+	// Alice has 3 books but Limit(2) per parent => exactly 2; Bob has 1.
+	booksByAuthor := map[string][]string{}
+	for _, a := range authors {
+		titles := make([]string, len(a.Books))
+		for i, b := range a.Books {
+			titles[i] = b.Title
+		}
+		booksByAuthor[a.Name] = titles
+	}
+	require.Len(t, booksByAuthor["Alice"], 2, "per-parent limit must cap Alice at 2, not the batch at 2")
+	require.Len(t, booksByAuthor["Bob"], 1)
+	// Title ASC within Alice's partition.
+	assert.Equal(t, []string{"Book A1", "Book A2"}, booksByAuthor["Alice"])
+}
+
+func TestIntegration_Include_ManyToMany_OrderBy(t *testing.T) {
+	engine := setupRelationDB(t)
+	seedRelationData(t, engine)
+	repo := drel.NewRepository(engine, authorMeta)
+	ctx := context.Background()
+
+	spec := drel.NewIncludeSpec(tagsRelation).OrderBy(drel.NewStringCol("label").Asc())
+	alice, err := repo.Include(spec).Find(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, alice.Tags, 2)
+
+	// label ASC => fiction before tech (regardless of pivot/id order).
+	assert.Equal(t, []string{"fiction", "tech"}, []string{alice.Tags[0].Label, alice.Tags[1].Label})
+}
+
+func TestIntegration_Include_NestedManyToMany(t *testing.T) {
+	engine := setupRelationDB(t)
+	seedRelationData(t, engine)
+	ctx := context.Background()
+
+	// Add a books<->genres M2M reachable via Author -> Books -> Genres.
+	_, err := engine.Exec(ctx, `CREATE TABLE genres (id SERIAL PRIMARY KEY, name TEXT NOT NULL)`)
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, `CREATE TABLE book_genres (book_id INTEGER NOT NULL REFERENCES books(id), genre_id INTEGER NOT NULL REFERENCES genres(id), PRIMARY KEY (book_id, genre_id))`)
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, `INSERT INTO genres (id, name) VALUES (1,'epic'),(2,'noir')`)
+	require.NoError(t, err)
+	// Book 1 (Alice's Book A1) -> epic, noir.
+	_, err = engine.Exec(ctx, `INSERT INTO book_genres (book_id, genre_id) VALUES (1,1),(1,2)`)
+	require.NoError(t, err)
+
+	type genre struct {
+		ID   int
+		Name string
+	}
+	genreMeta := drel.ModelMeta[genre]{
+		Table:    "genres",
+		Columns:  []string{"id", "name"},
+		PKColumn: "id",
+		Scan: func(r drel.Row) (*genre, error) {
+			g := &genre{}
+			return g, r.Scan(&g.ID, &g.Name)
+		},
+		PKValue:     func(g *genre) any { return g.ID },
+		ColumnValue: func(g *genre, i int) any { return [...]any{g.ID, g.Name}[i] },
+	}
+	// Extend Book with a Genres field via a local relation that stuffs into a map
+	// we can assert on; FieldSetter records onto the book pointer's title->genres.
+	collected := map[string][]string{}
+	booksGenresRel := &drel.RelationInfo{
+		Name:        "Genres",
+		Type:        drel.ManyToMany,
+		FKColumn:    "book_id",
+		JoinTable:   "book_genres",
+		RefColumn:   "genre_id",
+		RelatedMeta: drel.ToMetaBase(&genreMeta),
+		FieldSetter: func(parent any, related any) {
+			b := parent.(*Book)
+			for _, it := range related.([]any) {
+				collected[b.Title] = append(collected[b.Title], it.(*genre).Name)
+			}
+		},
+	}
+
+	repo := drel.NewRepository(engine, authorMeta)
+	nested := drel.NewIncludeSpec(booksRelation).
+		Then(drel.NewIncludeSpec(booksGenresRel).OrderBy(drel.NewStringCol("name").Asc()))
+	_, err = repo.Include(nested).All(ctx)
+	require.NoError(t, err)
+
+	require.ElementsMatch(t, []string{"epic", "noir"}, collected["Book A1"])
+}
