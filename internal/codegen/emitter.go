@@ -190,7 +190,7 @@ func columnFields(fields []FieldInfo) []FieldInfo {
 func EmitModelFileChecked(m ModelInfo) (string, error) {
 	for _, f := range m.Fields {
 		if f.IsVO && !f.HasEqual && !f.IsComparable {
-			return "", fmt.Errorf("drel: model %q field %q is a value object whose type is not comparable (it contains a slice, map, or func) and has no Equal(T) bool method; add an Equal method so change-tracking can diff it", m.Name, f.Name)
+			return "", fmt.Errorf("drel: model %q field %q implements sql.Scanner + driver.Valuer (single-column value object) but its type is not comparable (contains a slice, map, or func) and has no Equal(T) bool method; add an Equal method so change-tracking can diff it", m.Name, f.Name)
 		}
 	}
 	return EmitModelFile(m), nil

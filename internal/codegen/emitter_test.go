@@ -604,9 +604,15 @@ func TestEmitModelFileChecked_NonComparableVONoEqualErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "Account")
 	assert.Contains(t, err.Error(), "tags")
 	assert.Contains(t, err.Error(), "Equal")
+	// The error must name the real contract so the user knows WHY the field is
+	// considered a value object (it implements sql.Scanner + driver.Valuer).
+	assert.Contains(t, err.Error(), "sql.Scanner")
+	assert.Contains(t, err.Error(), "driver.Valuer")
 }
 
-func TestEmitModelFileChecked_RejectTextNamesRealContract(t *testing.T) {
+// TestEmitModelFileChecked_MultiColVOSucceeds verifies that multi-column VOs
+// are fully supported and do not trigger the non-comparable error.
+func TestEmitModelFileChecked_MultiColVOSucceeds(t *testing.T) {
 	m := ModelInfo{
 		Name: "Product", PkgName: "models", PKType: "int", TableName: "products",
 		Fields: []FieldInfo{
@@ -616,6 +622,30 @@ func TestEmitModelFileChecked_RejectTextNamesRealContract(t *testing.T) {
 	_, err := EmitModelFileChecked(m)
 	// Multi-col VOs ARE now supported; EmitModelFileChecked must succeed.
 	require.NoError(t, err)
+}
+
+// TestEmitModelFileChecked_RejectTextNamesRealContract guards that when
+// EmitModelFileChecked rejects a non-comparable single-column VO without an
+// Equal method, the error message names the real interface contract
+// (sql.Scanner + driver.Valuer) so the user knows why the field is treated as
+// a value object and what they need to implement.
+func TestEmitModelFileChecked_RejectTextNamesRealContract(t *testing.T) {
+	m := ModelInfo{
+		Name: "Cart", PkgName: "models", PKType: "int", TableName: "carts",
+		Fields: []FieldInfo{
+			// Tags implements sql.Scanner + driver.Valuer (IsVO=true) but its
+			// underlying type contains a slice — not comparable, no Equal method.
+			{Name: "tags", GoType: "testmod/models.Tags", ColumnName: "tags",
+				LocalGoType: "Tags", IsVO: true, HasEqual: false, IsComparable: false},
+		},
+	}
+	_, err := EmitModelFileChecked(m)
+	require.Error(t, err)
+	// Error must name the real contract so the user understands why rejection
+	// happened: the type implements sql.Scanner + driver.Valuer but lacks Equal.
+	assert.Contains(t, err.Error(), "sql.Scanner")
+	assert.Contains(t, err.Error(), "driver.Valuer")
+	assert.Contains(t, err.Error(), "Equal")
 }
 
 // extractLine returns the first line in s that contains substr.
