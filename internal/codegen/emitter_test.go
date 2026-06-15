@@ -296,6 +296,51 @@ func TestEmitModelFile_MultiColVOColumnRefs(t *testing.T) {
 	assert.NotContains(t, out, "drel.Column[Money]")
 }
 
+func TestEmitModelFile_MultiColVOScanDiffValue(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Account",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{
+				Name:          "balance",
+				GoType:        "testmod/models.Money",
+				ColumnName:    "balance_amount",
+				LocalGoType:   "Money",
+				IsMultiColVO:  true,
+				MultiColNames: []string{"balance_amount", "balance_currency"},
+				MultiColTypes: []string{"text", "text"},
+			},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// Columns meta lists both sub-columns in order, between id and created_at.
+	assert.Contains(t, out, `Columns: []string{"id", "name", "balance_amount", "balance_currency", "created_at", "updated_at"}`)
+
+	// Generated DrelValues helper.
+	assert.Contains(t, out, "func accountMultiVals(v Money) []any {")
+	assert.Contains(t, out, "vals, err := v.DrelValues()")
+	assert.Contains(t, out, "panic(")
+
+	// Scan: temporaries + DrelScanMulti reconstruction.
+	assert.Contains(t, out, "var balanceVals = make([]any, 2)")
+	assert.Contains(t, out, "&balanceVals[0]")
+	assert.Contains(t, out, "&balanceVals[1]")
+	assert.Contains(t, out, "if err := p.balance.DrelScanMulti(balanceVals); err != nil {")
+
+	// ColumnValue: positional case per sub-column, pulling from DrelValues.
+	assert.Contains(t, out, "return accountMultiVals(p.balance)[0]")
+	assert.Contains(t, out, "return accountMultiVals(p.balance)[1]")
+
+	// InsertColumns: both sub-column names + both values, expanded inline.
+	assert.Contains(t, out, `"balance_amount", "balance_currency"`)
+	assert.Contains(t, out, "accountMultiVals(p.balance)[0], accountMultiVals(p.balance)[1]")
+}
+
 func TestEmitModelFile_MultiColVOReturnsError(t *testing.T) {
 	m := ModelInfo{
 		Name:      "Product",

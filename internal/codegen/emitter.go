@@ -144,6 +144,9 @@ func emitImports(b *strings.Builder, m ModelInfo, extAliases map[string]string) 
 		if f.TypePkgPath == "time" {
 			stdImports["time"] = true
 		}
+		if f.IsMultiColVO {
+			stdImports["fmt"] = true
+		}
 	}
 
 	b.WriteString("import (\n")
@@ -207,6 +210,9 @@ func EmitModelFile(m ModelInfo) string {
 
 	// --- Column references ---
 	emitColumnRefs(&b, m, varPlural, aliases)
+
+	// --- Multi-column VO value helpers ---
+	emitMultiValHelpers(&b, m, lower, aliases)
 
 	// --- All columns list ---
 	allCols := allColumns(m)
@@ -309,6 +315,10 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 func allColumns(m ModelInfo) []string {
 	cols := []string{"id"}
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			cols = append(cols, f.MultiColNames...)
+			continue
+		}
 		cols = append(cols, f.ColumnName)
 	}
 	if m.HasSoftDelete {
@@ -324,6 +334,19 @@ func allColumns(m ModelInfo) []string {
 	return cols
 }
 
+func emitMultiValHelpers(b *strings.Builder, m ModelInfo, lower string, aliases map[string]string) {
+	for _, f := range columnFields(m.Fields) {
+		if !f.IsMultiColVO {
+			continue
+		}
+		voType := fieldDisplayType(f, aliases)
+		b.WriteString(fmt.Sprintf("func %sMultiVals(v %s) []any {\n", lower, voType))
+		b.WriteString("\tvals, err := v.DrelValues()\n")
+		b.WriteString(fmt.Sprintf("\tif err != nil {\n\t\tpanic(fmt.Sprintf(%q, err))\n\t}\n", "drel: "+m.Name+" multi-column VO DrelValues: %v"))
+		b.WriteString("\treturn vals\n}\n\n")
+	}
+}
+
 func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []string) {
 	b.WriteString(fmt.Sprintf("func scan%s(row drel.Row) (*%s, error) {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\tp := &%s{}\n", m.Name))
@@ -332,10 +355,23 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 		b.WriteString("\tcreatedByPtr, updatedByPtr := p.AuditPtrs()\n")
 	}
 
+	// Pre-declare multi-col VO scan temporaries.
+	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			b.WriteString(fmt.Sprintf("\tvar %sVals = make([]any, %d)\n", f.Name, len(f.MultiColNames)))
+		}
+	}
+
 	// Build scan args
 	var scanArgs []string
 	scanArgs = append(scanArgs, "idPtr")
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			for i := range f.MultiColNames {
+				scanArgs = append(scanArgs, fmt.Sprintf("&%sVals[%d]", f.Name, i))
+			}
+			continue
+		}
 		scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
 	}
 	if m.HasSoftDelete {
@@ -351,6 +387,12 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 
 	b.WriteString(fmt.Sprintf("\terr := row.Scan(%s)\n", strings.Join(scanArgs, ", ")))
 	b.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
+	// Reconstruct multi-col VO fields from scan temporaries.
+	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			b.WriteString(fmt.Sprintf("\tif err := p.%s.DrelScanMulti(%sVals); err != nil {\n\t\treturn nil, err\n\t}\n", f.Name, f.Name))
+		}
+	}
 	b.WriteString("\treturn p, nil\n}\n\n")
 }
 
@@ -398,6 +440,13 @@ func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []st
 
 	// User-defined columns
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			for i := range f.MultiColNames {
+				b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn %sMultiVals(p.%s)[%d]\n", idx, lower, f.Name, i))
+				idx++
+			}
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.%s\n", idx, f.Name))
 		idx++
 	}
@@ -431,6 +480,13 @@ func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 	var colNames []string
 	var colVals []string
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			for i, sub := range f.MultiColNames {
+				colNames = append(colNames, fmt.Sprintf("%q", sub))
+				colVals = append(colVals, fmt.Sprintf("%sMultiVals(p.%s)[%d]", lower, f.Name, i))
+			}
+			continue
+		}
 		colNames = append(colNames, fmt.Sprintf("%q", f.ColumnName))
 		colVals = append(colVals, fmt.Sprintf("p.%s", f.Name))
 	}
