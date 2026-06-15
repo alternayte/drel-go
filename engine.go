@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -82,6 +83,11 @@ func detectDialect(d string) string {
 // NewEngine creates a new Engine connected to the given DSN.
 // The dialect and driver are auto-detected from the DSN unless overridden
 // with WithDriver or WithDialect.
+//
+// libSQL/Turso caveat: the websocket transport (ws:// or wss://) returns DATETIME
+// columns as strings and corrupts time.Time scans (including created_at/updated_at).
+// Prefer a libsql:// or https:// DSN for models with time.Time fields; NewEngine
+// logs a warning when a ws://-scheme DSN is opened.
 func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	cfg := &engineConfig{
 		ctx: context.Background(),
@@ -157,6 +163,7 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 		queryTimeout: cfg.queryTimeout,
 	}
 	e.installObservability(cfg)
+	e.warnWSTransport(cfg.ctx, dsn)
 	return e, nil
 }
 
@@ -224,6 +231,9 @@ func WithQueryTimeout(d time.Duration) Option {
 
 // WithAuthToken sets the authentication token for a libSQL/Turso connection.
 // It is appended to the DSN as the authToken query parameter.
+//
+// Prefer a libsql:// or https:// DSN over ws://wss:// — the websocket transport
+// corrupts time.Time columns (see NewEngine).
 func WithAuthToken(token string) Option {
 	return func(cfg *engineConfig) { cfg.authToken = token }
 }
@@ -233,6 +243,34 @@ func WithAuthToken(token string) Option {
 // Delegates to internal/dsn so the engine and CLI cannot drift apart.
 func applyAuthToken(d, token string) string {
 	return dsn.ApplyAuthToken(d, token)
+}
+
+// warnWSTransport logs a warning when a libSQL DSN uses the websocket transport
+// (ws:// or wss://). The websocket transport returns DATETIME columns as strings
+// rather than time values, silently corrupting time.Time scans (including the
+// always-present created_at/updated_at). The HTTP transport (https://) does not
+// have this defect. Operators should prefer libsql:// or https:// for models with
+// time.Time fields. See docs/prd.md.
+func (e *Engine) warnWSTransport(ctx context.Context, d string) {
+	if !strings.HasPrefix(d, "ws://") && !strings.HasPrefix(d, "wss://") {
+		return
+	}
+	logger := e.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(ctx,
+		"drel: libSQL websocket transport returns DATETIME as strings and corrupts time.Time columns (e.g. created_at/updated_at); use a libsql:// or https:// DSN for models with time fields",
+		"dsn_scheme", dsnScheme(d))
+}
+
+// dsnScheme returns the URL scheme of a DSN (the part before "://"), or "" if the
+// DSN carries no scheme. Used for diagnostics without logging credentials.
+func dsnScheme(d string) string {
+	if i := strings.Index(d, "://"); i >= 0 {
+		return d[:i]
+	}
+	return ""
 }
 
 // WithReadReplica registers a read replica. Read queries issued through

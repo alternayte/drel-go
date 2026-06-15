@@ -1,6 +1,12 @@
 package drel
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 func TestDetectDialect_LibSQL(t *testing.T) {
 	cases := map[string]string{
@@ -46,6 +52,27 @@ func TestDetectDialect_SQLiteFilePaths(t *testing.T) {
 	for dsn, want := range cases {
 		if got := detectDialect(dsn); got != want {
 			t.Errorf("detectDialect(%q) = %q, want %q", dsn, got, want)
+		}
+	}
+}
+
+func TestWarnWSTransport_LogsForWSScheme(t *testing.T) {
+	cases := map[string]bool{
+		"ws://localhost:8080":  true,
+		"wss://db.turso.io":   true,
+		"libsql://db.turso.io": false,
+		"https://db.turso.io": false,
+		"file:app.db":         false,
+		":memory:":            false,
+	}
+	for dsn, wantWarn := range cases {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		e := &Engine{logger: logger}
+		e.warnWSTransport(context.Background(), dsn)
+		got := strings.Contains(buf.String(), "websocket")
+		if got != wantWarn {
+			t.Errorf("warnWSTransport(%q): logged-websocket-warning=%v, want %v (output=%q)", dsn, got, wantWarn, buf.String())
 		}
 	}
 }
