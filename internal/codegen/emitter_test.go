@@ -551,6 +551,31 @@ func TestEmitModelFile_UUIDPK_AppAssigned(t *testing.T) {
 	}
 }
 
+func TestEmitModelFile_NullableVOBridge(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PkgName: "models", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "email", GoType: "testmod/models.Email", ColumnName: "email", LocalGoType: "Email", IsVO: true, IsComparable: true, HasIsZero: true},
+		},
+	}
+	out := EmitModelFile(m)
+	// Insert: zero VO becomes NULL via Valuer (Value() returns nil for zero).
+	// We rely on the VO's own Value(); generated insert passes the VO directly,
+	// and scan passes &p.email. The bridge is documented via a guard comment.
+	assert.Contains(t, out, "// email is a nullable value object")
+}
+
+func TestEmitModelFile_NonNullableVONoBridgeComment(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PkgName: "models", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "email", GoType: "testmod/models.Email", ColumnName: "email", LocalGoType: "Email", IsVO: true, IsComparable: true},
+		},
+	}
+	out := EmitModelFile(m)
+	assert.NotContains(t, out, "nullable value object")
+}
+
 func TestEmitModelFile_VODiffUsesEqual(t *testing.T) {
 	m := ModelInfo{
 		Name: "Account", PkgName: "models", PKType: "int", TableName: "accounts",

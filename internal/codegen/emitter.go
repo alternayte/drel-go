@@ -373,6 +373,11 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 			}
 			continue
 		}
+		if f.IsVO && f.HasIsZero {
+			// The VO's own Scan(nil) handles a SQL NULL; its Value() returns nil
+			// for the zero value, so the column round-trips zero <-> NULL.
+			b.WriteString(fmt.Sprintf("\t// %s is a nullable value object: Scan(nil)->zero, Value()==nil for zero->NULL\n", f.ColumnName))
+		}
 		scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
 	}
 	if m.HasSoftDelete {

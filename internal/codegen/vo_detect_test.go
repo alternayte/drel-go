@@ -74,6 +74,54 @@ func TestScanner_MultiColTypesDefaultText(t *testing.T) {
 	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
 }
 
+func TestScanner_SingleColVO_HasIsZero(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import (
+	"database/sql/driver"
+	"fmt"
+
+	"github.com/alternayte/drel"
+)
+
+type Email struct{ address string }
+
+func (e Email) Value() (driver.Value, error) {
+	if e.address == "" {
+		return nil, nil
+	}
+	return e.address, nil
+}
+func (e *Email) Scan(src any) error {
+	if src == nil {
+		e.address = ""
+		return nil
+	}
+	s, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	e.address = s
+	return nil
+}
+func (e Email) IsZero() bool { return e.address == "" }
+
+type Account struct {
+	drel.Model[int]
+	email Email ` + "`db:\"email\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	require.Len(t, models[0].Fields, 1)
+	assert.True(t, models[0].Fields[0].IsVO)
+	assert.True(t, models[0].Fields[0].HasIsZero)
+}
+
 func TestScanner_SingleColVO_Comparable(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
 		"models/model.go": `package models

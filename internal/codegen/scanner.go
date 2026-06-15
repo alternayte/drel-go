@@ -231,6 +231,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 					fi.VOBaseType = voBaseType(f.Type())
 					fi.HasEqual = hasMethod(f.Type(), "Equal")
 					fi.IsComparable = types.Comparable(voUnderlyingNamed(f.Type()))
+					fi.HasIsZero = hasMethod(f.Type(), "IsZero")
 				}
 				if isMultiColumnMapper(f.Type()) {
 					fi.IsMultiColVO = true

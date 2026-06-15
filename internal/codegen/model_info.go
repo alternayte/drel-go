@@ -26,6 +26,7 @@ type FieldInfo struct {
 	VOBaseType     string // single-column VO: underlying basic Go type (e.g. "string", "int64"); empty if not derivable
 	HasEqual       bool   // single-column VO defines an Equal(T) bool method usable for diffing
 	IsComparable   bool   // single-column VO's Go type is comparable with == / != (types.Comparable)
+	HasIsZero      bool   // single-column VO defines IsZero() bool, enabling the zero<->NULL bridge
 	IsMultiColVO   bool   // implements drel.MultiColumnMapper (multi-column VO)
 	MultiColPrefix string // db tag used as column prefix for multi-column VOs
 	MultiColNames  []string // expanded sub-column names from the db tag (multi-column VOs)
