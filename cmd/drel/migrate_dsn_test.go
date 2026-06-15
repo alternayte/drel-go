@@ -7,23 +7,27 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestResolveAuthToken_Flag(t *testing.T) {
-	args := []string{"drel", "migrate", "up", "--auth-token", "tok123"}
-	assert.Equal(t, "tok123", resolveAuthToken(args))
+// resolveAuthToken now accepts the token string from parsedCmd.AuthToken;
+// these tests verify the precedence logic (explicit flag beats env, env beats
+// empty string).
+
+func TestResolveAuthToken_ExplicitToken(t *testing.T) {
+	// Explicit token wins regardless of env.
+	t.Setenv("TURSO_AUTH_TOKEN", "envtok")
+	assert.Equal(t, "tok123", resolveAuthToken("tok123"))
 }
 
 func TestResolveAuthToken_Env(t *testing.T) {
 	t.Setenv("TURSO_AUTH_TOKEN", "envtok")
-	assert.Equal(t, "envtok", resolveAuthToken([]string{"drel", "migrate", "up"}))
+	assert.Equal(t, "envtok", resolveAuthToken(""))
 }
 
 func TestResolveAuthToken_FlagBeatsEnv(t *testing.T) {
 	t.Setenv("TURSO_AUTH_TOKEN", "envtok")
-	args := []string{"drel", "migrate", "up", "--auth-token", "flagtok"}
-	assert.Equal(t, "flagtok", resolveAuthToken(args))
+	assert.Equal(t, "flagtok", resolveAuthToken("flagtok"))
 }
 
 func TestResolveAuthToken_None(t *testing.T) {
 	_ = os.Unsetenv("TURSO_AUTH_TOKEN")
-	assert.Equal(t, "", resolveAuthToken([]string{"drel", "migrate", "status"}))
+	assert.Equal(t, "", resolveAuthToken(""))
 }

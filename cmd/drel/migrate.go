@@ -12,13 +12,11 @@ import (
 	"github.com/alternayte/drel/internal/migrate"
 )
 
-// resolveAuthToken reads the Turso/libSQL auth token from the --auth-token flag
-// (highest precedence) or the TURSO_AUTH_TOKEN environment variable.
-func resolveAuthToken(args []string) string {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--auth-token" && i+1 < len(args) {
-			return args[i+1]
-		}
+// resolveAuthToken returns the auth token from parsedCmd.AuthToken (highest
+// precedence) or the TURSO_AUTH_TOKEN environment variable.
+func resolveAuthToken(tok string) string {
+	if tok != "" {
+		return tok
 	}
 	return os.Getenv("TURSO_AUTH_TOKEN")
 }
@@ -26,9 +24,9 @@ func resolveAuthToken(args []string) string {
 // openMigrateDriver opens a database driver for migration commands. The dialect
 // is taken from drel.yaml when present, otherwise inferred from the DSN. LibSQL/
 // Turso DSNs (libsql://, wss://, https://, ...) open the libsql driver, with the
-// auth token injected from --auth-token / TURSO_AUTH_TOKEN.
-func openMigrateDriver(ctx context.Context, configPath, dataSource string) (driver.Driver, error) {
-	authToken := resolveAuthToken(os.Args)
+// auth token injected from parsedCmd.AuthToken / TURSO_AUTH_TOKEN.
+func openMigrateDriver(ctx context.Context, parsed parsedCmd, dataSource string) (driver.Driver, error) {
+	authToken := resolveAuthToken(parsed.AuthToken)
 	return dsn.OpenDriver(ctx, dataSource, authToken)
 }
 
@@ -202,7 +200,7 @@ func runMigrateUp(parsed parsedCmd) {
 	ctx, stop := signalContext()
 	defer stop()
 
-	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
+	drv, err := openMigrateDriver(ctx, parsed, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
 		os.Exit(1)
@@ -228,7 +226,7 @@ func runMigrateDown(parsed parsedCmd) {
 	ctx, stop := signalContext()
 	defer stop()
 
-	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
+	drv, err := openMigrateDriver(ctx, parsed, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
@@ -249,7 +247,7 @@ func runMigrateStatus(parsed parsedCmd) {
 	ctx, stop := signalContext()
 	defer stop()
 
-	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
+	drv, err := openMigrateDriver(ctx, parsed, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
 		os.Exit(1)
@@ -291,7 +289,7 @@ func runMigrateLint(parsed parsedCmd) {
 	ctx, stop := signalContext()
 	defer stop()
 
-	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
+	drv, err := openMigrateDriver(ctx, parsed, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
 		os.Exit(1)
@@ -320,7 +318,7 @@ func runMigrateCheck(parsed parsedCmd) {
 	ctx, stop := signalContext()
 	defer stop()
 
-	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
+	drv, err := openMigrateDriver(ctx, parsed, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate check: %v\n", err)
 		os.Exit(1)

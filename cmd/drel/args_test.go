@@ -58,11 +58,43 @@ func TestParseArgs_MigrateNew_NameBeforeFlag(t *testing.T) {
 	assert.NotContains(t, pc.Positional, "--config")
 }
 
-func TestParseArgs_Generate_Watch(t *testing.T) {
-	pc, err := parseArgs([]string{"generate", "--watch", "--config=x.yaml"})
+func TestParseArgs_Generate_Watch_IsRejected(t *testing.T) {
+	// --watch is not yet implemented; it must be rejected loudly rather than
+	// silently running a one-shot generate (detected-but-unimplemented pattern).
+	_, err := parseArgs([]string{"generate", "--watch", "--config=x.yaml"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "watch")
+}
+
+func TestParseArgs_Help_TopLevel(t *testing.T) {
+	for _, argv := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+		t.Run(argv[0], func(t *testing.T) {
+			pc, err := parseArgs(argv)
+			require.NoError(t, err)
+			assert.Equal(t, "help", pc.Command)
+		})
+	}
+}
+
+func TestParseArgs_Help_Subcommand(t *testing.T) {
+	// "generate --help" should produce Command="help", not an error.
+	pc, err := parseArgs([]string{"generate", "--help"})
 	require.NoError(t, err)
-	assert.True(t, pc.Watch)
+	assert.Equal(t, "help", pc.Command)
+}
+
+func TestParseArgs_AuthToken_Parsed(t *testing.T) {
+	// --auth-token should be routed through parsedCmd, not read from os.Args.
+	pc, err := parseArgs([]string{"migrate", "up", "--auth-token=mysecret", "--config=x.yaml"})
+	require.NoError(t, err)
+	assert.Equal(t, "mysecret", pc.AuthToken)
 	assert.Equal(t, "x.yaml", pc.ConfigPath)
+}
+
+func TestParseArgs_AuthToken_SpaceForm(t *testing.T) {
+	pc, err := parseArgs([]string{"migrate", "up", "--auth-token", "tok2", "--config=x.yaml"})
+	require.NoError(t, err)
+	assert.Equal(t, "tok2", pc.AuthToken)
 }
 
 func TestParseArgs_MigrateNew_RejectsFlaggyName(t *testing.T) {

@@ -35,6 +35,8 @@ func main() {
 		runSeed(parsed)
 	case "version":
 		fmt.Printf("drel %s (%s)\n", version, commit)
+	case "help":
+		printUsageStdout()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", parsed.Command)
 		printUsage()
@@ -42,19 +44,26 @@ func main() {
 	}
 }
 
-func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: drel <command>")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  init        Scaffold a drel.yaml configuration file")
-	fmt.Fprintln(os.Stderr, "  generate    Generate code from model definitions")
-	fmt.Fprintln(os.Stderr, "  migrate     Manage database migrations")
-	fmt.Fprintln(os.Stderr, "  seed        Run seed functions against the database")
-	fmt.Fprintln(os.Stderr, "  version     Print version")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  --config, -c <path>   Path to drel.yaml (default: drel.yaml)")
+func fprintUsage(w interface{ Write([]byte) (int, error) }) {
+	fmt.Fprintln(w, "Usage: drel <command>")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  init        Scaffold a drel.yaml configuration file")
+	fmt.Fprintln(w, "  generate    Generate code from model definitions")
+	fmt.Fprintln(w, "  migrate     Manage database migrations")
+	fmt.Fprintln(w, "  seed        Run seed functions against the database")
+	fmt.Fprintln(w, "  version     Print version")
+	fmt.Fprintln(w, "  help        Show this help")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  --config, -c <path>   Path to drel.yaml (default: drel.yaml)")
 }
+
+// printUsage prints usage to stderr (for error paths).
+func printUsage() { fprintUsage(os.Stderr) }
+
+// printUsageStdout prints usage to stdout (for --help/-h/help, exit 0).
+func printUsageStdout() { fprintUsage(os.Stdout) }
 
 const defaultConfig = `# drel configuration — see https://github.com/alternayte/drel
 packages:
