@@ -23,8 +23,9 @@ type QueryBuilder[T any] struct {
 	offset  *int
 	after   *string
 	before  *string
-	filters []NamedFilter
-	primary bool
+	filters  []NamedFilter
+	primary  bool
+	distinct bool
 
 	// allowFullTable, when set via AllRows(), opts a BulkUpdate/BulkDelete out of
 	// the full-table safety guard for deliberate whole-table writes.
@@ -56,6 +57,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		before:         q.before,
 		filters:        append([]NamedFilter(nil), q.filters...),
 		primary:        q.primary,
+		distinct:       q.distinct,
 		allowFullTable: q.allowFullTable,
 		tracker:        q.tracker,
 		base:           q.base,
@@ -78,6 +80,14 @@ func (q *QueryBuilder[T]) AllRows() *QueryBuilder[T] {
 func (q *QueryBuilder[T]) Primary() *QueryBuilder[T] {
 	c := q.clone()
 	c.primary = true
+	return c
+}
+
+// Distinct makes the projection emit SELECT DISTINCT, de-duplicating result rows.
+// It affects Select and GroupBy projections; it has no effect on All/First/Count/Exists.
+func (q *QueryBuilder[T]) Distinct() *QueryBuilder[T] {
+	c := q.clone()
+	c.distinct = true
 	return c
 }
 
@@ -113,12 +123,13 @@ func (q *QueryBuilder[T]) Skip(n int) *QueryBuilder[T] {
 
 func (q *QueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 	node := ast.SelectNode{
-		Table:   q.meta.Table,
-		Columns: q.meta.Columns,
-		OrderBy: q.orderBy,
-		Limit:   q.limit,
-		Offset:  q.offset,
-		Type:    queryType,
+		Table:    q.meta.Table,
+		Columns:  q.meta.Columns,
+		OrderBy:  q.orderBy,
+		Limit:    q.limit,
+		Offset:   q.offset,
+		Type:     queryType,
+		Distinct: q.distinct,
 	}
 
 	allWheres := make([]ast.WhereClause, 0, len(q.filters)+len(q.wheres))

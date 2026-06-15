@@ -215,6 +215,11 @@ func (r *Repository[T]) Primary() *QueryBuilder[T] {
 	return r.newBuilder().Primary()
 }
 
+// Distinct returns a query builder with SELECT DISTINCT enabled.
+func (r *Repository[T]) Distinct() *QueryBuilder[T] {
+	return r.newBuilder().Distinct()
+}
+
 // Unscoped returns a query builder with all global filters removed.
 func (r *Repository[T]) Unscoped() *QueryBuilder[T] {
 	return r.newBuilder().Unscoped()

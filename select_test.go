@@ -361,3 +361,19 @@ func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
+
+type categoryOnlyDTO struct {
+	Category string `db:"category"`
+}
+
+func TestSelect_Distinct(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.Distinct().OrderBy(drel.NewStringCol("category").Asc())
+	results, err := drel.Select[categoryOnlyDTO](ctx, qb, drel.ColRef("category"))
+	require.NoError(t, err)
+	require.Len(t, results, 2) // 4 rows, 2 distinct categories
+	assert.Equal(t, "accessories", results[0].Category)
+	assert.Equal(t, "electronics", results[1].Category)
+}
