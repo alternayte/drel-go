@@ -150,7 +150,9 @@ type User struct {
 
 	requireEventually(t, func() bool {
 		c, e := os.ReadFile(modelFile)
-		return e == nil && strings.Contains(string(c), `NewCol`) && strings.Contains(string(c), "email")
+		// Verify the email field was picked up: the generated struct will contain
+		// NewStringCol("email") or similar column constructor referencing "email".
+		return e == nil && strings.Contains(string(c), `NewStringCol("email")`)
 	}, 30*time.Second, "watch did not regenerate after source change")
 
 	// Sanity: the DB file content is unchanged (one model) but regen ran without panic.

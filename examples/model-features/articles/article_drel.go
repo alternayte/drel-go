@@ -13,22 +13,22 @@ var Articles = struct {
 	ID        drel.OrderedColumn[int]
 	Title     drel.StringColumn
 	Body      drel.StringColumn
-	DeletedAt drel.Column[*time.Time]
+	DeletedAt drel.ComparableColumn[*time.Time]
 	Version   drel.OrderedColumn[int]
 	CreatedBy drel.StringColumn
 	UpdatedBy drel.StringColumn
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Title:     drel.NewStringCol("title"),
 	Body:      drel.NewStringCol("body"),
-	DeletedAt: drel.NewCol[*time.Time]("deleted_at"),
+	DeletedAt: drel.NewComparableCol[*time.Time]("deleted_at"),
 	Version:   drel.NewOrderedCol[int]("version"),
 	CreatedBy: drel.NewStringCol("created_by"),
 	UpdatedBy: drel.NewStringCol("updated_by"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanArticle(row drel.Row) (*Article, error) {

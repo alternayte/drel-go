@@ -4,7 +4,6 @@ package users
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -13,14 +12,14 @@ var Users = struct {
 	ID        drel.OrderedColumn[int]
 	Name      drel.StringColumn
 	Balance   drel.OrderedColumn[int]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Name:      drel.NewStringCol("name"),
 	Balance:   drel.NewOrderedCol[int]("balance"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanUser(row drel.Row) (*User, error) {

@@ -4,24 +4,23 @@ package orders
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 	uuid "github.com/google/uuid"
 )
 
 var Orders = struct {
-	ID        drel.Column[uuid.UUID]
+	ID        drel.ComparableColumn[uuid.UUID]
 	Customer  drel.StringColumn
 	Total     drel.OrderedColumn[int]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
-	ID:        drel.NewCol[uuid.UUID]("id"),
+	ID:        drel.NewComparableCol[uuid.UUID]("id"),
 	Customer:  drel.NewStringCol("customer"),
 	Total:     drel.NewOrderedCol[int]("total"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanOrder(row drel.Row) (*Order, error) {

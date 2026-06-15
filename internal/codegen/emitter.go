@@ -82,8 +82,12 @@ func columnTypeName(goType string) string {
 		"uint", "uint8", "uint16", "uint32", "uint64",
 		"float32", "float64":
 		return fmt.Sprintf("drel.OrderedColumn[%s]", goType)
+	case "time.Time":
+		return "drel.TimeColumn"
 	default:
-		return fmt.Sprintf("drel.Column[%s]", goType)
+		// *time.Time, uuid.UUID, and any other comparable/VO types get
+		// ComparableColumn[T] so callers have access to range operators.
+		return fmt.Sprintf("drel.ComparableColumn[%s]", goType)
 	}
 }
 
@@ -98,8 +102,11 @@ func columnConstructor(goType, colName string) string {
 		"uint", "uint8", "uint16", "uint32", "uint64",
 		"float32", "float64":
 		return fmt.Sprintf("drel.NewOrderedCol[%s](%q)", goType, colName)
+	case "time.Time":
+		return fmt.Sprintf("drel.NewTimeCol(%q)", colName)
 	default:
-		return fmt.Sprintf("drel.NewCol[%s](%q)", goType, colName)
+		// *time.Time, uuid.UUID, and any other comparable/VO types.
+		return fmt.Sprintf("drel.NewComparableCol[%s](%q)", goType, colName)
 	}
 }
 
@@ -135,8 +142,17 @@ func buildModelImportAliases(m ModelInfo) map[string]string {
 }
 
 func emitImports(b *strings.Builder, m ModelInfo, extAliases map[string]string) {
-	stdImports := map[string]bool{"context": true, "time": true}
+	// "context" is always needed (FindAll etc. take a context.Context parameter).
+	// "time" is needed only when *time.Time appears directly in the generated
+	// column-refs struct (HasSoftDelete emits ComparableColumn[*time.Time]) or
+	// when a user field explicitly lives in the "time" package. TimeColumn and
+	// the ScanPtrs()/CreatedAt()/UpdatedAt() helpers are in the drel package, so
+	// they do NOT pull in "time" on their own.
+	stdImports := map[string]bool{"context": true}
 
+	if m.HasSoftDelete {
+		stdImports["time"] = true
+	}
 	if m.PKTypePkg == "time" {
 		stdImports["time"] = true
 	}
@@ -314,7 +330,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 		b.WriteString(fmt.Sprintf("\t%s %s\n", exportName(f.Name), columnTypeName(fieldDisplayType(f, aliases))))
 	}
 	if m.HasSoftDelete {
-		b.WriteString("\tDeletedAt drel.Column[*time.Time]\n")
+		b.WriteString("\tDeletedAt drel.ComparableColumn[*time.Time]\n")
 	}
 	if m.HasVersioned {
 		b.WriteString("\tVersion drel.OrderedColumn[int]\n")
@@ -323,8 +339,8 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 		b.WriteString("\tCreatedBy drel.StringColumn\n")
 		b.WriteString("\tUpdatedBy drel.StringColumn\n")
 	}
-	b.WriteString("\tCreatedAt drel.Column[time.Time]\n")
-	b.WriteString("\tUpdatedAt drel.Column[time.Time]\n")
+	b.WriteString("\tCreatedAt drel.TimeColumn\n")
+	b.WriteString("\tUpdatedAt drel.TimeColumn\n")
 	b.WriteString("}{\n")
 
 	// Struct literal values
@@ -339,7 +355,7 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 		b.WriteString(fmt.Sprintf("\t%s: %s,\n", exportName(f.Name), columnConstructor(fieldDisplayType(f, aliases), f.ColumnName)))
 	}
 	if m.HasSoftDelete {
-		b.WriteString("\tDeletedAt: drel.NewCol[*time.Time](\"deleted_at\"),\n")
+		b.WriteString("\tDeletedAt: drel.NewComparableCol[*time.Time](\"deleted_at\"),\n")
 	}
 	if m.HasVersioned {
 		b.WriteString("\tVersion: drel.NewOrderedCol[int](\"version\"),\n")
@@ -348,8 +364,8 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 		b.WriteString("\tCreatedBy: drel.NewStringCol(\"created_by\"),\n")
 		b.WriteString("\tUpdatedBy: drel.NewStringCol(\"updated_by\"),\n")
 	}
-	b.WriteString("\tCreatedAt: drel.NewCol[time.Time](\"created_at\"),\n")
-	b.WriteString("\tUpdatedAt: drel.NewCol[time.Time](\"updated_at\"),\n")
+	b.WriteString("\tCreatedAt: drel.NewTimeCol(\"created_at\"),\n")
+	b.WriteString("\tUpdatedAt: drel.NewTimeCol(\"updated_at\"),\n")
 	b.WriteString("}\n\n")
 }
 

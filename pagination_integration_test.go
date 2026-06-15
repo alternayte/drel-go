@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/alternayte/drel"
 	"github.com/alternayte/drel/internal/testmodels"
@@ -199,9 +198,7 @@ func TestIntegration_CursorPage_TimestampOrderKey_RoundTrips(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		// created_at is column index 4 in ProductMeta and exposed via ColumnValue,
-		// but Products has no CreatedAt accessor, so build the OrderExpr inline.
-		q := repo.OrderBy(drel.NewCol[time.Time]("created_at").Asc()).Take(6)
+		q := repo.OrderBy(testmodels.Products.CreatedAt.Asc()).Take(6)
 		if cursor != "" {
 			q = q.After(cursor)
 		}

@@ -314,12 +314,12 @@ output:
 	modelNorm := strings.Join(strings.Fields(modelStr), " ") // gofmt-alignment-insensitive
 
 	// Verify VO type uses unqualified name (Email, not testmod/models.Email).
-	assert.Contains(t, modelStr, "drel.Column[Email]")
-	assert.Contains(t, modelStr, `drel.NewCol[Email]("email")`)
+	assert.Contains(t, modelStr, "drel.ComparableColumn[Email]")
+	assert.Contains(t, modelStr, `drel.NewComparableCol[Email]("email")`)
 
 	// Verify string-based enum type uses unqualified name.
-	assert.Contains(t, modelStr, "drel.Column[Role]")
-	assert.Contains(t, modelStr, `drel.NewCol[Role]("role")`)
+	assert.Contains(t, modelStr, "drel.ComparableColumn[Role]")
+	assert.Contains(t, modelStr, `drel.NewComparableCol[Role]("role")`)
 
 	// Verify snapshot uses local types.
 	assert.Contains(t, modelNorm, "email Email")

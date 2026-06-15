@@ -4,23 +4,22 @@ package models
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
 
 var UserAccounts = struct {
 	ID        drel.OrderedColumn[int]
-	Email     drel.Column[Email]
-	Balance   drel.Column[Cents]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	Email     drel.ComparableColumn[Email]
+	Balance   drel.ComparableColumn[Cents]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
-	Email:     drel.NewCol[Email]("email"),
-	Balance:   drel.NewCol[Cents]("balance"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	Email:     drel.NewComparableCol[Email]("email"),
+	Balance:   drel.NewComparableCol[Cents]("balance"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanUseraccount(row drel.Row) (*UserAccount, error) {

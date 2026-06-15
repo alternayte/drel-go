@@ -4,7 +4,6 @@ package catalog
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -13,14 +12,14 @@ var Products = struct {
 	ID        drel.OrderedColumn[int]
 	Name      drel.StringColumn
 	Price     drel.OrderedColumn[int]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Name:      drel.NewStringCol("name"),
 	Price:     drel.NewOrderedCol[int]("price"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanProduct(row drel.Row) (*Product, error) {

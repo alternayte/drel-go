@@ -4,7 +4,6 @@ package models
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -14,15 +13,15 @@ var Tasks = struct {
 	Title     drel.StringColumn
 	Done      drel.BoolColumn
 	Priority  drel.OrderedColumn[int]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Title:     drel.NewStringCol("title"),
 	Done:      drel.NewBoolCol("done"),
 	Priority:  drel.NewOrderedCol[int]("priority"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanTask(row drel.Row) (*Task, error) {

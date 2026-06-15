@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"testing"
+	"time"
 
 	"github.com/alternayte/drel/internal/ast"
 	"github.com/alternayte/drel/internal/dialect"
@@ -1073,4 +1074,101 @@ func TestSQLite_BuildSelectCountStar(t *testing.T) {
 	}
 	result := s.BuildSelect(node)
 	assert.Equal(t, `SELECT COUNT(*) AS "cnt" FROM "orders"`, result.SQL)
+}
+
+// ─── normalizeArg (UTC conversion) ──────────────────────────────────────────
+
+func TestNormalizeArg_TimeToUTC(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("time zone data unavailable:", err)
+	}
+	eastern := time.Date(2025, 6, 1, 12, 0, 0, 0, loc)
+	result := normalizeArg(eastern)
+	got, ok := result.(time.Time)
+	assert.True(t, ok, "result should be time.Time")
+	assert.Equal(t, time.UTC, got.Location(), "time.Time should be converted to UTC")
+	assert.True(t, eastern.Equal(got), "UTC conversion must preserve the instant")
+}
+
+func TestNormalizeArg_UTCTimeUnchanged(t *testing.T) {
+	utc := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	result := normalizeArg(utc)
+	got, ok := result.(time.Time)
+	assert.True(t, ok)
+	assert.Equal(t, time.UTC, got.Location())
+	assert.Equal(t, utc, got)
+}
+
+func TestNormalizeArg_NonTimePassthrough(t *testing.T) {
+	assert.Equal(t, 42, normalizeArg(42))
+	assert.Equal(t, "hello", normalizeArg("hello"))
+	assert.Nil(t, normalizeArg(nil))
+}
+
+func TestWriteComparison_TimeArgsNormalized(t *testing.T) {
+	// Verify that non-UTC time.Time values in Eq/GT/Between/In are normalised
+	// to UTC when appended to args, so SQLite text comparisons are correct.
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("time zone data unavailable:", err)
+	}
+	eastern := time.Date(2025, 6, 1, 12, 0, 0, 0, loc)
+	want := eastern.UTC()
+
+	s := New()
+
+	// Eq (default branch)
+	r := s.BuildSelect(ast.SelectNode{
+		Table:   "products",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{Column: "created_at", Op: ast.OpEq, Value: eastern},
+		},
+	})
+	assert.Equal(t, want, r.Args[0], "Eq: time.Time arg must be UTC")
+
+	// GT
+	r = s.BuildSelect(ast.SelectNode{
+		Table:   "products",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{Column: "created_at", Op: ast.OpGT, Value: eastern},
+		},
+	})
+	assert.Equal(t, want, r.Args[0], "GT: time.Time arg must be UTC")
+
+	// Between
+	r = s.BuildSelect(ast.SelectNode{
+		Table:   "products",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "created_at",
+				Op:     ast.OpBetween,
+				Values: []any{eastern, eastern},
+			},
+		},
+	})
+	assert.Equal(t, want, r.Args[0], "Between low: time.Time arg must be UTC")
+	assert.Equal(t, want, r.Args[1], "Between high: time.Time arg must be UTC")
+
+	// In
+	r = s.BuildSelect(ast.SelectNode{
+		Table:   "products",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "created_at",
+				Op:     ast.OpIn,
+				Values: []any{eastern, eastern},
+			},
+		},
+	})
+	assert.Equal(t, want, r.Args[0], "In[0]: time.Time arg must be UTC")
+	assert.Equal(t, want, r.Args[1], "In[1]: time.Time arg must be UTC")
 }

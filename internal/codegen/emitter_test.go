@@ -108,8 +108,8 @@ func TestEmitModelFile_WithSoftDelete(t *testing.T) {
 	assert.Contains(t, out, "p.DeletedAtPtr()")
 
 	// Verify deleted_at column in column refs
-	assert.Contains(t, out, `DeletedAt drel.Column[*time.Time]`)
-	assert.Contains(t, out, `DeletedAt: drel.NewCol[*time.Time]("deleted_at")`)
+	assert.Contains(t, out, `DeletedAt drel.ComparableColumn[*time.Time]`)
+	assert.Contains(t, out, `DeletedAt: drel.NewComparableCol[*time.Time]("deleted_at")`)
 
 	// Verify deleted_at in Columns list
 	assert.Contains(t, out, `"deleted_at"`)
@@ -162,7 +162,7 @@ func TestColumnType(t *testing.T) {
 		{"float64", "drel.OrderedColumn[float64]", `drel.NewOrderedCol[float64]("col")`},
 		{"string", "drel.StringColumn", `drel.NewStringCol("col")`},
 		{"bool", "drel.BoolColumn", `drel.NewBoolCol("col")`},
-		{"time.Time", "drel.Column[time.Time]", `drel.NewCol[time.Time]("col")`},
+		{"time.Time", "drel.TimeColumn", `drel.NewTimeCol("col")`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.goType, func(t *testing.T) {
@@ -261,8 +261,8 @@ func TestEmitModelFile_WithSingleColVO(t *testing.T) {
 
 	output := EmitModelFile(m)
 
-	assert.Contains(t, output, "drel.Column[Email]")
-	assert.Contains(t, output, `drel.NewCol[Email]("email")`)
+	assert.Contains(t, output, "drel.ComparableColumn[Email]")
+	assert.Contains(t, output, `drel.NewComparableCol[Email]("email")`)
 	assert.Contains(t, output, "email Email")        // snapshot struct field
 	assert.Contains(t, output, "&p.email")           // scan
 	assert.Contains(t, output, "p.email != s.email") // diff

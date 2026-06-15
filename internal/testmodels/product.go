@@ -79,13 +79,17 @@ var ProductMeta = drel.ModelMeta[Product]{
 }
 
 var Products = struct {
-	ID      drel.OrderedColumn[int]
-	Name    drel.StringColumn
-	Price   drel.OrderedColumn[int]
-	InStock drel.BoolColumn
+	ID        drel.OrderedColumn[int]
+	Name      drel.StringColumn
+	Price     drel.OrderedColumn[int]
+	InStock   drel.BoolColumn
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
-	ID:      drel.NewOrderedCol[int]("id"),
-	Name:    drel.NewStringCol("name"),
-	Price:   drel.NewOrderedCol[int]("price"),
-	InStock: drel.NewBoolCol("in_stock"),
+	ID:        drel.NewOrderedCol[int]("id"),
+	Name:      drel.NewStringCol("name"),
+	Price:     drel.NewOrderedCol[int]("price"),
+	InStock:   drel.NewBoolCol("in_stock"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }

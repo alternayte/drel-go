@@ -32,12 +32,12 @@ var SoftDeleteProducts = struct {
 	ID        drel.OrderedColumn[int]
 	Name      drel.StringColumn
 	Price     drel.OrderedColumn[int]
-	DeletedAt drel.Column[*time.Time]
+	DeletedAt drel.ComparableColumn[*time.Time]
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Name:      drel.NewStringCol("name"),
 	Price:     drel.NewOrderedCol[int]("price"),
-	DeletedAt: drel.NewCol[*time.Time]("deleted_at"),
+	DeletedAt: drel.NewComparableCol[*time.Time]("deleted_at"),
 }
 
 var SoftDeleteProductMeta = drel.ModelMeta[SoftDeleteProduct]{

@@ -2,6 +2,7 @@ package drel
 
 import (
 	"cmp"
+	"time"
 
 	"github.com/alternayte/drel/internal/ast"
 )
@@ -155,6 +156,79 @@ func (c BoolColumn) Desc() OrderExpr      { return c.col.Desc() }
 
 func (c BoolColumn) IsTrue() Predicate  { return c.col.Eq(true) }
 func (c BoolColumn) IsFalse() Predicate { return c.col.Eq(false) }
+
+// TimeColumn is a dedicated column type for time.Time values. It provides
+// range operators (GT/GTE/LT/LTE/Between/Before/After) in addition to the
+// standard equality/null/in operators available on Column[T].
+type TimeColumn struct {
+	col Column[time.Time]
+}
+
+func NewTimeCol(name string) TimeColumn {
+	return TimeColumn{col: NewCol[time.Time](name)}
+}
+
+func (c TimeColumn) Name() string                      { return c.col.name }
+func (c TimeColumn) Eq(v time.Time) Predicate          { return c.col.Eq(v) }
+func (c TimeColumn) NEQ(v time.Time) Predicate         { return c.col.NEQ(v) }
+func (c TimeColumn) IsNull() Predicate                 { return c.col.IsNull() }
+func (c TimeColumn) IsNotNull() Predicate              { return c.col.IsNotNull() }
+func (c TimeColumn) In(vs ...time.Time) Predicate      { return c.col.In(vs...) }
+func (c TimeColumn) NotIn(vs ...time.Time) Predicate   { return c.col.NotIn(vs...) }
+func (c TimeColumn) Asc() OrderExpr                    { return c.col.Asc() }
+func (c TimeColumn) Desc() OrderExpr                   { return c.col.Desc() }
+func (c TimeColumn) ColRef() ColumnRef                 { return ColumnRef{name: c.col.name} }
+
+func (c TimeColumn) GT(v time.Time) Predicate  { return newComparison(c.col.name, ast.OpGT, v) }
+func (c TimeColumn) GTE(v time.Time) Predicate { return newComparison(c.col.name, ast.OpGTE, v) }
+func (c TimeColumn) LT(v time.Time) Predicate  { return newComparison(c.col.name, ast.OpLT, v) }
+func (c TimeColumn) LTE(v time.Time) Predicate { return newComparison(c.col.name, ast.OpLTE, v) }
+
+// Between returns a predicate matching rows where the column value is between
+// low and high inclusive (SQL BETWEEN low AND high).
+func (c TimeColumn) Between(low, high time.Time) Predicate {
+	return newBetweenComparison(c.col.name, low, high)
+}
+
+// Before is a convenience alias for LT.
+func (c TimeColumn) Before(t time.Time) Predicate { return c.LT(t) }
+
+// After is a convenience alias for GT.
+func (c TimeColumn) After(t time.Time) Predicate { return c.GT(t) }
+
+// ComparableColumn is a column type for values that support ordering but are
+// not covered by the built-in numeric/string/time-specific column types — for
+// example uuid.UUID, *time.Time, or custom value objects that implement a
+// total order. It provides the full range-operator set (GT/GTE/LT/LTE/Between).
+type ComparableColumn[T any] struct {
+	col Column[T]
+}
+
+func NewComparableCol[T any](name string) ComparableColumn[T] {
+	return ComparableColumn[T]{col: NewCol[T](name)}
+}
+
+func (c ComparableColumn[T]) Name() string            { return c.col.name }
+func (c ComparableColumn[T]) Eq(v T) Predicate        { return c.col.Eq(v) }
+func (c ComparableColumn[T]) NEQ(v T) Predicate       { return c.col.NEQ(v) }
+func (c ComparableColumn[T]) IsNull() Predicate       { return c.col.IsNull() }
+func (c ComparableColumn[T]) IsNotNull() Predicate    { return c.col.IsNotNull() }
+func (c ComparableColumn[T]) In(vs ...T) Predicate    { return c.col.In(vs...) }
+func (c ComparableColumn[T]) NotIn(vs ...T) Predicate { return c.col.NotIn(vs...) }
+func (c ComparableColumn[T]) Asc() OrderExpr          { return c.col.Asc() }
+func (c ComparableColumn[T]) Desc() OrderExpr         { return c.col.Desc() }
+func (c ComparableColumn[T]) ColRef() ColumnRef       { return ColumnRef{name: c.col.name} }
+
+func (c ComparableColumn[T]) GT(v T) Predicate  { return newComparison(c.col.name, ast.OpGT, v) }
+func (c ComparableColumn[T]) GTE(v T) Predicate { return newComparison(c.col.name, ast.OpGTE, v) }
+func (c ComparableColumn[T]) LT(v T) Predicate  { return newComparison(c.col.name, ast.OpLT, v) }
+func (c ComparableColumn[T]) LTE(v T) Predicate { return newComparison(c.col.name, ast.OpLTE, v) }
+
+// Between returns a predicate matching rows where the column value is between
+// low and high inclusive (SQL BETWEEN low AND high).
+func (c ComparableColumn[T]) Between(low, high T) Predicate {
+	return newBetweenComparison(c.col.name, low, high)
+}
 
 // ColRef returns a ColumnRef for use with Select projections and aggregates.
 func (c Column[T]) ColRef() ColumnRef { return ColumnRef{name: c.name} }

@@ -2,6 +2,7 @@ package drel_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/alternayte/drel"
 	"github.com/alternayte/drel/internal/ast"
@@ -142,4 +143,121 @@ func TestBoolColumn_IsFalse(t *testing.T) {
 	clause := pred.ToAST()
 	assert.Equal(t, ast.OpEq, clause.Comparison.Op)
 	assert.Equal(t, false, clause.Comparison.Value)
+}
+
+func TestTimeColumn_GT(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.GT(ts).ToAST()
+	assert.Equal(t, "created_at", clause.Comparison.Column)
+	assert.Equal(t, ast.OpGT, clause.Comparison.Op)
+	assert.Equal(t, ts, clause.Comparison.Value)
+}
+
+func TestTimeColumn_GTE(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.GTE(ts).ToAST()
+	assert.Equal(t, ast.OpGTE, clause.Comparison.Op)
+}
+
+func TestTimeColumn_LT(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	clause := col.LT(ts).ToAST()
+	assert.Equal(t, ast.OpLT, clause.Comparison.Op)
+}
+
+func TestTimeColumn_LTE(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	clause := col.LTE(ts).ToAST()
+	assert.Equal(t, ast.OpLTE, clause.Comparison.Op)
+}
+
+func TestTimeColumn_Between(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	lo := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	hi := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	clause := col.Between(lo, hi).ToAST()
+	assert.Equal(t, ast.OpBetween, clause.Comparison.Op)
+	assert.Equal(t, lo, clause.Comparison.Values[0])
+	assert.Equal(t, hi, clause.Comparison.Values[1])
+}
+
+func TestTimeColumn_Before(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.Before(ts).ToAST()
+	// Before is an alias for LT.
+	assert.Equal(t, ast.OpLT, clause.Comparison.Op)
+	assert.Equal(t, ts, clause.Comparison.Value)
+}
+
+func TestTimeColumn_After(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.After(ts).ToAST()
+	// After is an alias for GT.
+	assert.Equal(t, ast.OpGT, clause.Comparison.Op)
+	assert.Equal(t, ts, clause.Comparison.Value)
+}
+
+func TestTimeColumn_Eq(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.Eq(ts).ToAST()
+	assert.Equal(t, ast.OpEq, clause.Comparison.Op)
+	assert.Equal(t, ts, clause.Comparison.Value)
+}
+
+func TestTimeColumn_In(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	ts1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	clause := col.In(ts1, ts2).ToAST()
+	assert.Equal(t, ast.OpIn, clause.Comparison.Op)
+	assert.Len(t, clause.Comparison.Values, 2)
+}
+
+func TestTimeColumn_Asc(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	expr := col.Asc().ToAST()
+	assert.Equal(t, "created_at", expr.Column)
+	assert.Equal(t, ast.Asc, expr.Direction)
+}
+
+func TestTimeColumn_Desc(t *testing.T) {
+	col := drel.NewTimeCol("created_at")
+	expr := col.Desc().ToAST()
+	assert.Equal(t, ast.Desc, expr.Direction)
+}
+
+func TestComparableColumn_GT(t *testing.T) {
+	col := drel.NewComparableCol[int64]("score")
+	clause := col.GT(int64(100)).ToAST()
+	assert.Equal(t, "score", clause.Comparison.Column)
+	assert.Equal(t, ast.OpGT, clause.Comparison.Op)
+	assert.Equal(t, int64(100), clause.Comparison.Value)
+}
+
+func TestComparableColumn_Between(t *testing.T) {
+	col := drel.NewComparableCol[int64]("score")
+	clause := col.Between(int64(10), int64(99)).ToAST()
+	assert.Equal(t, ast.OpBetween, clause.Comparison.Op)
+	assert.Equal(t, int64(10), clause.Comparison.Values[0])
+	assert.Equal(t, int64(99), clause.Comparison.Values[1])
+}
+
+func TestComparableColumn_LTE(t *testing.T) {
+	col := drel.NewComparableCol[int64]("score")
+	clause := col.LTE(int64(50)).ToAST()
+	assert.Equal(t, ast.OpLTE, clause.Comparison.Op)
+}
+
+func TestComparableColumn_In(t *testing.T) {
+	col := drel.NewComparableCol[string]("status")
+	clause := col.In("a", "b", "c").ToAST()
+	assert.Equal(t, ast.OpIn, clause.Comparison.Op)
+	assert.Len(t, clause.Comparison.Values, 3)
 }

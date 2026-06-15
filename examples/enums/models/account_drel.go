@@ -4,7 +4,6 @@ package models
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -12,17 +11,17 @@ import (
 var Accounts = struct {
 	ID        drel.OrderedColumn[int]
 	Name      drel.StringColumn
-	Role      drel.Column[Role]
-	Priority  drel.Column[Priority]
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	Role      drel.ComparableColumn[Role]
+	Priority  drel.ComparableColumn[Priority]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Name:      drel.NewStringCol("name"),
-	Role:      drel.NewCol[Role]("role"),
-	Priority:  drel.NewCol[Priority]("priority"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	Role:      drel.NewComparableCol[Role]("role"),
+	Priority:  drel.NewComparableCol[Priority]("priority"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func RoleValues() []Role {

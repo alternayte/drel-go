@@ -4,7 +4,6 @@ package models
 
 import (
 	"context"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -15,16 +14,16 @@ var Notes = struct {
 	Title     drel.StringColumn
 	Category  drel.StringColumn
 	Pinned    drel.BoolColumn
-	CreatedAt drel.Column[time.Time]
-	UpdatedAt drel.Column[time.Time]
+	CreatedAt drel.TimeColumn
+	UpdatedAt drel.TimeColumn
 }{
 	ID:        drel.NewOrderedCol[int]("id"),
 	Slug:      drel.NewStringCol("slug"),
 	Title:     drel.NewStringCol("title"),
 	Category:  drel.NewStringCol("category"),
 	Pinned:    drel.NewBoolCol("pinned"),
-	CreatedAt: drel.NewCol[time.Time]("created_at"),
-	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
+	CreatedAt: drel.NewTimeCol("created_at"),
+	UpdatedAt: drel.NewTimeCol("updated_at"),
 }
 
 func scanNote(row drel.Row) (*Note, error) {

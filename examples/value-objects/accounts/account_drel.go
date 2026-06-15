@@ -5,7 +5,6 @@ package accounts
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/alternayte/drel"
 )
@@ -15,15 +14,15 @@ var Accounts = struct {
 	Owner           drel.StringColumn
 	BalanceAmount   drel.Column[any]
 	BalanceCurrency drel.Column[any]
-	CreatedAt       drel.Column[time.Time]
-	UpdatedAt       drel.Column[time.Time]
+	CreatedAt       drel.TimeColumn
+	UpdatedAt       drel.TimeColumn
 }{
 	ID:              drel.NewOrderedCol[int]("id"),
 	Owner:           drel.NewStringCol("owner"),
 	BalanceAmount:   drel.NewCol[any]("balance_amount"),
 	BalanceCurrency: drel.NewCol[any]("balance_currency"),
-	CreatedAt:       drel.NewCol[time.Time]("created_at"),
-	UpdatedAt:       drel.NewCol[time.Time]("updated_at"),
+	CreatedAt:       drel.NewTimeCol("created_at"),
+	UpdatedAt:       drel.NewTimeCol("updated_at"),
 }
 
 func accountMultiVals(v Money) []any {

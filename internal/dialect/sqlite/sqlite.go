@@ -3,6 +3,7 @@ package sqlite
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/alternayte/drel/internal/ast"
 	"github.com/alternayte/drel/internal/dialect"
@@ -286,6 +287,16 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause) {
 	}
 }
 
+// normalizeArg converts a time.Time value to UTC so that comparisons against
+// SQLite's CURRENT_TIMESTAMP (which stores UTC text) always match correctly.
+// All other argument types are returned unchanged.
+func normalizeArg(v any) any {
+	if t, ok := v.(time.Time); ok {
+		return t.UTC()
+	}
+	return v
+}
+
 func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode) {
 	col := quoteCol(cmp.Column)
 
@@ -301,7 +312,7 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode) {
 				b.WriteString(", ")
 			}
 			b.WriteString("?")
-			*args = append(*args, v)
+			*args = append(*args, normalizeArg(v))
 		}
 		b.WriteString(")")
 	case ast.OpNotIn:
@@ -311,16 +322,16 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode) {
 				b.WriteString(", ")
 			}
 			b.WriteString("?")
-			*args = append(*args, v)
+			*args = append(*args, normalizeArg(v))
 		}
 		b.WriteString(")")
 	case ast.OpBetween:
 		b.WriteString(fmt.Sprintf("%s BETWEEN ? AND ?", col))
-		*args = append(*args, cmp.Values[0], cmp.Values[1])
+		*args = append(*args, normalizeArg(cmp.Values[0]), normalizeArg(cmp.Values[1]))
 	default:
 		op := operatorToSQL(cmp.Op)
 		b.WriteString(fmt.Sprintf("%s %s ?", col, op))
-		*args = append(*args, cmp.Value)
+		*args = append(*args, normalizeArg(cmp.Value))
 	}
 }
 
