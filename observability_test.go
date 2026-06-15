@@ -183,6 +183,37 @@ func TestObs_Tracer_BulkInsert(t *testing.T) {
 	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
 }
 
+// TestObs_Tracer_BulkUpsert verifies that BulkUpsert emits a tracing span.
+// The assertion is delta-based: baseline is snapshotted after setup so the
+// CREATE TABLE span does not satisfy the assertion. Removing the startSpan
+// call from BulkUpsert in bulk.go MUST cause this test to fail.
+func TestObs_Tracer_BulkUpsert(t *testing.T) {
+	tr := &fakeTracer{}
+	engine := newObsEngine(t, drel.WithTracer(tr))
+	repo := drel.NewRepository(engine, sqliteItemMeta)
+	ctx := context.Background()
+
+	// Snapshot span count after setup (CREATE TABLE already emitted spans).
+	tr.mu.Lock()
+	baseline := len(tr.started)
+	tr.mu.Unlock()
+
+	idCol := drel.NewStringCol("id")
+	_, err := repo.BulkUpsert(ctx, []*sqliteItem{{Title: "x"}},
+		drel.ConflictColumns(idCol),
+		drel.DoNothing(),
+	)
+	require.NoError(t, err)
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	newSpans := tr.started[baseline:]
+	assert.NotEmpty(t, newSpans, "BulkUpsert should emit at least one span")
+	assert.Contains(t, newSpans, "drel.exec",
+		"BulkUpsert should emit a drel.exec span for the upsert statement")
+	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
+}
+
 func TestObs_HookRegistration_Race(t *testing.T) {
 	engine := newObsEngine(t)
 	repo := drel.NewRepository(engine, sqliteItemMeta)

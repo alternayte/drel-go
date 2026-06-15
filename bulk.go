@@ -338,9 +338,11 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 		}
 
 		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols, cfg.doNothing)
+		spanCtx, endSpan := r.engine.startSpan(ctx, "drel.exec")
 		start := time.Now()
-		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
-		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
+		affected, execErr := tx.Exec(spanCtx, result.SQL, result.Args...)
+		endSpan(execErr)
+		r.engine.notifyQueryHooks(spanCtx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
 			return 0, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
