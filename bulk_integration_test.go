@@ -210,6 +210,184 @@ func TestIntegration_BulkInsert_ErrorRollsBack_ReturnsZero(t *testing.T) {
 	assert.Equal(t, 0, cnt, "transaction must have rolled back fully")
 }
 
+// upsertItem is a local model for exercising BulkUpsert end-to-end. It has a
+// surrogate PK plus a UNIQUE (sku) conflict target and a composite UNIQUE
+// (region, sku) for the composite-key case.
+type upsertItem struct {
+	ID     int
+	SKU    string
+	Region string
+	Name   string
+	Qty    int
+}
+
+func upsertItemMeta() drel.ModelMeta[upsertItem] {
+	return drel.ModelMeta[upsertItem]{
+		Table:    "upsert_items",
+		Columns:  []string{"id", "sku", "region", "name", "qty"},
+		PKColumn: "id",
+		Scan: func(row drel.Row) (*upsertItem, error) {
+			p := &upsertItem{}
+			if err := row.Scan(&p.ID, &p.SKU, &p.Region, &p.Name, &p.Qty); err != nil {
+				return nil, err
+			}
+			return p, nil
+		},
+		Snapshot: func(p *upsertItem) any { return *p },
+		Diff:     func(p *upsertItem, snap any) []drel.FieldChange { return nil },
+		PKValue:  func(p *upsertItem) any { return p.ID },
+		ColumnValue: func(p *upsertItem, idx int) any {
+			switch idx {
+			case 0:
+				return p.ID
+			case 1:
+				return p.SKU
+			case 2:
+				return p.Region
+			case 3:
+				return p.Name
+			case 4:
+				return p.Qty
+			}
+			return nil
+		},
+		InsertColumns: func(p *upsertItem) ([]string, []any) {
+			return []string{"sku", "region", "name", "qty"},
+				[]any{p.SKU, p.Region, p.Name, p.Qty}
+		},
+	}
+}
+
+var upsertItems = struct {
+	SKU    drel.StringColumn
+	Region drel.StringColumn
+	Name   drel.StringColumn
+	Qty    drel.OrderedColumn[int]
+}{
+	SKU:    drel.NewStringCol("sku"),
+	Region: drel.NewStringCol("region"),
+	Name:   drel.NewStringCol("name"),
+	Qty:    drel.NewOrderedCol[int]("qty"),
+}
+
+func setupUpsertPG(t *testing.T) *drel.Engine {
+	t.Helper()
+	engine := setupTestDB(t) // reuses the PG container; we add our own table
+	ctx := context.Background()
+	_, err := engine.Exec(ctx, `
+        CREATE TABLE upsert_items (
+            id      SERIAL PRIMARY KEY,
+            sku     TEXT NOT NULL,
+            region  TEXT NOT NULL,
+            name    TEXT NOT NULL,
+            qty     INTEGER NOT NULL,
+            UNIQUE (sku),
+            UNIQUE (region, sku)
+        )
+    `)
+	require.NoError(t, err)
+	return engine
+}
+
+func setupUpsertSQLite(t *testing.T) *drel.Engine {
+	t.Helper()
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `
+        CREATE TABLE upsert_items (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            sku     TEXT NOT NULL,
+            region  TEXT NOT NULL,
+            name    TEXT NOT NULL,
+            qty     INTEGER NOT NULL,
+            UNIQUE (sku),
+            UNIQUE (region, sku)
+        )
+    `)
+	require.NoError(t, err)
+	return engine
+}
+
+func runBulkUpsertSuite(t *testing.T, engine *drel.Engine) {
+	ctx := context.Background()
+	repo := drel.NewRepository(engine, upsertItemMeta())
+
+	// 1. Initial insert.
+	n, err := repo.BulkUpsert(ctx,
+		[]*upsertItem{
+			{SKU: "A", Region: "us", Name: "Apple", Qty: 1},
+			{SKU: "B", Region: "us", Name: "Banana", Qty: 2},
+		},
+		drel.ConflictColumns(upsertItems.SKU),
+		drel.UpdateOnConflict(upsertItems.Name),
+		drel.UpdateOnConflict(upsertItems.Qty),
+	)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, n, 2)
+
+	// 2. Conflict on sku updates name+qty for A, inserts C.
+	_, err = repo.BulkUpsert(ctx,
+		[]*upsertItem{
+			{SKU: "A", Region: "us", Name: "Apricot", Qty: 99},
+			{SKU: "C", Region: "us", Name: "Cherry", Qty: 3},
+		},
+		drel.ConflictColumns(upsertItems.SKU),
+		drel.UpdateOnConflict(upsertItems.Name),
+		drel.UpdateOnConflict(upsertItems.Qty),
+	)
+	require.NoError(t, err)
+
+	a, err := repo.Where(upsertItems.SKU.Eq("A")).First(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "Apricot", a.Name)
+	assert.Equal(t, 99, a.Qty)
+
+	total, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, total) // A, B, C
+
+	// 3. DO NOTHING: re-upsert A with new values; row must stay Apricot/99.
+	_, err = repo.BulkUpsert(ctx,
+		[]*upsertItem{
+			{SKU: "A", Region: "us", Name: "Avocado", Qty: 7},
+		},
+		drel.ConflictColumns(upsertItems.SKU),
+		drel.DoNothing(),
+	)
+	require.NoError(t, err)
+
+	a2, err := repo.Where(upsertItems.SKU.Eq("A")).First(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "Apricot", a2.Name, "DO NOTHING must not overwrite existing row")
+	assert.Equal(t, 99, a2.Qty)
+
+	// 4. Composite conflict target (region, sku): updating qty on (us, B).
+	_, err = repo.BulkUpsert(ctx,
+		[]*upsertItem{
+			{SKU: "B", Region: "us", Name: "Berry", Qty: 50},
+		},
+		drel.ConflictColumns(upsertItems.Region, upsertItems.SKU),
+		drel.UpdateOnConflict(upsertItems.Name),
+		drel.UpdateOnConflict(upsertItems.Qty),
+	)
+	require.NoError(t, err)
+
+	b, err := repo.Where(upsertItems.SKU.Eq("B")).First(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "Berry", b.Name)
+	assert.Equal(t, 50, b.Qty)
+}
+
+func TestIntegration_BulkUpsert_PG(t *testing.T) {
+	runBulkUpsertSuite(t, setupUpsertPG(t))
+}
+
+func TestIntegration_BulkUpsert_SQLite(t *testing.T) {
+	runBulkUpsertSuite(t, setupUpsertSQLite(t))
+}
+
 func TestIntegration_BulkInsert_CopyPath_PG(t *testing.T) {
 	engine := setupTestDB(t)
 	repo := drel.NewRepository(engine, testmodels.ProductMeta)
