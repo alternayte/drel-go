@@ -30,6 +30,7 @@ type Engine struct {
 	tracer        Tracer
 	devMode       bool
 	slowThreshold time.Duration
+	queryTimeout  time.Duration
 	n1            *n1Detector
 
 	replicas  []driver.Driver
@@ -49,6 +50,7 @@ type engineConfig struct {
 	slowThreshold time.Duration
 	tracer        Tracer
 	devMode       bool
+	queryTimeout  time.Duration
 
 	replicaDSNs []string
 	replicaDrvs []driver.Driver
@@ -150,9 +152,10 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	replicas = append(replicas, cfg.replicaDrvs...)
 
 	e := &Engine{
-		drv:      drv,
-		dia:      dia,
-		replicas: replicas,
+		drv:          drv,
+		dia:          dia,
+		replicas:     replicas,
+		queryTimeout: cfg.queryTimeout,
 	}
 	e.installObservability(cfg)
 	return e, nil
@@ -193,6 +196,17 @@ func WithConnMaxIdleTime(d time.Duration) Option {
 // DSN escape hatch is "?default_query_exec_mode=simple_protocol".
 func WithSimpleProtocol() Option {
 	return func(cfg *engineConfig) { cfg.poolConfig.SimpleProtocol = true }
+}
+
+// WithQueryTimeout sets a default deadline applied to every engine-level query
+// and exec that does not already carry a shorter deadline. Zero (the default)
+// means no default timeout. It composes with caller-supplied deadlines — the
+// shorter one wins. Per-builder .Timeout(d) overrides this default for that
+// query. The default is NOT auto-applied to queries issued inside an explicit
+// Tx, because a timeout firing mid-transaction aborts the whole transaction;
+// use .Timeout(d) explicitly there if you accept that semantics.
+func WithQueryTimeout(d time.Duration) Option {
+	return func(cfg *engineConfig) { cfg.queryTimeout = d }
 }
 
 // WithAuthToken sets the authentication token for a libSQL/Turso connection.
@@ -314,7 +328,29 @@ func (e *Engine) startSpan(ctx context.Context, name string) (context.Context, f
 	}
 }
 
+// withTimeout derives a child context bounded by the engine's default query
+// timeout. It returns the original context (and a no-op cancel) when no default
+// is configured or when the caller's existing deadline is already at or under
+// the default. The returned cancel must always be deferred by the caller.
+func (e *Engine) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return applyTimeout(ctx, e.queryTimeout)
+}
+
+// applyTimeout bounds ctx by d, returning ctx unchanged when d <= 0 or the
+// existing caller deadline is already at or under d (shorter wins).
+func applyTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= d {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 func (e *Engine) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
+	ctx, cancel := e.withTimeout(ctx)
+	defer cancel()
 	ctx, endSpan := e.startSpan(ctx, "drel.exec")
 	start := time.Now()
 	n, err := e.drv.Exec(ctx, sql, args...)
@@ -328,8 +364,20 @@ func (e *Engine) queryInternal(ctx context.Context, sql string, args ...any) (Ro
 }
 
 // queryRouted executes a read query against a replica (primary=false) or the
-// primary (primary=true), with tracing and query-hook notification.
+// primary (primary=true), applying the engine default query timeout.
 func (e *Engine) queryRouted(ctx context.Context, primary bool, sql string, args ...any) (Rows, error) {
+	return e.queryRoutedTimeout(ctx, primary, e.queryTimeout, sql, args...)
+}
+
+// queryRoutedTimeout is queryRouted with an explicit timeout override (0 = use
+// the engine default; a positive value overrides it for this call). The shorter
+// of the override and any caller deadline wins.
+func (e *Engine) queryRoutedTimeout(ctx context.Context, primary bool, timeout time.Duration, sql string, args ...any) (Rows, error) {
+	if timeout <= 0 {
+		timeout = e.queryTimeout
+	}
+	ctx, cancel := applyTimeout(ctx, timeout)
+	defer cancel()
 	ctx, endSpan := e.startSpan(ctx, "drel.query")
 	start := time.Now()
 	rows, err := e.readDriver(primary).Query(ctx, sql, args...)
@@ -343,12 +391,23 @@ func (e *Engine) queryRowInternal(ctx context.Context, sql string, args ...any) 
 }
 
 func (e *Engine) queryRowRouted(ctx context.Context, primary bool, sql string, args ...any) Row {
-	ctx, endSpan := e.startSpan(ctx, "drel.queryRow")
+	return e.queryRowRoutedTimeout(ctx, primary, e.queryTimeout, sql, args...)
+}
+
+func (e *Engine) queryRowRoutedTimeout(ctx context.Context, primary bool, timeout time.Duration, sql string, args ...any) Row {
+	if timeout <= 0 {
+		timeout = e.queryTimeout
+	}
+	// A QueryRow defers its error to Scan, so the derived context must outlive
+	// this function; cancel is attached to the returned row's lifecycle via a
+	// timeoutRow wrapper that cancels on Scan.
+	rowCtx, cancel := applyTimeout(ctx, timeout)
+	rowCtx, endSpan := e.startSpan(rowCtx, "drel.queryRow")
 	start := time.Now()
-	row := e.readDriver(primary).QueryRow(ctx, sql, args...)
+	row := e.readDriver(primary).QueryRow(rowCtx, sql, args...)
 	endSpan(nil)
-	e.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
-	return classifyRow{row: row}
+	e.notifyQueryHooks(rowCtx, sql, args, time.Since(start), nil)
+	return classifyRow{row: timeoutRow{row: row, cancel: cancel}}
 }
 
 func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
@@ -364,4 +423,18 @@ func (e *Engine) OnAfterCommit(hook AfterCommitHook) {
 // This is the registration point used by UseOutbox.
 func (e *Engine) addEventSink(fn func(ctx context.Context, tx *Tx, events []any) error) {
 	e.eventSinks = append(e.eventSinks, fn)
+}
+
+// timeoutRow defers a context cancel until Scan runs, so a row whose query used
+// a derived (timeout) context does not leak the cancel func. The cancel is
+// idempotent.
+type timeoutRow struct {
+	row    driver.Row
+	cancel context.CancelFunc
+}
+
+func (r timeoutRow) Scan(dest ...any) error {
+	err := r.row.Scan(dest...)
+	r.cancel()
+	return err
 }

@@ -3,6 +3,7 @@ package drel
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/alternayte/drel/internal/ast"
 )
@@ -31,6 +32,10 @@ type QueryBuilder[T any] struct {
 	// allowFullTable, when set via AllRows(), opts a BulkUpdate/BulkDelete out of
 	// the full-table safety guard for deliberate whole-table writes.
 	allowFullTable bool
+
+	// timeout, when non-nil, overrides the engine default query timeout for this
+	// query only. nil means "use the engine default".
+	timeout *time.Duration
 
 	// When tracker is non-null, results materialized by All are snapshotted and
 	// tracked (used by UnitOfWork repositories).
@@ -61,6 +66,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		distinct:       q.distinct,
 		joins:          append([]ast.JoinNode(nil), q.joins...),
 		allowFullTable: q.allowFullTable,
+		timeout:        q.timeout,
 		tracker:        q.tracker,
 		base:           q.base,
 	}
@@ -83,6 +89,24 @@ func (q *QueryBuilder[T]) Primary() *QueryBuilder[T] {
 	c := q.clone()
 	c.primary = true
 	return c
+}
+
+// Timeout overrides the engine's default query timeout for this query only. The
+// shorter of this value and any caller-supplied context deadline wins. Pass a
+// non-positive duration to disable any default for this query.
+func (q *QueryBuilder[T]) Timeout(d time.Duration) *QueryBuilder[T] {
+	c := q.clone()
+	c.timeout = &d
+	return c
+}
+
+// effectiveTimeout returns the per-builder timeout override, or 0 to mean "use
+// the engine default".
+func (q *QueryBuilder[T]) effectiveTimeout() time.Duration {
+	if q.timeout != nil {
+		return *q.timeout
+	}
+	return 0
 }
 
 // Distinct makes the projection emit SELECT DISTINCT, de-duplicating result rows.
@@ -196,7 +220,7 @@ func (q *QueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 	node := q.buildAST(ast.QuerySelect)
 	result := q.engine.dialect().BuildSelect(node)
 
-	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
+	rows, err := q.engine.queryRoutedTimeout(ctx, q.primary, q.effectiveTimeout(), result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +277,7 @@ func (q *QueryBuilder[T]) Count(ctx context.Context) (int, error) {
 	node := q.buildAST(ast.QueryCount)
 	result := q.engine.dialect().BuildSelect(node)
 
-	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
+	row := q.engine.queryRowRoutedTimeout(ctx, q.primary, q.effectiveTimeout(), result.SQL, result.Args...)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return 0, err
@@ -266,7 +290,7 @@ func (q *QueryBuilder[T]) Exists(ctx context.Context) (bool, error) {
 	node := q.buildAST(ast.QueryExists)
 	result := q.engine.dialect().BuildSelect(node)
 
-	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
+	row := q.engine.queryRowRoutedTimeout(ctx, q.primary, q.effectiveTimeout(), result.SQL, result.Args...)
 	var exists bool
 	if err := row.Scan(&exists); err != nil {
 		return false, err
