@@ -336,3 +336,122 @@ output:
 	buildOut, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
 }
+
+func TestGenerate_DuplicateModelName(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"auth/user.go": `package auth
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"billing/user.go": `package billing
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	plan string ` + "`db:\"plan\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./auth
+  - ./billing
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	err = Generate("drel.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Users")
+	// No DB file should exist after a validation failure.
+	assert.NoFileExists(t, filepath.Join(dir, "db", "drel_gen.go"))
+}
+
+func TestGenerate_UnresolvedTarget(t *testing.T) {
+	// Post references Author (from the authors package) via rel tag, but the
+	// authors package is NOT listed in drel.yaml. The scanner loads the posts
+	// package cleanly (imports resolve), but ValidateModels must catch "Author" as
+	// an unresolved target and return an error naming the field and drel.yaml.
+	dir := setupGenerateModule(t, map[string]string{
+		"authors/author.go": `package authors
+
+import "github.com/alternayte/drel"
+
+type Author struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"posts/post.go": `package posts
+
+import (
+	"github.com/alternayte/drel"
+	"testmod/authors"
+)
+
+type Post struct {
+	drel.Model[int]
+	title  string          ` + "`db:\"title\"`" + `
+	Author *authors.Author ` + "`rel:\"belongs_to,fk=author_id\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./posts
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	err = Generate("drel.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Author")
+	assert.Contains(t, err.Error(), "drel.yaml")
+}
+
+func TestGenerate_ColumnLessModel(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/models.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Org struct {
+	drel.Model[int]
+	Members []*User ` + "`rel:\"has_many,fk=org_id\"`" + `
+}
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	err = Generate("drel.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no db-mapped columns")
+}

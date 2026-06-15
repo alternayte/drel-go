@@ -58,6 +58,13 @@ func Generate(configPath string) error {
 		return fmt.Errorf("codegen: no models found in packages %v", cfg.Packages)
 	}
 
+	// Validate the whole model set before touching disk: duplicate DB field
+	// names, unresolved relation targets, and column-less models all fail here
+	// so a bad input never leaves a half-generated tree.
+	if err := ValidateModels(models); err != nil {
+		return err
+	}
+
 	// Emit per-model files.
 	for _, m := range models {
 		content, err := EmitModelFileChecked(m)
