@@ -564,16 +564,19 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 		return nil, err
 	}
 
-	targetByPK := make(map[any]any)
-	for _, t := range targets {
-		pk := rel.RelatedMeta.PKValue(t)
-		targetByPK[pk] = t
+	// Map each target PK to the source PK(s) that reference it, from the pivot.
+	sourcesByTarget := make(map[any][]any)
+	for _, pr := range pivotRows {
+		sourcesByTarget[pr.targetFK] = append(sourcesByTarget[pr.targetFK], pr.sourceFK)
 	}
 
+	// Build per-parent groups by walking targets in requested (query) order so
+	// the assigned collection preserves inc.orderBy.
 	grouped := make(map[any][]any)
-	for _, pr := range pivotRows {
-		if t, ok := targetByPK[pr.targetFK]; ok {
-			grouped[pr.sourceFK] = append(grouped[pr.sourceFK], t)
+	for _, t := range targets {
+		tpk := rel.RelatedMeta.PKValue(t)
+		for _, srcPK := range sourcesByTarget[tpk] {
+			grouped[srcPK] = append(grouped[srcPK], t)
 		}
 	}
 

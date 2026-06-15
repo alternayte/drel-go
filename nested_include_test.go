@@ -141,6 +141,93 @@ func TestInclude_Limit_PerParent_SQLite(t *testing.T) {
 	assert.Equal(t, 15, authors[1].Books[1].ID)
 }
 
+type miAuthor struct {
+	ID   int
+	Name string
+	Tags []*miTag
+}
+
+type miTag struct {
+	ID    int
+	Label string
+}
+
+func miAuthorMeta() drel.ModelMeta[miAuthor] {
+	return drel.ModelMeta[miAuthor]{
+		Table:    "mi_authors",
+		Columns:  []string{"id", "name"},
+		PKColumn: "id",
+		Scan: func(r drel.Row) (*miAuthor, error) {
+			a := &miAuthor{}
+			return a, r.Scan(&a.ID, &a.Name)
+		},
+		PKValue:     func(a *miAuthor) any { return a.ID },
+		ColumnValue: func(a *miAuthor, i int) any { return [...]any{a.ID, a.Name}[i] },
+	}
+}
+
+func miTagMeta() drel.ModelMeta[miTag] {
+	return drel.ModelMeta[miTag]{
+		Table:    "mi_tags",
+		Columns:  []string{"id", "label"},
+		PKColumn: "id",
+		Scan: func(r drel.Row) (*miTag, error) {
+			tg := &miTag{}
+			return tg, r.Scan(&tg.ID, &tg.Label)
+		},
+		PKValue:     func(tg *miTag) any { return tg.ID },
+		ColumnValue: func(tg *miTag, i int) any { return [...]any{tg.ID, tg.Label}[i] },
+	}
+}
+
+func TestInclude_ManyToMany_OrderBy_SQLite(t *testing.T) {
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { engine.Close() })
+	ctx := context.Background()
+
+	for _, ddl := range []string{
+		`CREATE TABLE mi_authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`,
+		`CREATE TABLE mi_tags (id INTEGER PRIMARY KEY, label TEXT NOT NULL)`,
+		`CREATE TABLE mi_author_tags (author_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (author_id, tag_id))`,
+		`INSERT INTO mi_authors (id, name) VALUES (1,'Ann')`,
+		// Insert tags so that label order (alpha) differs from id/pivot order.
+		`INSERT INTO mi_tags (id, label) VALUES (1,'zeta'),(2,'alpha'),(3,'mid')`,
+		// Pivot inserted in id order; without OrderBy the slice would be zeta,alpha,mid.
+		`INSERT INTO mi_author_tags (author_id, tag_id) VALUES (1,1),(1,2),(1,3)`,
+	} {
+		_, err := engine.Exec(ctx, ddl)
+		require.NoError(t, err)
+	}
+
+	authorMeta := miAuthorMeta()
+	tagMeta := miTagMeta()
+	tagsRel := drel.RelationInfo{
+		Name:        "Tags",
+		Type:        drel.ManyToMany,
+		FKColumn:    "author_id",
+		JoinTable:   "mi_author_tags",
+		RefColumn:   "tag_id",
+		RelatedMeta: drel.ToMetaBase(&tagMeta),
+		FieldSetter: func(parent any, related any) {
+			a := parent.(*miAuthor)
+			for _, it := range related.([]any) {
+				a.Tags = append(a.Tags, it.(*miTag))
+			}
+		},
+	}
+
+	repo := drel.NewRepository(engine, authorMeta)
+	spec := drel.NewIncludeSpec(&tagsRel).OrderBy(drel.NewStringCol("label").Asc())
+	ann, err := repo.Include(spec).Find(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, ann.Tags, 3)
+
+	// Must follow the requested label ASC order, not pivot/id order.
+	labels := []string{ann.Tags[0].Label, ann.Tags[1].Label, ann.Tags[2].Label}
+	assert.Equal(t, []string{"alpha", "mid", "zeta"}, labels)
+}
+
 func TestNestedInclude_ThreeLevels(t *testing.T) {
 	engine := setupNestedDB(t)
 	ctx := context.Background()
