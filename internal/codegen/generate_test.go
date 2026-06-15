@@ -543,3 +543,80 @@ output:
 	// The remaining model is still there.
 	assert.FileExists(t, filepath.Join(dir, "models", "user_drel.go"))
 }
+
+func TestGenerate_MultiPackageDeterministic(t *testing.T) {
+	// Two packages with a cross-package relation, generated twice; the DB file
+	// must be byte-identical across runs (proves the cross-package sort).
+	files := map[string]string{
+		"blog/author.go": `package blog
+
+import "github.com/alternayte/drel"
+
+type Author struct {
+	drel.Model[int]
+	name  string  ` + "`db:\"name\"`" + `
+	Posts []*Post ` + "`rel:\"has_many,fk=author_id\"`" + `
+}
+`,
+		"blog/post.go": `package blog
+
+import "github.com/alternayte/drel"
+
+type Post struct {
+	drel.Model[int]
+	title    string  ` + "`db:\"title\"`" + `
+	authorID int     ` + "`db:\"author_id\"`" + `
+	Author   *Author ` + "`rel:\"belongs_to,fk=author_id\"`" + `
+}
+`,
+		"shop/order.go": `package shop
+
+import "github.com/alternayte/drel"
+
+type Order struct {
+	drel.Model[int]
+	total int ` + "`db:\"total\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./blog
+  - ./shop
+output:
+  db: ./db/drel_gen.go
+`,
+	}
+	dir := setupGenerateModule(t, files)
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	dbFile := filepath.Join(dir, "db", "drel_gen.go")
+
+	require.NoError(t, Generate("drel.yaml"))
+	first, err := os.ReadFile(dbFile)
+	require.NoError(t, err)
+
+	require.NoError(t, Generate("drel.yaml"))
+	second, err := os.ReadFile(dbFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, string(first), string(second), "regenerated DB file must be byte-identical")
+
+	// And it must compile + vet clean.
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	tidyOut, err := tidy.CombinedOutput()
+	require.NoError(t, err, "go mod tidy failed: %s", string(tidyOut))
+
+	build := exec.Command("go", "build", "./...")
+	build.Dir = dir
+	buildOut, err := build.CombinedOutput()
+	require.NoError(t, err, "go build failed: %s", string(buildOut))
+
+	vet := exec.Command("go", "vet", "./...")
+	vet.Dir = dir
+	vetOut, err := vet.CombinedOutput()
+	require.NoError(t, err, "go vet failed: %s", string(vetOut))
+}
