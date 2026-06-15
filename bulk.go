@@ -25,6 +25,7 @@ type UpsertOption func(*upsertConfig)
 type upsertConfig struct {
 	conflictCols []string
 	updateCols   []string
+	doNothing    bool
 }
 
 // ConflictColumns specifies which columns form the conflict target for an upsert.
@@ -42,6 +43,15 @@ func UpdateOnConflict[C interface{ Name() string }](cols ...C) UpsertOption {
 		for _, c := range cols {
 			cfg.updateCols = append(cfg.updateCols, c.Name())
 		}
+	}
+}
+
+// DoNothing configures the upsert to emit ON CONFLICT (...) DO NOTHING: rows
+// that conflict on the conflict target are skipped instead of updated. When
+// set, UpdateOnConflict becomes optional and is ignored.
+func DoNothing() UpsertOption {
+	return func(cfg *upsertConfig) {
+		cfg.doNothing = true
 	}
 }
 
@@ -203,8 +213,8 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 	if len(cfg.conflictCols) == 0 {
 		return 0, fmt.Errorf("drel: bulk upsert %s: ConflictColumns is required", r.meta.Table)
 	}
-	if len(cfg.updateCols) == 0 {
-		return 0, fmt.Errorf("drel: bulk upsert %s: UpdateOnConflict is required", r.meta.Table)
+	if len(cfg.updateCols) == 0 && !cfg.doNothing {
+		return 0, fmt.Errorf("drel: bulk upsert %s: UpdateOnConflict is required (or use DoNothing)", r.meta.Table)
 	}
 
 	drv := r.engine.driver()
@@ -243,7 +253,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 			}
 		}
 
-		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols, false)
+		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols, cfg.doNothing)
 		start := time.Now()
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
