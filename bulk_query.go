@@ -8,9 +8,17 @@ import (
 	"github.com/alternayte/drel/internal/dialect"
 )
 
+// ErrBulkUpdateRequiresFilter is returned when BulkUpdate is called without any
+// user Where predicate and without AllRows(), to prevent accidental full-table
+// updates. Auto-applied filters (e.g. soft-delete) do not satisfy the guard.
+var ErrBulkUpdateRequiresFilter = fmt.Errorf("drel: BulkUpdate requires at least one Where predicate to prevent accidental full-table updates")
+
 // BulkUpdate updates all rows matching the builder's WHERE conditions.
 // Returns the number of affected rows.
 func (q *QueryBuilder[T]) BulkUpdate(ctx context.Context, sets ...SetClause) (int, error) {
+	if len(q.wheres) == 0 && !q.allowFullTable {
+		return 0, ErrBulkUpdateRequiresFilter
+	}
 	if len(sets) == 0 {
 		return 0, fmt.Errorf("drel: bulk update %s: at least one Set clause is required", q.meta.Table)
 	}

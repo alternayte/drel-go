@@ -26,6 +26,10 @@ type QueryBuilder[T any] struct {
 	filters []NamedFilter
 	primary bool
 
+	// allowFullTable, when set via AllRows(), opts a BulkUpdate/BulkDelete out of
+	// the full-table safety guard for deliberate whole-table writes.
+	allowFullTable bool
+
 	// When tracker is non-null, results materialized by All are snapshotted and
 	// tracked (used by UnitOfWork repositories).
 	tracker *changeTracker
@@ -51,12 +55,21 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		after:   q.after,
 		before:  q.before,
 		filters: append([]NamedFilter(nil), q.filters...),
-		primary: q.primary,
-		tracker: q.tracker,
-		base:    q.base,
+		primary:        q.primary,
+		allowFullTable: q.allowFullTable,
+		tracker:        q.tracker,
+		base:           q.base,
 	}
 	copy(c.wheres, q.wheres)
 	copy(c.orderBy, q.orderBy)
+	return c
+}
+
+// AllRows opts a BulkUpdate or BulkDelete out of the full-table safety guard,
+// permitting a deliberate whole-table write with no Where predicate.
+func (q *QueryBuilder[T]) AllRows() *QueryBuilder[T] {
+	c := q.clone()
+	c.allowFullTable = true
 	return c
 }
 
