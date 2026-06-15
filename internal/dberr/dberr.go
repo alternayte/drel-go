@@ -70,6 +70,8 @@ func kindOf(err error) error {
 	// SQLite (modernc): extended result codes.
 	var se *sqlite.Error
 	if errors.As(err, &se) {
+		// Code() returns the extended result code; mask to the primary code so
+		// SQLITE_BUSY_SNAPSHOT (517) and SQLITE_LOCKED_* still match the family.
 		switch se.Code() {
 		case sqlitelib.SQLITE_CONSTRAINT_UNIQUE, sqlitelib.SQLITE_CONSTRAINT_PRIMARYKEY:
 			return ErrUniqueViolation
@@ -79,6 +81,12 @@ func kindOf(err error) error {
 			return ErrNotNullViolation
 		case sqlitelib.SQLITE_CONSTRAINT_CHECK:
 			return ErrCheckViolation
+		}
+		switch se.Code() & 0xFF {
+		case sqlitelib.SQLITE_BUSY, sqlitelib.SQLITE_LOCKED:
+			// Write conflict under WAL (incl. SQLITE_BUSY_SNAPSHOT) — the SQLite
+			// analog of a serialization failure; the transaction should retry.
+			return ErrSerializationFailure
 		}
 		return nil
 	}
@@ -96,6 +104,13 @@ func kindOf(err error) error {
 		return ErrNotNullViolation
 	case strings.Contains(msg, "CHECK constraint failed"):
 		return ErrCheckViolation
+	case strings.Contains(msg, "database is locked"),
+		strings.Contains(msg, "database table is locked"),
+		strings.Contains(msg, "SQLITE_BUSY"),
+		strings.Contains(msg, "SQLITE_LOCKED"):
+		// libSQL/Turso and bare SQLite surface write conflicts as these
+		// messages; classify as a retryable serialization failure.
+		return ErrSerializationFailure
 	}
 	return nil
 }
