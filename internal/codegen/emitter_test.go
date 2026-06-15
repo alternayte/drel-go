@@ -341,6 +341,41 @@ func TestEmitModelFile_MultiColVOScanDiffValue(t *testing.T) {
 	assert.Contains(t, out, "accountMultiVals(p.balance)[0], accountMultiVals(p.balance)[1]")
 }
 
+func TestEmitModelFile_MultiColVOSnapshotDiff(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Account",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{
+				Name:          "balance",
+				GoType:        "testmod/models.Money",
+				ColumnName:    "balance_amount",
+				LocalGoType:   "Money",
+				IsMultiColVO:  true,
+				MultiColNames: []string{"balance_amount", "balance_currency"},
+				MultiColTypes: []string{"text", "text"},
+			},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// Snapshot struct: one []any field per multi-col VO, named <field>Vals.
+	assert.Contains(t, out, "balanceVals []any")
+	// Snapshot func captures DrelValues output.
+	assert.Contains(t, out, "balanceVals: accountMultiVals(p.balance)")
+
+	// Diff: one FieldChange per changed sub-column, compared element-wise.
+	assert.Contains(t, out, "cur := accountMultiVals(p.balance)")
+	assert.Contains(t, out, "if cur[0] != s.balanceVals[0] {")
+	assert.Contains(t, out, `drel.FieldChange{Column: "balance_amount", Value: cur[0]}`)
+	assert.Contains(t, out, "if cur[1] != s.balanceVals[1] {")
+	assert.Contains(t, out, `drel.FieldChange{Column: "balance_currency", Value: cur[1]}`)
+}
+
 func TestEmitModelFile_MultiColVOReturnsError(t *testing.T) {
 	m := ModelInfo{
 		Name:      "Product",

@@ -401,6 +401,10 @@ func emitSnapshot(b *strings.Builder, m ModelInfo, lower string, aliases map[str
 	// Snapshot struct
 	b.WriteString(fmt.Sprintf("type %sSnapshot struct {\n", lower))
 	for _, f := range colFields {
+		if f.IsMultiColVO {
+			b.WriteString(fmt.Sprintf("\t%sVals []any\n", f.Name))
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\t%s %s\n", f.Name, fieldDisplayType(f, aliases)))
 	}
 	b.WriteString("}\n\n")
@@ -412,6 +416,10 @@ func emitSnapshot(b *strings.Builder, m ModelInfo, lower string, aliases map[str
 		if i > 0 {
 			b.WriteString(", ")
 		}
+		if f.IsMultiColVO {
+			b.WriteString(fmt.Sprintf("%sVals: %sMultiVals(p.%s)", f.Name, lower, f.Name))
+			continue
+		}
 		b.WriteString(fmt.Sprintf("%s: p.%s", f.Name, f.Name))
 	}
 	b.WriteString("}\n}\n\n")
@@ -422,6 +430,16 @@ func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
 	b.WriteString(fmt.Sprintf("\ts := snap.(%sSnapshot)\n", lower))
 	b.WriteString("\tvar changes []drel.FieldChange\n")
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			b.WriteString(fmt.Sprintf("\t{\n\t\tcur := %sMultiVals(p.%s)\n", lower, f.Name))
+			for i, sub := range f.MultiColNames {
+				b.WriteString(fmt.Sprintf("\t\tif cur[%d] != s.%sVals[%d] {\n", i, f.Name, i))
+				b.WriteString(fmt.Sprintf("\t\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: cur[%d]})\n", sub, i))
+				b.WriteString("\t\t}\n")
+			}
+			b.WriteString("\t}\n")
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\tif p.%s != s.%s {\n", f.Name, f.Name))
 		b.WriteString(fmt.Sprintf("\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: p.%s})\n", f.ColumnName, f.Name))
 		b.WriteString("\t}\n")
