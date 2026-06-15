@@ -142,6 +142,10 @@ func (e *Engine) checkMissingIndex(ctx context.Context, sql string, args []any) 
 	if !ok {
 		return
 	}
+	// Bound the dev-mode probe with an independent deadline so an already-slow
+	// query is not blocked indefinitely by an extra EXPLAIN round-trip.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	rows, err := e.drv.Query(ctx, explainSQL, args...)
 	if err != nil {
 		e.logger.DebugContext(ctx, "drel dev: EXPLAIN failed", "err", err)
@@ -180,6 +184,12 @@ func isUnboundedSelect(sql string) bool {
 	return true
 }
 
+// n1MaxShapes caps the number of distinct query shapes the dev-mode detector
+// tracks, so a long-lived process with many distinct SQL strings cannot grow
+// the map without bound. When the cap is reached, stale entries are evicted
+// first; if none are stale, the map is cleared (dev-mode only, best-effort).
+const n1MaxShapes = 1024
+
 // n1Detector flags query shapes executed many times within a short window, a
 // hallmark of N+1 access. It is safe for concurrent use.
 type n1Detector struct {
@@ -205,14 +215,34 @@ func newN1Detector() *n1Detector {
 	}
 }
 
+// evictStaleLocked drops entries whose window has lapsed. The caller holds d.mu.
+func (d *n1Detector) evictStaleLocked(now time.Time) {
+	for k, e := range d.counts {
+		if now.Sub(e.first) > d.window {
+			delete(d.counts, k)
+		}
+	}
+}
+
 // observe records an execution of sql and returns true exactly once when the
-// shape crosses the threshold within the window.
+// shape crosses the threshold within the window. Stale entries are evicted and
+// the map is capped so memory stays bounded in long-lived dev processes; the
+// warned flag is reset when a shape's window lapses so a re-emerging N+1 warns
+// again.
 func (d *n1Detector) observe(sql string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now()
 	e, ok := d.counts[sql]
 	if !ok || now.Sub(e.first) > d.window {
+		// New shape or a lapsed window: opportunistically reclaim stale entries
+		// and bound total cardinality before inserting.
+		d.evictStaleLocked(now)
+		if len(d.counts) >= n1MaxShapes {
+			// No stale entries to reclaim and still at the cap: clear the map.
+			// Dev-mode heuristic, so losing in-window counts is acceptable.
+			d.counts = make(map[string]*n1Entry, n1MaxShapes)
+		}
 		d.counts[sql] = &n1Entry{count: 1, first: now}
 		return false
 	}
