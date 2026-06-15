@@ -74,6 +74,65 @@ func TestScanner_MultiColTypesDefaultText(t *testing.T) {
 	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
 }
 
+func TestScanner_SingleColVO_BaseType(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import (
+	"database/sql/driver"
+	"fmt"
+
+	"github.com/alternayte/drel"
+)
+
+type Email struct{ address string }
+
+func (e Email) Value() (driver.Value, error) { return e.address, nil }
+func (e *Email) Scan(src any) error {
+	s, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	e.address = s
+	return nil
+}
+
+type Cents struct{ n int64 }
+
+func (c Cents) Value() (driver.Value, error) { return c.n, nil }
+func (c *Cents) Scan(src any) error {
+	v, ok := src.(int64)
+	if !ok {
+		return fmt.Errorf("expected int64")
+	}
+	c.n = v
+	return nil
+}
+
+type Account struct {
+	drel.Model[int]
+	email   Email ` + "`db:\"email\"`" + `
+	balance Cents ` + "`db:\"balance\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	fields := models[0].Fields
+	require.Len(t, fields, 2)
+
+	emailField := fields[0]
+	assert.True(t, emailField.IsVO)
+	assert.Equal(t, "string", emailField.VOBaseType)
+
+	balanceField := fields[1]
+	assert.True(t, balanceField.IsVO)
+	assert.Equal(t, "int64", balanceField.VOBaseType)
+}
+
 func TestScanner_PrimitiveFieldNotVO(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
 		"models/model.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Item struct {\n\tdrel.Model[int]\n\tname  string " + "`db:\"name\"`" + "\n\tcount int    " + "`db:\"count\"`" + "\n}\n",

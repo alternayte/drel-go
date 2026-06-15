@@ -23,6 +23,7 @@ type FieldInfo struct {
 	RelTag         string
 	Relation       *RelationFieldInfo
 	IsVO           bool   // implements sql.Scanner + driver.Valuer (single-column VO)
+	VOBaseType     string // single-column VO: underlying basic Go type (e.g. "string", "int64"); empty if not derivable
 	IsMultiColVO   bool   // implements drel.MultiColumnMapper (multi-column VO)
 	MultiColPrefix string // db tag used as column prefix for multi-column VOs
 	MultiColNames  []string // expanded sub-column names from the db tag (multi-column VOs)

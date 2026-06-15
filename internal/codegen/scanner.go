@@ -227,6 +227,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 				fi.IsPointer = isPointerType(f.Type())
 				if isScannerValuer(f.Type()) {
 					fi.IsVO = true
+					fi.VOBaseType = voBaseType(f.Type())
 				}
 				if isMultiColumnMapper(f.Type()) {
 					fi.IsMultiColVO = true
@@ -403,6 +404,45 @@ func findEnumValues(t types.Type) []string {
 	}
 	sort.Strings(values)
 	return values
+}
+
+// voBaseType returns the underlying basic Go type name of a single-column VO
+// (e.g. "string", "int64"), used to resolve the column's SQL type. It unwraps a
+// pointer and reads the named type's underlying *types.Basic. For single-field
+// structs, it inspects the sole field's type to infer the stored primitive.
+// Returns "" when the underlying type cannot be reduced to a known basic kind,
+// in which case DDL falls back to its default.
+func voBaseType(t types.Type) string {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return ""
+	}
+	// Case 1: named type with a basic underlying (e.g. type Email string).
+	if basic, ok := named.Underlying().(*types.Basic); ok {
+		return basic.Name()
+	}
+	// Case 2: single-field struct — infer from the one field's basic type
+	// (e.g. type Email struct{ address string }).
+	if st, ok := named.Underlying().(*types.Struct); ok && st.NumFields() == 1 {
+		field := st.Field(0)
+		ft := field.Type()
+		if ptr2, ok := ft.(*types.Pointer); ok {
+			ft = ptr2.Elem()
+		}
+		if basic, ok := ft.(*types.Basic); ok {
+			return basic.Name()
+		}
+		// Single field is itself a named basic type.
+		if n2, ok := ft.(*types.Named); ok {
+			if basic, ok := n2.Underlying().(*types.Basic); ok {
+				return basic.Name()
+			}
+		}
+	}
+	return ""
 }
 
 func isIntegerBasicKind(k types.BasicKind) bool {
