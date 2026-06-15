@@ -578,3 +578,67 @@ type Zebra struct {
 	assert.Equal(t, models[1].PkgPath, models2[1].PkgPath)
 	assert.Equal(t, models[1].Name, models2[1].Name)
 }
+
+// TestScanner_ClassifiesJSONAndArrayFields verifies that the scanner correctly
+// sets IsJSON/IsArray on slice and map fields, and records TypeOverride verbatim
+// when a type= db tag is present.
+func TestScanner_ClassifiesJSONAndArrayFields(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Settings struct {
+	Theme string ` + "`json:\"theme\"`" + `
+}
+
+type Doc struct {
+	drel.Model[int]
+	Tags  []string          ` + "`db:\"tags\"`" + `
+	Nums  []int             ` + "`db:\"nums\"`" + `
+	Meta  map[string]string ` + "`db:\"meta\"`" + `
+	Prefs Settings          ` + "`db:\"prefs\"`" + `
+	Arr   []string          ` + "`db:\"arr,type=text[]\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	byName := map[string]FieldInfo{}
+	for _, f := range models[0].Fields {
+		byName[f.Name] = f
+	}
+
+	// []string default -> JSON array
+	assert.True(t, byName["Tags"].IsArray, "Tags should be IsArray")
+	assert.True(t, byName["Tags"].IsJSON, "Tags should be IsJSON (slices serialize as JSON by default)")
+	assert.Empty(t, byName["Tags"].TypeOverride)
+
+	// []int default -> JSON array
+	assert.True(t, byName["Nums"].IsArray)
+	assert.True(t, byName["Nums"].IsJSON)
+
+	// map -> JSON (object), not an array
+	assert.True(t, byName["Meta"].IsJSON)
+	assert.False(t, byName["Meta"].IsArray)
+
+	// plain struct with json affinity -> JSON
+	assert.True(t, byName["Prefs"].IsJSON)
+	assert.False(t, byName["Prefs"].IsArray)
+
+	// explicit type override is recorded verbatim
+	assert.Equal(t, "text[]", byName["Arr"].TypeOverride)
+	assert.True(t, byName["Arr"].IsArray)
+}
+
+// TestParseDBTag_TypeOverride_Scanner verifies that the type= db tag option is
+// parsed correctly from the scanner's parseDBTag helper and stored in opts.typ.
+func TestParseDBTag_TypeOverride_Scanner(t *testing.T) {
+	col, opts, err := parseDBTag(`db:"payload,type=jsonb"`)
+	require.NoError(t, err)
+	assert.Equal(t, "payload", col)
+	assert.Equal(t, "jsonb", opts.typ)
+}
