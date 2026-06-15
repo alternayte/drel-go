@@ -9,7 +9,7 @@ import (
 	"github.com/alternayte/drel"
 )
 
-var Accounts = struct {
+var UserAccounts = struct {
 	ID        drel.OrderedColumn[int]
 	Email     drel.Column[Email]
 	Balance   drel.Column[Cents]
@@ -23,8 +23,8 @@ var Accounts = struct {
 	UpdatedAt: drel.NewCol[time.Time]("updated_at"),
 }
 
-func scanAccount(row drel.Row) (*Account, error) {
-	p := &Account{}
+func scanUseraccount(row drel.Row) (*UserAccount, error) {
+	p := &UserAccount{}
 	idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()
 	// email is a nullable value object: Scan(nil)->zero, Value()==nil for zero->NULL
 	err := row.Scan(idPtr, &p.email, &p.balance, createdAtPtr, updatedAtPtr)
@@ -34,17 +34,17 @@ func scanAccount(row drel.Row) (*Account, error) {
 	return p, nil
 }
 
-type accountSnapshot struct {
+type useraccountSnapshot struct {
 	email   Email
 	balance Cents
 }
 
-func snapshotAccount(p *Account) any {
-	return accountSnapshot{email: p.email, balance: p.balance}
+func snapshotUseraccount(p *UserAccount) any {
+	return useraccountSnapshot{email: p.email, balance: p.balance}
 }
 
-func diffAccount(p *Account, snap any) []drel.FieldChange {
-	s := snap.(accountSnapshot)
+func diffUseraccount(p *UserAccount, snap any) []drel.FieldChange {
+	s := snap.(useraccountSnapshot)
 	var changes []drel.FieldChange
 	if p.email != s.email {
 		changes = append(changes, drel.FieldChange{Column: "email", Value: p.email})
@@ -55,11 +55,11 @@ func diffAccount(p *Account, snap any) []drel.FieldChange {
 	return changes
 }
 
-func accountPKValue(p *Account) any {
+func useraccountPKValue(p *UserAccount) any {
 	return p.ID()
 }
 
-func accountColumnValue(p *Account, idx int) any {
+func useraccountColumnValue(p *UserAccount, idx int) any {
 	switch idx {
 	case 0:
 		return p.ID()
@@ -75,53 +75,53 @@ func accountColumnValue(p *Account, idx int) any {
 	return nil
 }
 
-func accountInsertColumns(p *Account) ([]string, []any) {
+func useraccountInsertColumns(p *UserAccount) ([]string, []any) {
 	return []string{"email", "balance"}, []any{p.email, p.balance}
 }
 
-func accountScanReturning(p *Account, row drel.Row) error {
+func useraccountScanReturning(p *UserAccount, row drel.Row) error {
 	idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
-func accountNormalizeKey(v any) any {
+func useraccountNormalizeKey(v any) any {
 	return drel.NormalizeIntKey(v)
 }
 
-var AccountMeta = drel.ModelMeta[Account]{
-	Table:         "accounts",
+var UserAccountMeta = drel.ModelMeta[UserAccount]{
+	Table:         "user_accounts",
 	Columns:       []string{"id", "email", "balance", "created_at", "updated_at"},
 	PKColumn:      "id",
-	Scan:          scanAccount,
-	Snapshot:      snapshotAccount,
-	Diff:          diffAccount,
-	PKValue:       accountPKValue,
-	InsertColumns: accountInsertColumns,
-	ScanReturning: accountScanReturning,
-	ColumnValue:   accountColumnValue,
-	NormalizeKey:  accountNormalizeKey,
+	Scan:          scanUseraccount,
+	Snapshot:      snapshotUseraccount,
+	Diff:          diffUseraccount,
+	PKValue:       useraccountPKValue,
+	InsertColumns: useraccountInsertColumns,
+	ScanReturning: useraccountScanReturning,
+	ColumnValue:   useraccountColumnValue,
+	NormalizeKey:  useraccountNormalizeKey,
 }
 
-type AccountRepository struct {
-	*drel.Repository[Account]
+type UserAccountRepository struct {
+	*drel.Repository[UserAccount]
 }
 
-func (r *AccountRepository) FindByID(ctx context.Context, id int) (*Account, error) {
+func (r *UserAccountRepository) FindByID(ctx context.Context, id int) (*UserAccount, error) {
 	return r.Find(ctx, id)
 }
 
-type TxAccountRepository struct {
-	*drel.TxRepository[Account]
+type TxUserAccountRepository struct {
+	*drel.TxRepository[UserAccount]
 }
 
-func (r *TxAccountRepository) FindByID(ctx context.Context, id int) (*Account, error) {
+func (r *TxUserAccountRepository) FindByID(ctx context.Context, id int) (*UserAccount, error) {
 	return r.Find(ctx, id)
 }
 
-type UoWAccountRepository struct {
-	*drel.UoWRepository[Account]
+type UoWUserAccountRepository struct {
+	*drel.UoWRepository[UserAccount]
 }
 
-func (r *UoWAccountRepository) FindByID(ctx context.Context, id int) (*Account, error) {
+func (r *UoWUserAccountRepository) FindByID(ctx context.Context, id int) (*UserAccount, error) {
 	return r.Find(ctx, id)
 }

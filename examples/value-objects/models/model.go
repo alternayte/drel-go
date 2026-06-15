@@ -63,17 +63,20 @@ func (c *Cents) Scan(src any) error {
 	return nil
 }
 
-type Account struct {
+// UserAccount demonstrates single-column value objects (Email, Cents).
+// It was renamed from Account to avoid a duplicate DB field name with
+// accounts.Account (which demonstrates multi-column VOs).
+type UserAccount struct {
 	drel.Model[int]
 	email   Email `db:"email,unique"`
 	balance Cents `db:"balance"`
 }
 
-func NewAccount(email Email, balance Cents) *Account {
-	return &Account{email: email, balance: balance}
+func NewUserAccount(email Email, balance Cents) *UserAccount {
+	return &UserAccount{email: email, balance: balance}
 }
 
-func (a *Account) Email() Email   { return a.email }
-func (a *Account) Balance() Cents { return a.balance }
+func (a *UserAccount) Email() Email   { return a.email }
+func (a *UserAccount) Balance() Cents { return a.balance }
 
-func (a *Account) SetBalance(c Cents) { a.balance = c }
+func (a *UserAccount) SetBalance(c Cents) { a.balance = c }

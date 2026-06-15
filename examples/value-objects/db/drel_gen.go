@@ -5,11 +5,13 @@ package db
 import (
 	"github.com/alternayte/drel"
 	accounts "github.com/alternayte/drel/examples/value-objects/accounts"
+	models "github.com/alternayte/drel/examples/value-objects/models"
 )
 
 type DB struct {
 	*drel.Engine
-	Accounts *accounts.AccountRepository
+	Accounts     *accounts.AccountRepository
+	UserAccounts *models.UserAccountRepository
 }
 
 func Open(dsn string, opts ...drel.Option) (*DB, error) {
@@ -18,8 +20,9 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 		return nil, err
 	}
 	return &DB{
-		Engine:   engine,
-		Accounts: &accounts.AccountRepository{Repository: drel.NewRepository(engine, accounts.AccountMeta)},
+		Engine:       engine,
+		Accounts:     &accounts.AccountRepository{Repository: drel.NewRepository(engine, accounts.AccountMeta)},
+		UserAccounts: &models.UserAccountRepository{Repository: drel.NewRepository(engine, models.UserAccountMeta)},
 	}, nil
 }
 
@@ -28,14 +31,16 @@ func Open(dsn string, opts ...drel.Option) (*DB, error) {
 // SaveChanges to flush everything in a single transaction.
 type UnitOfWork struct {
 	*drel.UnitOfWork
-	Accounts *accounts.UoWAccountRepository
+	Accounts     *accounts.UoWAccountRepository
+	UserAccounts *models.UoWUserAccountRepository
 }
 
 // NewUnitOfWork starts a new change-tracking work session.
 func (db *DB) NewUnitOfWork() *UnitOfWork {
 	uow := db.Engine.NewUnitOfWork()
 	return &UnitOfWork{
-		UnitOfWork: uow,
-		Accounts:   &accounts.UoWAccountRepository{UoWRepository: drel.NewUoWRepository(uow, accounts.AccountMeta)},
+		UnitOfWork:   uow,
+		Accounts:     &accounts.UoWAccountRepository{UoWRepository: drel.NewUoWRepository(uow, accounts.AccountMeta)},
+		UserAccounts: &models.UoWUserAccountRepository{UoWRepository: drel.NewUoWRepository(uow, models.UserAccountMeta)},
 	}
 }
