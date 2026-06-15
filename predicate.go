@@ -126,16 +126,58 @@ func WhereIf(cond bool, pred Predicate) Predicate {
 	return True()
 }
 
-// Raw creates a predicate from a raw SQL expression with bound arguments.
-// Use ? as placeholder for each argument; they are rewritten to $N for Postgres.
-// Panics if the number of ? placeholders does not match the number of arguments.
-func Raw(sql string, args ...any) Predicate {
+// countRawPlaceholders counts '?' placeholders in a raw SQL fragment, ignoring
+// any '?' inside single-quoted strings, double-quoted identifiers, or
+// dollar-quoted ($$...$$) regions. It uses the same scanner state machine as the
+// dialect emitters so the two can never disagree about placeholder count.
+func countRawPlaceholders(sql string) int {
 	count := 0
-	for _, c := range sql {
-		if c == '?' {
-			count++
+	state := 0 // 0=normal, 1=single-quote, 2=double-quote, 3=dollar-quote
+	for i := 0; i < len(sql); i++ {
+		ch := sql[i]
+		switch state {
+		case 0: // normal
+			switch {
+			case ch == '\'':
+				state = 1
+			case ch == '"':
+				state = 2
+			case ch == '$' && i+1 < len(sql) && sql[i+1] == '$':
+				state = 3
+				i++
+			case ch == '?':
+				count++
+			}
+		case 1: // single-quoted string
+			if ch == '\'' {
+				if i+1 < len(sql) && sql[i+1] == '\'' {
+					i++ // escaped ''
+				} else {
+					state = 0
+				}
+			}
+		case 2: // double-quoted identifier
+			if ch == '"' {
+				state = 0
+			}
+		case 3: // dollar-quoted string
+			if ch == '$' && i+1 < len(sql) && sql[i+1] == '$' {
+				i++
+				state = 0
+			}
 		}
 	}
+	return count
+}
+
+// Raw creates a predicate from a raw SQL expression with bound arguments.
+// Use ? as placeholder for each argument; they are rewritten to $N for Postgres.
+// Placeholder counting is quote-aware: a '?' inside a single-quoted string,
+// double-quoted identifier, or dollar-quoted region is not a placeholder.
+// Panics if the number of placeholders does not match the number of arguments;
+// use RawErr for a non-panicking variant.
+func Raw(sql string, args ...any) Predicate {
+	count := countRawPlaceholders(sql)
 	if count != len(args) {
 		panic(fmt.Sprintf("drel.Raw: %d placeholder(s) but %d argument(s)", count, len(args)))
 	}

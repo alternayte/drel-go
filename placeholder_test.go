@@ -7,6 +7,47 @@ import (
 	dialectsqlite "github.com/alternayte/drel/internal/dialect/sqlite"
 )
 
+func TestCountRawPlaceholders_QuoteAware(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want int
+	}{
+		{"single placeholder", "n = ?", 1},
+		{"question mark in single-quoted literal", "note = 'huh?' AND n = ?", 1},
+		{"two question marks both in literal", "a = 'x?y?' AND b = 1", 0},
+		{"double-quoted identifier with question mark", `"weird?col" = ?`, 1},
+		{"escaped single quote then placeholder", "a = 'it''s ok?' AND b = ?", 1},
+		{"dollar-quoted region with question mark", "x = $$why?$$ AND y = ?", 1},
+		{"no placeholders", "deleted_at IS NULL", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := countRawPlaceholders(tt.sql)
+			if got != tt.want {
+				t.Errorf("countRawPlaceholders(%q) = %d, want %d", tt.sql, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRaw_DoesNotPanicOnQuotedQuestionMark(t *testing.T) {
+	// Must not panic: the only out-of-quote placeholder is the trailing ?.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Raw panicked unexpectedly: %v", r)
+		}
+	}()
+	p := Raw("note = 'huh?' AND n = ?", 1)
+	clause := p.ToAST()
+	if clause.Raw == nil {
+		t.Fatal("expected non-nil Raw clause")
+	}
+	if len(clause.RawArgs) != 1 {
+		t.Fatalf("expected 1 raw arg, got %d", len(clause.RawArgs))
+	}
+}
+
 func TestRewritePlaceholders(t *testing.T) {
 	tests := []struct {
 		name string
