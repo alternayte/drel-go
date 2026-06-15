@@ -94,6 +94,44 @@ func TestIdentityMap_FindTwiceReturnsSamePointer(t *testing.T) {
 	assert.Same(t, a, b, "two Find(id) calls through one UoW must return the same tracked instance")
 }
 
+func TestIdentityMap_TxFindTwiceReturnsSamePointer(t *testing.T) {
+	engine := setupIdmapEngine(t)
+	ctx := context.Background()
+	id := seedIdmapRow(t, engine, "Original")
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		repo := drel.NewTxRepository(tx, idmapMeta)
+
+		a, err := repo.Find(ctx, id)
+		if err != nil {
+			return err
+		}
+		b, err := repo.Find(ctx, id) // second load within the same Tx
+		if err != nil {
+			return err
+		}
+		assert.Same(t, a, b, "two Find(id) calls within one Tx must return the same tracked instance")
+
+		a.Title = "Updated"
+		all, err := repo.Where(drel.Raw("id = ?", id)).All(ctx)
+		if err != nil {
+			return err
+		}
+		require.Len(t, all, 1)
+		assert.Same(t, a, all[0])
+		assert.Equal(t, "Updated", all[0].Title)
+		return tx.SaveChanges(ctx)
+	})
+	require.NoError(t, err)
+
+	// Verify a single coherent persisted value.
+	verifyUow := engine.NewUnitOfWork()
+	verifyRepo := drel.NewUoWRepository(verifyUow, idmapMeta)
+	got, err := verifyRepo.Find(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated", got.Title)
+}
+
 func TestIdentityMap_NoLostUpdateAcrossPaths(t *testing.T) {
 	engine := setupIdmapEngine(t)
 	ctx := context.Background()

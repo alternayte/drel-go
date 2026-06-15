@@ -358,8 +358,9 @@ func (q *TxQueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 		return nil, err
 	}
 	if !q.noTrack && q.base != nil && q.meta.Snapshot != nil {
-		for _, item := range items {
-			q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		for i, item := range items {
+			canon := q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+			items[i] = canon.(*T)
 		}
 	}
 	return items, nil
@@ -549,8 +550,9 @@ func (q *TxQueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 
 	// Track only the rows actually returned to the caller (unless opted out).
 	if !q.noTrack && q.base != nil && q.meta.Snapshot != nil {
-		for _, item := range page.Items {
-			q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		for i, item := range page.Items {
+			canon := q.tx.tracker.Track(item, q.meta.Snapshot(item), q.base)
+			page.Items[i] = canon.(*T)
 		}
 	}
 	return page, nil
