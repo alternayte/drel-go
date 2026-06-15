@@ -46,11 +46,14 @@ type Index struct {
 	Unique  bool     `json:"unique,omitempty"`
 }
 
-// EnumDef describes a Postgres enum type. Name is the lower-cased local Go type
-// name; it is emitted as a CREATE TYPE statement (Postgres only).
+// EnumDef describes an enum type. Name is the lower-cased local Go type name.
+// String enums are emitted as a Postgres CREATE TYPE; integer enums never get a
+// CREATE TYPE (they map to an integer column + CHECK) and are excluded here.
 type EnumDef struct {
-	Name   string   `json:"name"`
-	Values []string `json:"values"`
+	Name     string   `json:"name"`
+	Values   []string `json:"values"`
+	IsInt    bool     `json:"isInt,omitempty"`
+	BaseType string   `json:"baseType,omitempty"`
 }
 
 // BuildSchema produces the full logical schema for the given models and dialect.
@@ -81,21 +84,29 @@ func BuildSchema(models []ModelInfo, dialect string) Schema {
 }
 
 // buildEnums collects enum type definitions across all models, de-duplicated by
-// lower-cased local type name, in first-seen order.
+// lower-cased local type name, in first-seen order. Integer enums are excluded
+// because they do not produce a Postgres CREATE TYPE; they use integer columns
+// with a CHECK constraint instead.
 func buildEnums(models []ModelInfo) []EnumDef {
 	seen := map[string]bool{}
 	var enums []EnumDef
 	for _, m := range models {
 		for _, f := range columnFields(m.Fields) {
-			if f.IsEnum && len(f.EnumValues) > 0 {
-				name := strings.ToLower(f.LocalGoType)
-				if seen[name] {
-					continue
-				}
-				seen[name] = true
-				vals := append([]string(nil), f.EnumValues...)
-				enums = append(enums, EnumDef{Name: name, Values: vals})
+			if !f.IsEnum || len(f.EnumValues) == 0 {
+				continue
 			}
+			// Integer enums are not Postgres CREATE TYPE enums; they map to an
+			// integer column plus a CHECK and are handled in buildTable.
+			if f.EnumIsInt {
+				continue
+			}
+			name := strings.ToLower(f.LocalGoType)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			vals := append([]string(nil), f.EnumValues...)
+			enums = append(enums, EnumDef{Name: name, Values: vals, BaseType: f.EnumBaseType})
 		}
 	}
 	return enums

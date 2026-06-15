@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -504,4 +505,31 @@ func TestCreateTable_UUIDPK_NoAutoGen(t *testing.T) {
 	if strings.Contains(lite, "AUTOINCREMENT") {
 		t.Fatalf("sqlite: app-assigned uuid PK must have no AUTOINCREMENT:\n%s", lite)
 	}
+}
+
+func TestGenerateSchema_IntEnum_NoCreateType(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+			{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+				IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1", "2"}},
+		}},
+	}
+	sql := GenerateSchema(models, "postgres")
+	// No CREATE TYPE for an int enum.
+	assert.NotContains(t, sql, `CREATE TYPE "priority"`)
+}
+
+func TestBuildEnums_OnlyStringEnums(t *testing.T) {
+	models := []ModelInfo{
+		{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+			{Name: "role", GoType: "users.Role", ColumnName: "role", LocalGoType: "Role",
+				IsEnum: true, EnumBaseType: "string", EnumValues: []string{"admin", "user"}},
+			{Name: "priority", GoType: "users.Priority", ColumnName: "priority", LocalGoType: "Priority",
+				IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1"}},
+		}},
+	}
+	enums := buildEnums(models)
+	require.Len(t, enums, 1)
+	assert.Equal(t, "role", enums[0].Name)
+	assert.False(t, enums[0].IsInt)
 }

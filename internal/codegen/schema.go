@@ -529,23 +529,25 @@ func collectFKs(models []ModelInfo) map[string]string {
 }
 
 // collectEnums discovers enum fields across all models and returns CREATE TYPE statements.
+// Integer enums are excluded; they use integer columns with a CHECK constraint instead.
 func collectEnums(models []ModelInfo) []string {
 	seen := map[string]bool{}
 	var enums []string
 	for _, m := range models {
 		for _, f := range columnFields(m.Fields) {
-			if f.IsEnum && len(f.EnumValues) > 0 {
-				name := strings.ToLower(f.LocalGoType)
-				if seen[name] {
-					continue
-				}
-				seen[name] = true
-				quoted := make([]string, len(f.EnumValues))
-				for i, v := range f.EnumValues {
-					quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
-				}
-				enums = append(enums, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);", quoteIdent(name), strings.Join(quoted, ", ")))
+			if !f.IsEnum || len(f.EnumValues) == 0 || f.EnumIsInt {
+				continue
 			}
+			name := strings.ToLower(f.LocalGoType)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			quoted := make([]string, len(f.EnumValues))
+			for i, v := range f.EnumValues {
+				quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
+			}
+			enums = append(enums, fmt.Sprintf("CREATE TYPE %s AS ENUM (%s);", quoteIdent(name), strings.Join(quoted, ", ")))
 		}
 	}
 	return enums
