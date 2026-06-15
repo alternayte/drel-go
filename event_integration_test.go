@@ -344,3 +344,45 @@ func TestIntegration_BeforeCommit_TxRepoAddsEntity(t *testing.T) {
 	require.NoError(t, row.Scan(&count))
 	assert.Equal(t, 2, count)
 }
+
+func TestIntegration_BeforeCommit_HookAddedEntityEventToOutbox(t *testing.T) {
+	engine := setupBeforeCommitTestDB(t)
+	ctx := context.Background()
+
+	_, err := engine.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS event_outbox (
+			id      BIGSERIAL PRIMARY KEY,
+			type    TEXT NOT NULL,
+			payload JSONB NOT NULL
+		)`)
+	require.NoError(t, err)
+	engine.UseOutbox("event_outbox")
+
+	var received []any
+	engine.OnAfterCommit(func(ctx context.Context, events []any) {
+		received = append(received, events...)
+	})
+	engine.OnBeforeCommit(func(ctx context.Context, tx *drel.Tx, events []any) error {
+		audit := testmodels.NewEventUser("audit-bot", "audit@system")
+		audit.RecordEvent(UserCreated{Name: "audit-bot"})
+		drel.NewTxRepository(tx, testmodels.EventUserMeta).Add(audit)
+		return nil
+	})
+
+	err = engine.Transaction(ctx, func(tx *drel.Tx) error {
+		user := testmodels.NewEventUser("Alice", "alice@example.com")
+		user.RecordEvent(UserCreated{Name: "Alice"})
+		drel.NewTxRepository(tx, testmodels.EventUserMeta).Add(user)
+		return nil
+	})
+	require.NoError(t, err)
+
+	row := engine.QueryRow(ctx, "SELECT COUNT(*) FROM event_outbox")
+	var outboxCount int
+	require.NoError(t, row.Scan(&outboxCount))
+	assert.Equal(t, 2, outboxCount)
+
+	assert.Contains(t, received, UserCreated{Name: "Alice"})
+	assert.Contains(t, received, UserCreated{Name: "audit-bot"})
+	assert.Len(t, received, 2)
+}

@@ -349,3 +349,37 @@ func TestSQLiteMutation_Update_UpdatedAtChanges(t *testing.T) {
 	assert.False(t, found.UpdatedAt.Before(originalUpdatedAt),
 		"updated_at should not be before the original value after an update")
 }
+
+// ─── Hook-added entity events reach after-commit ─────────────────────────────
+
+func TestTransaction_HookAddedEntityEventReachesAfterCommit(t *testing.T) {
+	engine := setupEventItemEngine(t)
+	ctx := context.Background()
+
+	var received []any
+	engine.OnAfterCommit(func(ctx context.Context, events []any) {
+		received = append(received, events...)
+	})
+	engine.OnBeforeCommit(func(ctx context.Context, tx *drel.Tx, events []any) error {
+		audit := &eventItem{Title: "audit"}
+		audit.RecordEvent(eventItemCreated{Title: "audit"})
+		drel.NewTxRepository(tx, eventItemMeta).Add(audit)
+		return nil
+	})
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		item := &eventItem{Title: "main"}
+		item.RecordEvent(eventItemCreated{Title: "main"})
+		drel.NewTxRepository(tx, eventItemMeta).Add(item)
+		return nil
+	})
+	require.NoError(t, err)
+
+	n, err := drel.NewRepository(engine, eventItemMeta).Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	assert.Contains(t, received, eventItemCreated{Title: "main"})
+	assert.Contains(t, received, eventItemCreated{Title: "audit"})
+	assert.Len(t, received, 2, "no event dropped, none double-dispatched")
+}

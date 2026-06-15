@@ -65,9 +65,19 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 			return err
 		}
 	}
-	if err := flushHookChanges(ctx, tx, u.engine.dialect(), u.tracker); err != nil {
+
+	hookEvents, err := flushHookChanges(ctx, tx, u.engine.dialect(), u.tracker)
+	if err != nil {
 		u.tracker.resetFlushed()
 		return err
+	}
+	allEvents = append(allEvents, hookEvents...)
+
+	for _, sink := range u.engine.eventSinks {
+		if err := sink(ctx, tx, allEvents); err != nil {
+			u.tracker.resetFlushed()
+			return err
+		}
 	}
 
 	if u.engine.devMode {

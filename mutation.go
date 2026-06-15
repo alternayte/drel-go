@@ -33,7 +33,11 @@ func quoteIdentMutation(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
+// applyPendingChanges performs DetectChanges + GetPendingChanges and executes all
+// the necessary INSERTs, UPDATEs, and DELETEs against the database. It marks
+// each flushed entity with flushed=true and returns the slice of entities that
+// were actually flushed so callers can decide how to collect events from them.
+func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]*trackedEntity, error) {
 	tracker.DetectChanges()
 	pc := tracker.GetPendingChanges()
 
@@ -219,27 +223,62 @@ func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *
 		}
 	}
 
-	// Read pending events without clearing them (the entities remain the source
-	// of truth across a failed-then-retried SaveChanges). Mark emitted entities
-	// flushed so a second flush in the same live transaction does not re-emit.
-	// The tracker is finalized (PostCommit) by the commit-owning wrapper only
-	// after a successful Commit.
-	events := collectPendingEvents(tracker)
+	// Mark emitted entities flushed so a second flush in the same live
+	// transaction does not re-emit. The tracker is finalized (PostCommit) by the
+	// commit-owning wrapper only after a successful Commit.
+	flushed := make([]*trackedEntity, 0, len(pc.Added)+len(pc.Modified)+len(pc.Deleted))
 	for _, te := range pc.Added {
 		te.flushed = true
+		flushed = append(flushed, te)
 	}
 	for _, te := range pc.Modified {
 		te.flushed = true
+		flushed = append(flushed, te)
 	}
 	for _, te := range pc.Deleted {
 		te.flushed = true
+		flushed = append(flushed, te)
 	}
-	return events, nil
+	return flushed, nil
 }
 
-func flushHookChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) error {
-	_, err := flushChanges(ctx, exec, d, tracker)
-	return err
+// flushChanges applies all pending changes to the database and returns the
+// DELTA events — those belonging to the entities flushed in this call only.
+// Callers accumulate delta events across multiple mid-transaction flushes via
+// tx.heldEvents so no event is double-dispatched. Events are not cleared here;
+// they are cleared post-commit by clearPendingEvents so a failed-then-retried
+// SaveChanges can re-collect them.
+func flushChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
+	flushed, err := applyPendingChanges(ctx, exec, d, tracker)
+	if err != nil {
+		return nil, err
+	}
+	return eventsOf(flushed), nil
+}
+
+// flushHookChanges applies any changes staged by before-commit hooks (entities
+// whose flushed flag is still false after the main flush) and returns ONLY the
+// delta events — those belonging to the entities that were flushed in this call.
+// Events are not cleared here; they are cleared post-commit by clearPendingEvents.
+func flushHookChanges(ctx context.Context, exec txExec, d dialect.Dialect, tracker *changeTracker) ([]any, error) {
+	flushed, err := applyPendingChanges(ctx, exec, d, tracker)
+	if err != nil {
+		return nil, err
+	}
+	return eventsOf(flushed), nil
+}
+
+// eventsOf collects the pending domain events from a specific set of tracked
+// entities without clearing them. Used to build the delta event list after a
+// hook flush so event-sinks (e.g. the outbox) receive the full combined set.
+func eventsOf(entities []*trackedEntity) []any {
+	var events []any
+	for _, te := range entities {
+		if er, ok := te.entity.(EventRecorder); ok {
+			events = append(events, er.PendingEvents()...)
+		}
+	}
+	return events
 }
 
 // collectPendingEvents gathers (without clearing) the pending domain events

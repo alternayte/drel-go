@@ -96,9 +96,18 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		}
 	}
 
-	if err := flushHookChanges(ctx, tx, e.dialect(), tx.tracker); err != nil {
+	hookEvents, err := flushHookChanges(ctx, tx, e.dialect(), tx.tracker)
+	if err != nil {
 		tx.tracker.resetFlushed()
 		return err
+	}
+	allEvents = append(allEvents, hookEvents...)
+
+	for _, sink := range e.eventSinks {
+		if err := sink(ctx, tx, allEvents); err != nil {
+			tx.tracker.resetFlushed()
+			return err
+		}
 	}
 
 	if e.devMode {

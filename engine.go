@@ -23,6 +23,7 @@ type Engine struct {
 	dia               dialect.Dialect
 	beforeCommitHooks []BeforeCommitHook
 	afterCommitHooks  []AfterCommitHook
+	eventSinks        []func(ctx context.Context, tx *Tx, events []any) error
 	queryHooks        []QueryHook
 
 	logger        *slog.Logger
@@ -336,4 +337,11 @@ func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
 
 func (e *Engine) OnAfterCommit(hook AfterCommitHook) {
 	e.afterCommitHooks = append(e.afterCommitHooks, hook)
+}
+
+// addEventSink registers a function that receives all committed events (including
+// those from entities staged by before-commit hooks) after the hook-flush step.
+// This is the registration point used by UseOutbox.
+func (e *Engine) addEventSink(fn func(ctx context.Context, tx *Tx, events []any) error) {
+	e.eventSinks = append(e.eventSinks, fn)
 }

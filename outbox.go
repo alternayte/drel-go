@@ -42,7 +42,7 @@ func (e *Engine) UseOutbox(table string, opts ...OutboxOption) {
 	for _, o := range opts {
 		o(cfg)
 	}
-	e.OnBeforeCommit(func(ctx context.Context, tx *Tx, events []any) error {
+	e.addEventSink(func(ctx context.Context, tx *Tx, events []any) error {
 		for _, ev := range events {
 			msg, ok := cfg.mapper(ev)
 			if !ok {
