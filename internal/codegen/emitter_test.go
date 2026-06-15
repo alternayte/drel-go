@@ -606,6 +606,18 @@ func TestEmitModelFileChecked_NonComparableVONoEqualErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "Equal")
 }
 
+func TestEmitModelFileChecked_RejectTextNamesRealContract(t *testing.T) {
+	m := ModelInfo{
+		Name: "Product", PkgName: "models", PKType: "int", TableName: "products",
+		Fields: []FieldInfo{
+			{Name: "balance", GoType: "testmod/models.Money", ColumnName: "balance", IsMultiColVO: true, LocalGoType: "Money"},
+		},
+	}
+	_, err := EmitModelFileChecked(m)
+	// Multi-col VOs ARE now supported; EmitModelFileChecked must succeed.
+	require.NoError(t, err)
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {
