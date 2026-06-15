@@ -171,6 +171,12 @@ func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
 	}
 	ct.entities = append(ct.entities, te)
 	ct.index[entity] = te
+	// Index by PK only once a non-zero key is present (app-assigned keys are
+	// stamped above; auto-increment keys stay zero until flush and are not
+	// PK-indexed here).
+	if key, ok := ct.pkKey(entity, meta); ok {
+		ct.byPK[key] = te
+	}
 }
 
 // stampKey assigns an app-assigned primary key before insert when one is needed
@@ -225,6 +231,11 @@ func (ct *changeTracker) Detach(entity any) {
 		return
 	}
 	delete(ct.index, entity)
+	if key, ok := ct.pkKey(te.entity, te.meta); ok {
+		if cur, ok := ct.byPK[key]; ok && cur == te {
+			delete(ct.byPK, key)
+		}
+	}
 	for i, e := range ct.entities {
 		if e == te {
 			ct.entities = append(ct.entities[:i], ct.entities[i+1:]...)
@@ -349,9 +360,13 @@ func (ct *changeTracker) save() trackerState {
 func (ct *changeTracker) restore(st trackerState) {
 	ct.entities = append([]*trackedEntity(nil), st.entities...)
 	ct.index = make(map[any]*trackedEntity, len(st.entities))
+	ct.byPK = make(map[identityKey]*trackedEntity, len(st.entities))
 	for _, te := range ct.entities {
 		*te = st.states[te]
 		ct.index[te.entity] = te
+		if key, ok := ct.pkKey(te.entity, te.meta); ok {
+			ct.byPK[key] = te
+		}
 	}
 }
 
@@ -391,6 +406,11 @@ func (ct *changeTracker) PostCommit() {
 			te.forceUpdate = false
 			te.flushed = false
 			te.loaded = true
+			// An auto-increment key is assigned during flush; PK-index the row
+			// now that its key is non-zero.
+			if key, ok := ct.pkKey(te.entity, te.meta); ok {
+				ct.byPK[key] = te
+			}
 			surviving = append(surviving, te)
 		case StateModified:
 			te.snapshot = snapshotOf(te)
@@ -402,6 +422,11 @@ func (ct *changeTracker) PostCommit() {
 			surviving = append(surviving, te)
 		case StateDeleted:
 			delete(ct.index, te.entity)
+			if key, ok := ct.pkKey(te.entity, te.meta); ok {
+				if cur, ok := ct.byPK[key]; ok && cur == te {
+					delete(ct.byPK, key)
+				}
+			}
 		case StateUnchanged:
 			te.flushed = false
 			surviving = append(surviving, te)

@@ -398,6 +398,60 @@ func TestMarkDeleted_BeforeFlush_CancelsOut(t *testing.T) {
 	}
 }
 
+func TestTracker_DetachClearsPKIndex(t *testing.T) {
+	ct := newChangeTracker()
+	e := &pkEntity{ID: 5, Name: "Heidi"}
+	ct.Track(e, pkMeta.Snapshot(e), pkMeta)
+	require.Len(t, ct.byPK, 1)
+
+	ct.Detach(e)
+	assert.Empty(t, ct.byPK, "Detach must remove the PK index entry")
+
+	// A later distinct load of the same PK is now tracked fresh, not collapsed
+	// to the detached pointer.
+	again := &pkEntity{ID: 5, Name: "Heidi reloaded"}
+	got := ct.Track(again, pkMeta.Snapshot(again), pkMeta)
+	assert.Same(t, again, got)
+	assert.Len(t, ct.entities, 1)
+}
+
+func TestTracker_PostFlushDeletedClearsPKIndex(t *testing.T) {
+	ct := newChangeTracker()
+	e := &pkEntity{ID: 9, Name: "Ivan"}
+	ct.Track(e, pkMeta.Snapshot(e), pkMeta)
+	require.NoError(t, ct.MarkDeleted(e))
+	ct.PostCommit()
+	assert.Empty(t, ct.byPK, "deleted entity's PK index entry must be dropped after flush")
+}
+
+func TestTracker_MarkAddedThenStampedKeyIsPKIndexed(t *testing.T) {
+	ct := newChangeTracker()
+	type widget struct{ Model[string] }
+
+	w := &widget{}
+	ct.MarkAdded(w, &ModelMetaBase{
+		Table:       "idx_widgets",
+		KeyStrategy: KeyAppAssigned,
+		GenerateKey: func() any { return "w-1" },
+		SetKey:      func(e any, k any) { e.(*widget).SetID(k.(string)) },
+		KeyIsZero:   func(e any) bool { return e.(*widget).ID() == "" },
+		PKValue:     func(e any) any { return e.(*widget).ID() },
+	})
+
+	// After MarkAdded stamps an app-assigned key, the row is PK-indexed, so a
+	// subsequent Track of the same row (e.g. a read-back) returns the added
+	// instance instead of creating a duplicate.
+	require.Len(t, ct.byPK, 1)
+	reload := &widget{}
+	reload.SetID("w-1")
+	got := ct.Track(reload, nil, &ModelMetaBase{
+		Table:   "idx_widgets",
+		PKValue: func(e any) any { return e.(*widget).ID() },
+	})
+	assert.Same(t, w, got, "reading back an Added row by its stamped key returns the added instance")
+	assert.Len(t, ct.entities, 1)
+}
+
 func TestTracker_ForceUpdateClearedAfterFinalize(t *testing.T) {
 	ct := newChangeTracker()
 	e := &testEntity{Name: "Attached", Age: 10}
