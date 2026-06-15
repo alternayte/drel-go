@@ -31,8 +31,10 @@ func rewritePlaceholders(sql string) string {
 	return b.String()
 }
 
-// needsPlaceholderRewrite returns true if the engine's dialect uses ? placeholders
-// (i.e., SQLite) and raw SQL written with $1, $2, ... needs rewriting.
+// needsPlaceholderRewrite returns true if the engine's dialect binds parameters
+// with "?" (i.e., SQLite/libSQL) and raw SQL written with $1, $2, ... needs
+// rewriting to "?". This is keyed on an explicit dialect capability rather than
+// the RETURNING flag so the two never drift apart.
 func needsPlaceholderRewrite(e *Engine) bool {
-	return !e.dialect().SupportsReturning()
+	return e.dialect().UsesQuestionPlaceholders()
 }

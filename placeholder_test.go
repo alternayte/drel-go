@@ -1,6 +1,11 @@
 package drel
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/alternayte/drel/internal/dialect/postgres"
+	dialectsqlite "github.com/alternayte/drel/internal/dialect/sqlite"
+)
 
 func TestRewritePlaceholders(t *testing.T) {
 	tests := []struct {
@@ -61,5 +66,25 @@ func TestRewritePlaceholders(t *testing.T) {
 				t.Errorf("rewritePlaceholders(%q):\n  got:  %q\n  want: %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUsesQuestionPlaceholders(t *testing.T) {
+	if postgres.New().UsesQuestionPlaceholders() {
+		t.Fatal("postgres must use $N placeholders, not ?")
+	}
+	if !dialectsqlite.New().UsesQuestionPlaceholders() {
+		t.Fatal("sqlite must use ? placeholders")
+	}
+}
+
+func TestNeedsPlaceholderRewrite(t *testing.T) {
+	pg := &Engine{dia: postgres.New()}
+	if needsPlaceholderRewrite(pg) {
+		t.Fatal("postgres engine must not rewrite placeholders")
+	}
+	lite := &Engine{dia: dialectsqlite.New()}
+	if !needsPlaceholderRewrite(lite) {
+		t.Fatal("sqlite engine must rewrite placeholders")
 	}
 }

@@ -30,7 +30,8 @@ func dedupLastWins(changes []dialect.ColumnValue) []dialect.ColumnValue {
 	return out
 }
 
-func (s *SQLite) SupportsReturning() bool { return false }
+func (s *SQLite) SupportsReturning() bool        { return false }
+func (s *SQLite) UsesQuestionPlaceholders() bool { return true }
 
 func (s *SQLite) Now() string { return "CURRENT_TIMESTAMP" }
 

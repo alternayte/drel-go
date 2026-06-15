@@ -30,7 +30,8 @@ func dedupLastWins(changes []dialect.ColumnValue) []dialect.ColumnValue {
 	return out
 }
 
-func (p *Postgres) SupportsReturning() bool { return true }
+func (p *Postgres) SupportsReturning() bool        { return true }
+func (p *Postgres) UsesQuestionPlaceholders() bool { return false }
 
 func (p *Postgres) Now() string { return "NOW()" }
 

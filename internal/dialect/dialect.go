@@ -33,6 +33,10 @@ const (
 // Dialect generates SQL for a specific database backend.
 type Dialect interface {
 	SupportsReturning() bool
+	// UsesQuestionPlaceholders reports whether the dialect binds parameters with
+	// "?" (SQLite/libSQL) rather than "$N" (Postgres). Raw SQL written with $N is
+	// rewritten to ? when this is true.
+	UsesQuestionPlaceholders() bool
 	// Now returns the SQL expression for the current timestamp.
 	// Postgres returns "NOW()", SQLite returns "CURRENT_TIMESTAMP".
 	Now() string

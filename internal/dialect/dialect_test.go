@@ -13,6 +13,7 @@ import (
 type fakeDialect struct{}
 
 func (fakeDialect) SupportsReturning() bool             { return false }
+func (fakeDialect) UsesQuestionPlaceholders() bool      { return false }
 func (fakeDialect) Now() string                         { return "" }
 func (fakeDialect) Explain(q string) (string, bool)     { return "", false }
 func (fakeDialect) BuildSelect(ast.SelectNode) dialect.Result { return dialect.Result{} }
