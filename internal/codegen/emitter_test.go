@@ -688,6 +688,86 @@ func TestEmitModelFileChecked_SupportedTypesPass(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestEmitModelFile_JSONColumns asserts that the emitter wraps JSON/array field
+// scan arguments in drel.JSON[T]{V: &p.Field}, uses slices.Equal / maps.Equal
+// for diff (never !=), emits the JSON wrapper as the column Value in diff and
+// insertColumns, and adds the required "slices" and "maps" imports.
+func TestEmitModelFile_JSONColumns(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Doc",
+		PkgPath:   "testmod/models",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "docs",
+		Fields: []FieldInfo{
+			{Name: "Tags", GoType: "[]string", ColumnName: "tags", LocalGoType: "[]string", IsJSON: true, IsArray: true},
+			{Name: "Meta", GoType: "map[string]string", ColumnName: "meta", LocalGoType: "map[string]string", IsJSON: true},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// Scan wraps JSON fields in drel.JSON[T]{V: &p.Field}.
+	assert.Contains(t, out, "drel.JSON[[]string]{V: &p.Tags}")
+	assert.Contains(t, out, "drel.JSON[map[string]string]{V: &p.Meta}")
+	assert.NotContains(t, out, "&p.Tags,", "raw &p.Tags must not be passed to scan")
+
+	// Diff must NOT use != for JSON fields (slices/maps are not comparable).
+	assert.NotContains(t, out, "if p.Tags != s.Tags")
+	assert.NotContains(t, out, "if p.Meta != s.Meta")
+	// Slice -> slices.Equal; map -> maps.Equal.
+	assert.Contains(t, out, "!slices.Equal(p.Tags, s.Tags)")
+	assert.Contains(t, out, "!maps.Equal(p.Meta, s.Meta)")
+
+	// Diff/InsertColumns emit the JSON wrapper as the column Value so the driver
+	// serializes it.
+	assert.Contains(t, out, `drel.FieldChange{Column: "tags", Value: drel.JSON[[]string]{V: &p.Tags}}`)
+	assert.Contains(t, out, "drel.JSON[[]string]{V: &p.Tags}")
+
+	// Required imports for the diff helpers.
+	assert.Contains(t, out, `"slices"`)
+	assert.Contains(t, out, `"maps"`)
+}
+
+// TestEmitModelFile_NativeArrayOverride_PassesSliceThrough asserts that when a
+// field has IsJSON+IsArray with a non-empty TypeOverride (e.g. "text[]"), the
+// emitter bypasses the drel.JSON wrapper for scan/value (the driver handles it
+// natively via pgx) but still uses slices.Equal for diff (slices are never !=
+// comparable in Go regardless of DDL).
+func TestEmitModelFile_NativeArrayOverride_PassesSliceThrough(t *testing.T) {
+	m := ModelInfo{
+		Name: "Doc", PkgName: "models", PKType: "int", TableName: "docs",
+		Fields: []FieldInfo{
+			{Name: "Arr", GoType: "[]string", ColumnName: "arr", LocalGoType: "[]string", IsJSON: true, IsArray: true, TypeOverride: "text[]"},
+		},
+	}
+	out := EmitModelFile(m)
+	// Native array (type=...): scan/value pass the slice straight to pgx, no JSON wrapper.
+	assert.Contains(t, out, "&p.Arr")
+	assert.NotContains(t, out, "drel.JSON[[]string]{V: &p.Arr}")
+	// Diff still uses slices.Equal (slices are not !=-comparable regardless of DDL).
+	assert.Contains(t, out, "!slices.Equal(p.Arr, s.Arr)")
+}
+
+// TestEmitModelFileChecked_RejectsUnmappableType asserts that EmitModelFileChecked
+// returns a loud error (mentioning the model name, field name, and "unsupported
+// column type") when a field has a type that is not primitive, VO, enum, or JSON/array
+// and has no type= override — e.g. func().
+func TestEmitModelFileChecked_RejectsUnmappableType(t *testing.T) {
+	m := ModelInfo{
+		Name: "Bad", PkgName: "models", PKType: "int", TableName: "bads",
+		Fields: []FieldInfo{
+			// A field that is neither primitive/VO/enum/JSON/array and has no override.
+			{Name: "Fn", GoType: "func()", ColumnName: "fn", LocalGoType: "func()"},
+		},
+	}
+	_, err := EmitModelFileChecked(m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Bad")
+	assert.Contains(t, err.Error(), "Fn")
+	assert.Contains(t, err.Error(), "unsupported column type")
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {
