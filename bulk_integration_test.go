@@ -209,3 +209,38 @@ func TestIntegration_BulkInsert_ErrorRollsBack_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, cnt, "transaction must have rolled back fully")
 }
+
+func TestIntegration_BulkInsert_CopyPath_PG(t *testing.T) {
+	engine := setupTestDB(t)
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	ctx := context.Background()
+
+	products := make([]*testmodels.Product, 200)
+	for i := range products {
+		products[i] = &testmodels.Product{
+			Name:    "Copy" + string(rune('A'+i%26)),
+			Price:   i + 1,
+			InStock: i%2 == 0,
+		}
+	}
+
+	affected, err := repo.BulkInsert(ctx, products)
+	require.NoError(t, err)
+	assert.Equal(t, 200, affected)
+
+	count, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 200, count)
+
+	// Spot-check a round-tripped row to prove COPY encoded values correctly.
+	all, err := repo.All(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 200)
+	seen := map[string]bool{}
+	for _, p := range all {
+		seen[p.Name] = true
+		assert.NotZero(t, p.ID)
+		assert.False(t, p.CreatedAt.IsZero())
+	}
+	assert.True(t, seen["CopyA"])
+}
