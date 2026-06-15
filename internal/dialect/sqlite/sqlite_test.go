@@ -1020,6 +1020,17 @@ func TestSQLite_BuildSelectDistinct(t *testing.T) {
 	assert.Nil(t, result.Args)
 }
 
+func TestSQLite_BuildSelectCountDistinct(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:      "orders",
+		Aggregates: []ast.AggregateExpr{{Func: ast.AggCount, Column: "user_id", Distinct: true, Alias: "buyers"}},
+		Type:       ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t, `SELECT COUNT(DISTINCT "user_id") AS "buyers" FROM "orders"`, result.SQL)
+}
+
 func TestSQLite_BuildSelectCountStar(t *testing.T) {
 	s := New()
 	node := ast.SelectNode{

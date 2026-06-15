@@ -75,6 +75,9 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 			if agg.Func == ast.AggCount && agg.Column == "" {
 				b.WriteString("*")
 			} else {
+				if agg.Distinct {
+					b.WriteString("DISTINCT ")
+				}
 				b.WriteString(quoteIdent(agg.Column))
 			}
 			b.WriteString(")")

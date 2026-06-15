@@ -66,8 +66,10 @@ func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...Colum
 
 // AggExpr represents an aggregate function call.
 type AggExpr struct {
-	fn     ast.AggFunc
-	column string
+	fn           ast.AggFunc
+	column       string
+	distinct     bool
+	coalesceZero bool
 }
 
 // Sum creates a SUM aggregate expression.
@@ -92,13 +94,19 @@ func CountStar() AggExpr { return AggExpr{fn: ast.AggCount, column: ""} }
 // Count is an alias for CountStar reading naturally as Count().
 func Count() AggExpr { return AggExpr{fn: ast.AggCount, column: ""} }
 
+// CountDistinct creates a COUNT(DISTINCT col) aggregate expression that counts
+// the number of distinct non-NULL values in col.
+func CountDistinct(col ColumnRef) AggExpr {
+	return AggExpr{fn: ast.AggCount, column: col.name, distinct: true}
+}
+
 // Aggregate executes a single aggregate function and returns the scalar result.
 func Aggregate[R any, T any](ctx context.Context, q *QueryBuilder[T], agg AggExpr) (R, error) {
 	var zero R
 	node := q.buildAST(ast.QuerySelect)
 	node.Columns = nil
 	node.Aggregates = []ast.AggregateExpr{
-		{Func: agg.fn, Column: agg.column, Alias: "result"},
+		{Func: agg.fn, Column: agg.column, Alias: "result", Distinct: agg.distinct, CoalesceZero: agg.coalesceZero},
 	}
 
 	result := q.engine.dialect().BuildSelect(node)
@@ -165,9 +173,11 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 	for i, a := range aggs {
 		aliases[i] = a.alias
 		node.Aggregates = append(node.Aggregates, ast.AggregateExpr{
-			Func:   a.agg.fn,
-			Column: a.agg.column,
-			Alias:  a.alias,
+			Func:         a.agg.fn,
+			Column:       a.agg.column,
+			Alias:        a.alias,
+			Distinct:     a.agg.distinct,
+			CoalesceZero: a.agg.coalesceZero,
 		})
 	}
 

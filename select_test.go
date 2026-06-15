@@ -362,6 +362,16 @@ func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
 
+func TestAggregate_CountDistinct(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	// 4 products, 2 distinct categories.
+	count, err := drel.Aggregate[int](ctx, repo.Where(drel.NewStringCol("category").NEQ("__none__")), drel.CountDistinct(drel.ColRef("category")))
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
 func TestAggregate_CountStar(t *testing.T) {
 	_, repo := setupSelectEngine(t)
 	ctx := context.Background()
