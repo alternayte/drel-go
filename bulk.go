@@ -146,6 +146,21 @@ func bulkInsertColumns(ctx context.Context, base *ModelMetaBase, entity any) ([]
 // or a UnitOfWork) when you need event dispatch, or BulkInsertWithEvents to
 // persist events through the outbox path inside the bulk transaction.
 func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
+	return r.bulkInsert(ctx, entities, false)
+}
+
+// BulkInsertWithEvents inserts multiple entities in batches like BulkInsert, but
+// additionally collects domain events recorded on the entities (RecordEvent),
+// runs the engine's registered OnBeforeCommit hooks (e.g. the outbox writer from
+// UseOutbox) inside the same transaction so event persistence commits
+// atomically with the inserted rows, and dispatches the events to after-commit
+// hooks once the transaction commits. Change tracking is still bypassed; this is
+// a targeted opt-in for event delivery on the bulk path.
+func (r *Repository[T]) BulkInsertWithEvents(ctx context.Context, entities []*T) (int, error) {
+	return r.bulkInsert(ctx, entities, true)
+}
+
+func (r *Repository[T]) bulkInsert(ctx context.Context, entities []*T, withEvents bool) (int, error) {
 	if len(entities) == 0 {
 		return 0, nil
 	}
@@ -154,11 +169,16 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 	d := r.engine.dialect()
 	base := ToMetaBase(&r.meta)
 
-	tx, err := drv.Begin(ctx)
+	dbTx, err := drv.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("drel: bulk insert begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = dbTx.Rollback(ctx)
+		}
+	}()
 
 	firstCols, _, err := bulkInsertColumns(ctx, base, entities[0])
 	if err != nil {
@@ -186,7 +206,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 			}
 		}
 
-		if copier, ok := tx.(driver.TxBulkCopier); ok {
+		if copier, ok := dbTx.(driver.TxBulkCopier); ok {
 			start := time.Now()
 			affected, copyErr := copier.CopyFrom(ctx, r.meta.Table, columns, rows)
 			r.engine.notifyQueryHooks(ctx, "COPY "+r.meta.Table, nil, time.Since(start), copyErr)
@@ -199,7 +219,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 
 		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
 		start := time.Now()
-		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
+		affected, execErr := dbTx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
 			return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(execErr))
@@ -207,11 +227,47 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		total += int(affected)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	var events []any
+	if withEvents {
+		events = collectBulkEvents(entities)
+		if len(events) > 0 {
+			tx := &Tx{engine: r.engine, dbTx: dbTx, tracker: newChangeTracker()}
+			for _, hook := range r.engine.beforeCommitHooks {
+				if err := hook(ctx, tx, events); err != nil {
+					return total, fmt.Errorf("drel: bulk insert before-commit hook: %w", err)
+				}
+			}
+			for _, sink := range r.engine.eventSinks {
+				if err := sink(ctx, tx, events); err != nil {
+					return total, fmt.Errorf("drel: bulk insert event sink: %w", err)
+				}
+			}
+		}
+	}
+
+	if err := dbTx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("drel: bulk insert commit: %w", dberr.Classify(err))
+	}
+	committed = true
+
+	if withEvents && len(events) > 0 {
+		r.engine.dispatchAfterCommit(ctx, events)
 	}
 
 	return total, nil
+}
+
+// collectBulkEvents drains PendingEvents from any entities that implement
+// EventRecorder, clearing them as it goes (matching SaveChanges semantics).
+func collectBulkEvents[T any](entities []*T) []any {
+	var events []any
+	for _, e := range entities {
+		if er, ok := any(e).(EventRecorder); ok {
+			events = append(events, er.PendingEvents()...)
+			er.ClearEvents()
+		}
+	}
+	return events
 }
 
 // BulkUpsert inserts or updates multiple entities based on conflict resolution.
