@@ -147,10 +147,12 @@ func NewEngine(dsn string, opts ...Option) (*Engine, error) {
 	}
 
 	// Open read replicas (same dialect as the primary). Reads round-robin across
-	// them; writes and transactions always use the primary.
+	// them; writes and transactions always use the primary. Replicas are opened
+	// lazily (no startup ping) so an unreachable replica does not prevent engine
+	// startup — the failover loop surfaces the error at query time instead.
 	var replicas []driver.Driver
 	for _, rdsn := range cfg.replicaDSNs {
-		rd, err := openDriverForDSN(cfg.ctx, rdsn, cfg.poolConfig)
+		rd, err := openReplicaDriverForDSN(cfg.ctx, rdsn, cfg.poolConfig)
 		if err != nil {
 			for _, r := range replicas {
 				r.Close()
@@ -181,6 +183,20 @@ func openDriverForDSN(ctx context.Context, dsn string, pc driver.PoolConfig) (dr
 		return sqlitedriver.New(dsn, pc)
 	default:
 		return pgxdriver.New(ctx, dsn, pc)
+	}
+}
+
+// openReplicaDriverForDSN opens a read-replica driver without an eager ping.
+// Connection failures surface at query time so a transient or permanently-down
+// replica does not prevent engine startup; the failover logic handles it.
+func openReplicaDriverForDSN(ctx context.Context, dsn string, pc driver.PoolConfig) (driver.Driver, error) {
+	switch detectDialect(dsn) {
+	case "libsql":
+		return newLibSQLDriver(dsn, pc)
+	case "sqlite":
+		return sqlitedriver.New(dsn, pc)
+	default:
+		return pgxdriver.NewLazy(ctx, dsn, pc)
 	}
 }
 

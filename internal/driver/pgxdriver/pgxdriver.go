@@ -36,6 +36,25 @@ func New(ctx context.Context, dsn string, pc ...driver.PoolConfig) (*PgxDriver, 
 	return &PgxDriver{pool: pool}, nil
 }
 
+// NewLazy creates a PgxDriver without eagerly pinging the server. The pool is
+// created immediately but connections are established on demand. Use this for
+// read replicas where an initial connection failure should be surfaced at query
+// time (and failed over) rather than preventing engine startup.
+func NewLazy(ctx context.Context, dsn string, pc ...driver.PoolConfig) (*PgxDriver, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("pgxdriver: parse dsn: %w", err)
+	}
+	if len(pc) > 0 {
+		applyPoolConfig(cfg, pc[0])
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("pgxdriver: connect: %w", err)
+	}
+	return &PgxDriver{pool: pool}, nil
+}
+
 // applyPoolConfig maps a driver.PoolConfig onto a parsed pgxpool config. Zero
 // values are left at the pgx/DSN defaults.
 func applyPoolConfig(cfg *pgxpool.Config, pc driver.PoolConfig) {
