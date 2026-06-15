@@ -12,6 +12,7 @@ import (
 // AdvisoryLockSQL contract shape without depending on a concrete dialect.
 type fakeDialect struct{}
 
+func (fakeDialect) Name() string                         { return "fake" }
 func (fakeDialect) SupportsReturning() bool             { return false }
 func (fakeDialect) UsesQuestionPlaceholders() bool      { return false }
 func (fakeDialect) Now() string                         { return "" }

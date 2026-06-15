@@ -12,6 +12,8 @@ type Postgres struct{}
 
 func New() *Postgres { return &Postgres{} }
 
+func (p *Postgres) Name() string { return "postgres" }
+
 // dedupLastWins returns the change set with duplicate columns collapsed to a
 // single entry, keeping the LAST assignment for each column and preserving the
 // order of first appearance. This prevents "multiple assignments to the same

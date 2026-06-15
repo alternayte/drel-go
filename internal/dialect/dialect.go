@@ -32,6 +32,9 @@ const (
 
 // Dialect generates SQL for a specific database backend.
 type Dialect interface {
+	// Name reports the dialect identifier: "postgres" or "sqlite".
+	// libSQL/Turso reuse the SQLite dialect, so they also report "sqlite".
+	Name() string
 	SupportsReturning() bool
 	// UsesQuestionPlaceholders reports whether the dialect binds parameters with
 	// "?" (SQLite/libSQL) rather than "$N" (Postgres). Raw SQL written with $N is

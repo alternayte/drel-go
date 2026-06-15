@@ -12,6 +12,8 @@ type SQLite struct{}
 
 func New() *SQLite { return &SQLite{} }
 
+func (s *SQLite) Name() string { return "sqlite" }
+
 // dedupLastWins returns the change set with duplicate columns collapsed to a
 // single entry, keeping the LAST assignment for each column and preserving the
 // order of first appearance. This prevents "duplicate column name" SQL errors
