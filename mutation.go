@@ -208,17 +208,33 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 
 	for _, te := range pc.Deleted {
 		pkVal := te.meta.PKValue(te.entity)
+		versioned := te.meta.HasVersioned && te.meta.VersionValue != nil
+
 		if te.meta.HasSoftDelete && !te.hardDelete {
-			result := d.BuildSoftDelete(te.meta.Table, te.meta.PKColumn, pkVal)
-			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
-			if err != nil {
-				return nil, fmt.Errorf("drel: soft delete %s: %w", te.meta.Table, err)
+			if versioned {
+				currentVersion := te.meta.VersionValue(te.entity)
+				result := d.BuildSoftDeleteVersioned(te.meta.Table, te.meta.PKColumn, pkVal, "version", currentVersion)
+				if err := execVersionedDelete(ctx, exec, d, te, result, currentVersion); err != nil {
+					return nil, err
+				}
+			} else {
+				result := d.BuildSoftDelete(te.meta.Table, te.meta.PKColumn, pkVal)
+				if _, err := exec.execInternal(ctx, result.SQL, result.Args...); err != nil {
+					return nil, fmt.Errorf("drel: soft delete %s: %w", te.meta.Table, err)
+				}
 			}
 		} else {
-			result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
-			_, err := exec.execInternal(ctx, result.SQL, result.Args...)
-			if err != nil {
-				return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
+			if versioned {
+				currentVersion := te.meta.VersionValue(te.entity)
+				result := d.BuildDeleteVersioned(te.meta.Table, te.meta.PKColumn, pkVal, "version", currentVersion)
+				if err := execVersionedDelete(ctx, exec, d, te, result, currentVersion); err != nil {
+					return nil, err
+				}
+			} else {
+				result := d.BuildDelete(te.meta.Table, te.meta.PKColumn, pkVal)
+				if _, err := exec.execInternal(ctx, result.SQL, result.Args...); err != nil {
+					return nil, fmt.Errorf("drel: delete %s: %w", te.meta.Table, err)
+				}
 			}
 		}
 	}
@@ -240,6 +256,32 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 		flushed = append(flushed, te)
 	}
 	return flushed, nil
+}
+
+// execVersionedDelete runs a versioned (hard or soft) delete and reports a
+// concurrency conflict when the current version no longer matches. On Postgres
+// the builder appends RETURNING <pk>, so a missing row scans as no-rows; on
+// SQLite the affected-row count is authoritative.
+func execVersionedDelete(ctx context.Context, exec txExec, d dialect.Dialect, te *trackedEntity, result dialect.Result, currentVersion int) error {
+	if d.SupportsReturning() {
+		row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+		var pk any
+		if err := row.Scan(&pk); err != nil {
+			if isNoRows(err) {
+				return ErrConcurrencyConflict
+			}
+			return fmt.Errorf("drel: versioned delete %s: %w", te.meta.Table, err)
+		}
+		return nil
+	}
+	affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
+	if err != nil {
+		return fmt.Errorf("drel: versioned delete %s: %w", te.meta.Table, err)
+	}
+	if affected == 0 {
+		return ErrConcurrencyConflict
+	}
+	return nil
 }
 
 // flushChanges applies all pending changes to the database and returns the
