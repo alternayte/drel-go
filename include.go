@@ -98,7 +98,9 @@ func (s IncludeSpec) OrderBy(exprs ...OrderExpr) IncludeSpec {
 }
 
 // Limit returns a copy of the IncludeSpec that limits the number of related
-// entities loaded per parent batch.
+// entities loaded per parent. For multi-parent loads this is enforced with a
+// window function (ROW_NUMBER() partitioned by the foreign key); for a single
+// parent it is a plain LIMIT.
 func (s IncludeSpec) Limit(n int) IncludeSpec {
 	c := s
 	c.limit = &n
@@ -439,6 +441,23 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 			OrderBy: inc.orderBy,
 			Limit:   inc.limit,
 			Type:    ast.QuerySelect,
+		}
+
+		// Per-parent limit: when more than one parent value is in this batch and a
+		// limit is set, apply it per parent via a window function instead of a
+		// single batch-wide LIMIT (which would cap the total rows across parents).
+		if inc.limit != nil && len(batch) > 1 {
+			partitionOrder := inc.orderBy
+			if len(partitionOrder) == 0 {
+				partitionOrder = []ast.OrderByExpr{{Column: meta.PKColumn, Direction: ast.Asc}}
+			}
+			node.OrderBy = nil
+			node.Limit = nil
+			node.PartitionLimit = &ast.PartitionLimit{
+				PartitionBy: column,
+				OrderBy:     partitionOrder,
+				Limit:       *inc.limit,
+			}
 		}
 
 		result := ie.engine.dialect().BuildSelect(node)

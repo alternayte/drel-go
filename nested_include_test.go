@@ -92,6 +92,55 @@ func setupNestedDB(t *testing.T) *drel.Engine {
 	return engine
 }
 
+func TestInclude_Limit_PerParent_SQLite(t *testing.T) {
+	engine := setupNestedDB(t)
+	ctx := context.Background()
+
+	// setupNestedDB seeds: author 1 has books 10,11; author 2 has book 12.
+	// Add more books so each author has > the per-parent limit.
+	for _, ddl := range []string{
+		`INSERT INTO ni_books (id, author_id, title) VALUES (13,1,'A3'),(14,1,'A4'),(15,2,'B2'),(16,2,'B3')`,
+	} {
+		_, err := engine.Exec(ctx, ddl)
+		require.NoError(t, err)
+	}
+
+	bookMeta := niBookMeta()
+	authorMeta := niAuthorMeta()
+
+	authorBooksRel := drel.RelationInfo{
+		Name:        "Books",
+		Type:        drel.HasMany,
+		FKColumn:    "author_id",
+		RelatedMeta: drel.ToMetaBase(&bookMeta),
+		FieldSetter: func(parent any, related any) {
+			a := parent.(*niAuthor)
+			for _, it := range related.([]any) {
+				a.Books = append(a.Books, it.(*niBook))
+			}
+		},
+	}
+
+	repo := drel.NewRepository(engine, authorMeta)
+	spec := drel.NewIncludeSpec(&authorBooksRel).
+		OrderBy(drel.NewOrderedCol[int]("id").Asc()).
+		Limit(2)
+
+	authors, err := repo.Include(spec).OrderBy(drel.NewOrderedCol[int]("id").Asc()).All(ctx)
+	require.NoError(t, err)
+	require.Len(t, authors, 2)
+
+	// Each parent must get its own 2 books — not 2 total.
+	require.Len(t, authors[0].Books, 2, "author 1 should get its own 2 books")
+	require.Len(t, authors[1].Books, 2, "author 2 should get its own 2 books")
+
+	// OrderBy id ASC, Limit 2 => author 1 gets books 10,11; author 2 gets 12,15.
+	assert.Equal(t, 10, authors[0].Books[0].ID)
+	assert.Equal(t, 11, authors[0].Books[1].ID)
+	assert.Equal(t, 12, authors[1].Books[0].ID)
+	assert.Equal(t, 15, authors[1].Books[1].ID)
+}
+
 func TestNestedInclude_ThreeLevels(t *testing.T) {
 	engine := setupNestedDB(t)
 	ctx := context.Background()
