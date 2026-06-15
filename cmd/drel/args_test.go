@@ -58,12 +58,13 @@ func TestParseArgs_MigrateNew_NameBeforeFlag(t *testing.T) {
 	assert.NotContains(t, pc.Positional, "--config")
 }
 
-func TestParseArgs_Generate_Watch_IsRejected(t *testing.T) {
-	// --watch is not yet implemented; it must be rejected loudly rather than
-	// silently running a one-shot generate (detected-but-unimplemented pattern).
-	_, err := parseArgs([]string{"generate", "--watch", "--config=x.yaml"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "watch")
+func TestParseArgs_Generate_Watch_Accepted(t *testing.T) {
+	// --watch is now implemented (WCLI-G2); it must be accepted and set Watch=true.
+	pc, err := parseArgs([]string{"generate", "--watch", "--config=x.yaml"})
+	require.NoError(t, err)
+	assert.Equal(t, "generate", pc.Command)
+	assert.Equal(t, "x.yaml", pc.ConfigPath)
+	assert.True(t, pc.Watch, "Watch must be true when --watch is passed")
 }
 
 func TestParseArgs_Help_TopLevel(t *testing.T) {
