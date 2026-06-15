@@ -899,6 +899,25 @@ func TestBuildSelectDistinct(t *testing.T) {
 	assert.Nil(t, result.Args)
 }
 
+func TestBuildSelectQualifiedWhere(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:   "orders",
+		Columns: []string{"orders.amount"},
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "orders.amount",
+				Op:     ast.OpGTE,
+				Value:  20.0,
+			},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t, `SELECT "orders"."amount" FROM "orders" WHERE "orders"."amount" >= $1`, result.SQL)
+	assert.Equal(t, []any{20.0}, result.Args)
+}
+
 func TestBuildSelectLeftJoin(t *testing.T) {
 	d := New()
 	node := ast.SelectNode{

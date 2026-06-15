@@ -284,7 +284,7 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause) {
 }
 
 func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode) {
-	col := quoteIdent(cmp.Column)
+	col := quoteCol(cmp.Column)
 
 	switch cmp.Op {
 	case ast.OpIsNull:
