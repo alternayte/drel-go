@@ -9,6 +9,12 @@ func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
+// checkConstraintName returns the deterministic name for a column's CHECK
+// constraint, matching the idx_/uq_ naming convention used elsewhere.
+func checkConstraintName(table, column string) string {
+	return fmt.Sprintf("chk_%s_%s", table, column)
+}
+
 // GoTypeToSQL maps a Go type string to its corresponding SQL type for the given dialect.
 // Pointer types are unwrapped to their base type. Unknown types default to "text"/"TEXT".
 // Supported dialects: "postgres" (default), "sqlite".
@@ -75,9 +81,10 @@ func GenerateCreateTable(m ModelInfo, fks map[string]string, dialect string) str
 }
 
 // createTableSQL emits a CREATE TABLE statement from a structured Table.
-// The PK column is emitted first, followed by the remaining columns; each column
-// renders inline NOT NULL / CHECK / REFERENCES / DEFAULT clauses. A composite
-// PrimaryKey (used by pivot tables) is emitted as a trailing table-level
+// The PK column is emitted first, followed by the remaining columns. For Postgres,
+// CHECK constraints are emitted as named table-level constraints so they can be
+// altered in place via ALTER TABLE DROP/ADD CONSTRAINT. SQLite keeps CHECK inline.
+// A composite PrimaryKey (used by pivot tables) is emitted as a trailing table-level
 // PRIMARY KEY constraint.
 func createTableSQL(t Table, dialect string) string {
 	var b strings.Builder
@@ -91,7 +98,7 @@ func createTableSQL(t Table, dialect string) string {
 		} else {
 			b.WriteString(",\n    ")
 		}
-		b.WriteString(columnDefSQL(c))
+		b.WriteString(columnDefSQL(c, dialect))
 	}
 
 	// PK column first.
@@ -103,6 +110,17 @@ func createTableSQL(t Table, dialect string) string {
 	for _, c := range t.Columns {
 		if !c.PK {
 			emit(c)
+		}
+	}
+
+	// Postgres: emit CHECK constraints as named table-level constraints so they
+	// can be dropped/added by name in a later diff.
+	if dialect != "sqlite" {
+		for _, c := range t.Columns {
+			if c.Check != "" {
+				b.WriteString(fmt.Sprintf(",\n    CONSTRAINT %s CHECK (%s)",
+					quoteIdent(checkConstraintName(t.Name, c.Name)), c.Check))
+			}
 		}
 	}
 
@@ -119,8 +137,11 @@ func createTableSQL(t Table, dialect string) string {
 }
 
 // columnDefSQL renders a single column definition (without leading indentation),
-// in the order: name, type, NOT NULL, CHECK, REFERENCES, DEFAULT.
-func columnDefSQL(c Column) string {
+// in the order: name, type, NOT NULL, CHECK, REFERENCES, DEFAULT. For Postgres,
+// CHECK constraints are emitted separately as named table-level constraints (see
+// createTableSQL) so they can be altered in place; SQLite keeps them inline
+// because it cannot ALTER a CHECK without a table rebuild.
+func columnDefSQL(c Column, dialect string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("%s %s", quoteIdent(c.Name), c.Type))
 	// The PK type string already embeds "PRIMARY KEY" (and NOT NULL semantics),
@@ -128,7 +149,7 @@ func columnDefSQL(c Column) string {
 	if c.NotNull && !c.PK {
 		b.WriteString(" NOT NULL")
 	}
-	if c.Check != "" {
+	if c.Check != "" && dialect == "sqlite" {
 		b.WriteString(fmt.Sprintf(" CHECK(%s)", c.Check))
 	}
 	if c.Ref != "" {
@@ -379,7 +400,7 @@ func diffTable(old, new Table, dialect string) (up, down []string) {
 				up = append(up, fmt.Sprintf(`-- NOTE: adding NOT NULL column %s to existing table %s; ensure the table is empty or add a DEFAULT / backfill before applying`,
 					quoteIdent(c.Name), quoteIdent(new.Name)))
 			}
-			up = append(up, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(new.Name), columnDefSQL(c)))
+			up = append(up, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(new.Name), columnDefSQL(c, dialect)))
 			down = append(down, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", quoteIdent(new.Name), quoteIdent(c.Name)))
 		}
 	}
@@ -388,7 +409,7 @@ func diffTable(old, new Table, dialect string) (up, down []string) {
 	for _, c := range old.Columns {
 		if _, ok := newCols[c.Name]; !ok {
 			up = append(up, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", quoteIdent(old.Name), quoteIdent(c.Name)))
-			down = append(down, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(old.Name), columnDefSQL(c)))
+			down = append(down, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", quoteIdent(old.Name), columnDefSQL(c, dialect)))
 		}
 	}
 

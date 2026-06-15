@@ -542,8 +542,12 @@ func TestGenerateCreateTable_Postgres_IntEnum(t *testing.T) {
 	}}
 	sql := GenerateCreateTable(m, nil, "postgres")
 	// Integer column type, NOT a quoted enum type name.
-	assert.Contains(t, sql, `"priority" integer NOT NULL CHECK("priority" IN (0, 1, 2))`)
+	// The CHECK is now a named table-level constraint (not inline) so it can be altered in place.
+	assert.Contains(t, sql, `"priority" integer NOT NULL`)
+	assert.Contains(t, sql, `CONSTRAINT "chk_tickets_priority" CHECK ("priority" IN (0, 1, 2))`)
 	assert.NotContains(t, sql, `"priority" "priority"`)
+	// The inline form must NOT appear for Postgres.
+	assert.NotContains(t, sql, `"priority" integer NOT NULL CHECK`)
 }
 
 func TestGenerateCreateTable_SQLite_IntEnum(t *testing.T) {
@@ -582,4 +586,35 @@ func TestBuildTable_StringColumnDefault_Quoted(t *testing.T) {
 	}}
 	sql := GenerateCreateTable(m, nil, "postgres")
 	assert.Contains(t, sql, `DEFAULT 'free'`)
+}
+
+func TestCreateTable_NamedCheckConstraint_Postgres(t *testing.T) {
+	tbl := Table{
+		Name: "products",
+		Columns: []Column{
+			{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+			{Name: "price", Type: "integer", NotNull: true, Check: "price > 0"},
+		},
+	}
+	sql := createTableSQL(tbl, "postgres")
+	assert.Contains(t, sql, `CONSTRAINT "chk_products_price" CHECK (price > 0)`)
+	// The inline "CHECK(...)" form must NOT appear for Postgres.
+	assert.NotContains(t, sql, `"price" integer NOT NULL CHECK(price > 0)`)
+}
+
+func TestCheckConstraintName(t *testing.T) {
+	assert.Equal(t, "chk_products_price", checkConstraintName("products", "price"))
+}
+
+func TestCreateTable_InlineCheck_SQLite(t *testing.T) {
+	tbl := Table{
+		Name: "products",
+		Columns: []Column{
+			{Name: "id", Type: "INTEGER PRIMARY KEY", NotNull: true, PK: true},
+			{Name: "price", Type: "INTEGER", NotNull: true, Check: "price > 0"},
+		},
+	}
+	sql := createTableSQL(tbl, "sqlite")
+	// SQLite keeps the inline CHECK (no ALTER support; table rebuild required).
+	assert.Contains(t, sql, "CHECK(price > 0)")
 }
