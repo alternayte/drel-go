@@ -43,3 +43,40 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/drel.yaml")
 	assert.Error(t, err)
 }
+
+func TestLoadConfig_ValidDialects(t *testing.T) {
+	for _, d := range []string{"postgres", "sqlite"} {
+		t.Run(d, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "drel.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("packages:\n  - ./models\ndialect: "+d+"\n"), 0644))
+			cfg, err := LoadConfig(path)
+			require.NoError(t, err)
+			assert.Equal(t, d, cfg.Dialect)
+		})
+	}
+}
+
+func TestLoadConfig_EmptyDialectDefaultsToPostgres(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "drel.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("packages:\n  - ./models\n"), 0644))
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "postgres", cfg.Dialect)
+}
+
+func TestLoadConfig_InvalidDialect(t *testing.T) {
+	for _, d := range []string{"mysql", "postgress", "Postgres", "pg", "libsql"} {
+		t.Run(d, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "drel.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("packages:\n  - ./models\ndialect: "+d+"\n"), 0644))
+			_, err := LoadConfig(path)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown dialect")
+			assert.Contains(t, err.Error(), d)
+			assert.Contains(t, err.Error(), "postgres, sqlite")
+		})
+	}
+}

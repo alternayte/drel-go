@@ -21,6 +21,10 @@ type OutputConfig struct {
 	Migrations string `yaml:"migrations"`
 }
 
+// validDialects is the closed set of code-generation dialects. libSQL is not a
+// codegen target; it reuses the SQLite dialect at runtime, so it is excluded here.
+var validDialects = map[string]bool{"postgres": true, "sqlite": true}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -41,6 +45,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Dialect == "" {
 		cfg.Dialect = "postgres"
+	}
+	if !validDialects[cfg.Dialect] {
+		return nil, fmt.Errorf("codegen: config %s: unknown dialect %q (valid: postgres, sqlite)", path, cfg.Dialect)
 	}
 	return &cfg, nil
 }
