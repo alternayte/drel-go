@@ -178,18 +178,27 @@ func (r *Runner) ensureLockTable(ctx context.Context) error {
 // already holds it. The returned func releases the lock and must be deferred.
 func (r *Runner) lock(ctx context.Context) (func(), error) {
 	if r.dialect == "postgres" {
-		// pg_try_advisory_lock returns false when another session holds it; it
-		// auto-releases on disconnect, so no stale lock can survive a crash.
-		row := r.drv.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", migrationLockID)
-		var ok bool
-		if err := row.Scan(&ok); err != nil {
+		// pg_advisory_xact_lock is transaction-scoped: it is automatically
+		// released when the transaction ends (commit or rollback), making it
+		// safe on pooled connections. Session-scoped pg_try_advisory_lock /
+		// pg_advisory_unlock can run on different pooled connections,
+		// potentially leaking the lock indefinitely.
+		//
+		// We start a dedicated "lock transaction" that holds this pg xact lock
+		// for the entire duration of Up/Down. The tx is never committed — we
+		// always roll it back at the end, which also releases the lock.
+		// This tx makes no schema changes; all migration work still happens in
+		// separate per-migration transactions.
+		lockTx, err := r.drv.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("migrate: begin lock transaction: %w", err)
+		}
+		if _, err := lockTx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockID); err != nil {
+			_ = lockTx.Rollback(ctx)
 			return nil, fmt.Errorf("migrate: acquire advisory lock: %w", err)
 		}
-		if !ok {
-			return nil, fmt.Errorf("migrate: migrations are locked by another process")
-		}
 		return func() {
-			_, _ = r.drv.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationLockID)
+			_ = lockTx.Rollback(ctx) // releases the pg_advisory_xact_lock
 		}, nil
 	}
 
