@@ -122,8 +122,7 @@ func runMigrateNew(parsed parsedCmd) {
 	}
 
 	cfgDir, _ := filepath.Abs(filepath.Dir(cp))
-	scanDir := codegen.ResolveModuleRoot(cfgDir)
-	models, err := codegen.ScanPackages(cfg.Packages, scanDir)
+	models, err := codegen.ScanPackages(cfg.Packages, cfgDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
 		os.Exit(1)

@@ -180,10 +180,10 @@ output:
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
 }
 
-func TestResolveModuleRoot_IsExportedForMigrateNew(t *testing.T) {
-	// migrate new must scan from the module root, not the config dir, identical
-	// to Generate. This guards that the shared helper exists and is exported so
-	// cmd/drel/migrate.go can call it.
+func TestResolveModuleRoot_WalksToGoMod(t *testing.T) {
+	// ResolveModuleRoot must find the nearest ancestor containing go.mod.
+	// NOTE: migrate new no longer calls ResolveModuleRoot — it uses cfgDir
+	// directly (matching Generate). This test covers the helper itself.
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n\ngo 1.22\n"), 0644))
 	sub := filepath.Join(root, "deploy")
@@ -771,4 +771,58 @@ output:
 	build.Dir = dir
 	buildOut, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
+}
+
+// TestMigrateNewScanMatchesGenerate is a regression guard for the invariant that
+// migrate new and generate resolve package patterns against the same base
+// directory (cfgDir, i.e. the directory containing drel.yaml). Previously,
+// migrate new called ResolveModuleRoot(cfgDir) which resolved ./models relative
+// to the module root when the config lived in a subdirectory, causing it to scan
+// a different (or nonexistent) package set than generate. The test creates a
+// module where drel.yaml lives in a subdir and models live under that subdir, then
+// asserts that ScanPackages(cfgDir) finds the model and
+// ScanPackages(ResolveModuleRoot(cfgDir)) does not — proving the two paths
+// diverged and that cfgDir is the correct choice.
+func TestMigrateNewScanMatchesGenerate(t *testing.T) {
+	// Module root has no models directory; models live under config/ subdir.
+	dir := setupGenerateModule(t, map[string]string{
+		"config/models/user.go": `package models
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"config/drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	cfgPath := filepath.Join(dir, "config", "drel.yaml")
+	cfgDir := filepath.Join(dir, "config")
+
+	// Path that Generate and the fixed migrate new both use: cfgDir.
+	modelsFromCfgDir, err := ScanPackages([]string{"./models"}, cfgDir)
+	require.NoError(t, err, "ScanPackages(cfgDir) must succeed")
+	require.Len(t, modelsFromCfgDir, 1, "ScanPackages(cfgDir) must find the User model")
+	assert.Equal(t, "User", modelsFromCfgDir[0].Name)
+
+	// Path the old (buggy) migrate new used: resolve to module root.
+	// The module root has no ./models directory, so the scan finds nothing (or errors).
+	moduleRoot := ResolveModuleRoot(cfgDir)
+	assert.NotEqual(t, cfgDir, moduleRoot,
+		"test setup requires config to live in a subdir of the module root")
+
+	modelsFromModuleRoot, _ := ScanPackages([]string{"./models"}, moduleRoot)
+	assert.Empty(t, modelsFromModuleRoot,
+		"ScanPackages(moduleRoot) must find no models — the old migrate-new path was wrong")
+
+	// Prove Generate (which uses cfgDir) succeeds for the same config.
+	require.NoError(t, Generate(cfgPath), "Generate must succeed with cfgDir-rooted scan")
+	assert.FileExists(t, filepath.Join(cfgDir, "models", "user_drel.go"),
+		"Generate must write the model file next to the source package")
 }
