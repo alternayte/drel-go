@@ -160,6 +160,12 @@ func (tx *Tx) Savepoint(ctx context.Context, name string, fn func(sp *Tx) error)
 	}
 
 	if _, err := tx.execInternal(ctx, "RELEASE SAVEPOINT "+sp); err != nil {
+		// RELEASE failed even though fn succeeded (e.g. broken connection).
+		// Mirror the rollback branch: revert the tracker and held events so
+		// tracker state is consistent on every error exit and the savepoint's
+		// staged work is not re-flushed by the outer transaction.
+		tx.tracker.restore(savedTracker)
+		tx.heldEvents = tx.heldEvents[:savedEvents]
 		return fmt.Errorf("drel: release savepoint %q: %w", name, err)
 	}
 	return nil

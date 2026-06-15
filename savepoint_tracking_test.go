@@ -136,6 +136,45 @@ func TestSavepoint_NestedSameName(t *testing.T) {
 	assert.Equal(t, 2, countItems(t, engine))
 }
 
+// On the SUCCESS path, if RELEASE SAVEPOINT fails the savepoint's staged adds
+// must be reverted from the tracker (mirroring the rollback branch) so the
+// outer commit does not re-flush them. We provoke a deterministic RELEASE
+// failure by pre-releasing the framework's savepoint inside fn: the first
+// savepoint named "rel" in a fresh tx is emitted as "sp_rel_1"
+// (sanitizeSavepoint prefixes "sp_", then the per-tx counter appends "_1").
+func TestSavepoint_ReleaseFailureSuccessPath_RevertsTracker(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		drel.NewTxRepository(tx, sqliteItemMeta).Add(&sqliteItem{Title: "outer"})
+		if e := tx.SaveChanges(ctx); e != nil {
+			return e
+		}
+
+		spErr := tx.Savepoint(ctx, "rel", func(sp *drel.Tx) error {
+			// Stage an add but do NOT flush it inside the savepoint, so it is
+			// still pending in the tracker when RELEASE runs.
+			drel.NewTxRepository(sp, sqliteItemMeta).Add(&sqliteItem{Title: "inner-staged"})
+			// Pre-release the framework's savepoint so the framework's own
+			// RELEASE on the success path fails ("no such savepoint").
+			_, _ = sp.Exec(ctx, "RELEASE SAVEPOINT sp_rel_1")
+			return nil // success path -> framework RELEASE now fails
+		})
+		// The RELEASE failure must surface as an error.
+		require.Error(t, spErr)
+		require.Contains(t, spErr.Error(), "release savepoint")
+		// Swallow it so the outer transaction still commits; the staged inner
+		// add must have been reverted and therefore NOT flushed.
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Only "outer" must survive. Before the fix, "inner-staged" leaks into the
+	// outer commit (count == 2).
+	assert.Equal(t, 1, countItems(t, engine))
+}
+
 func TestAttach_UnchangedInsertOnlyMetaDoesNotPanic(t *testing.T) {
 	// evItemMeta (defined in outbox_test.go) has no Snapshot/Diff. Attaching as
 	// StateUnchanged must not panic even though such a model can't be diffed.
