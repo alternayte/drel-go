@@ -163,13 +163,17 @@ See [examples/](examples/) for working samples:
 
 - [getting-started](examples/getting-started/) -- minimal CRUD
 - [sqlite-todo](examples/sqlite-todo/) -- SQLite dialect, tag indexes, cursor pagination
-- [model-features](examples/model-features/) -- soft delete, versioning, audit
+- [model-features](examples/model-features/) -- soft delete, versioning, audit, and JSON/array columns
+- [value-objects](examples/value-objects/) -- single-column (`Email`) and multi-column (`Money`) value objects
+- [enums](examples/enums/) -- string and int enums with generated DB constraints
 - [relationships](examples/relationships/) -- associations and includes
 - [bulk-ops](examples/bulk-ops/) -- batch operations
+- [api](examples/api/) -- dynamic query composition from HTTP parameters (IQueryable-style conditional `Where` chaining)
 - [multi-model](examples/multi-model/) -- domain events, transaction hooks
 - [outbox](examples/outbox/) -- transactional outbox: events persisted atomically with data, plus a polling relay
 - [observability](examples/observability/) -- structured query logging, tracing spans, and dev-mode diagnostics
 - [uuid-keys](examples/uuid-keys/) -- application-assigned UUIDv7 primary keys
+- [internals](examples/internals/) -- what codegen produces, hand-written, to see the machinery
 
 Primary keys: integer auto-increment by default; use `drel.Model[uuid.UUID]`
 for app-assigned UUIDv7 (stamped at `Add()`).
