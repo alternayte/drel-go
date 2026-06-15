@@ -27,30 +27,46 @@ type Batch struct {
 type batchItem struct {
 	sql     string
 	args    []any
+	primary bool
 	handler func(Rows) error
 }
 
 // NewBatch creates an empty query batch bound to this engine.
 func (e *Engine) NewBatch() *Batch { return &Batch{engine: e} }
 
-func (b *Batch) add(sql string, args []any, handler func(Rows) error) {
-	b.items = append(b.items, batchItem{sql: sql, args: args, handler: handler})
+func (b *Batch) add(sql string, args []any, primary bool, handler func(Rows) error) {
+	b.items = append(b.items, batchItem{sql: sql, args: args, primary: primary, handler: handler})
 }
 
 // Execute runs all queued queries. On a pipelining driver they are sent in one
 // round-trip and their results read in order; otherwise they run sequentially.
-// Each query's typed result becomes available via its BatchResult afterwards.
+// A pipeline runs on a single connection, so the whole batch targets one driver:
+// the primary if any queued query forced Primary(), otherwise a read replica
+// (chosen round-robin, falling back to the primary on failure).
 func (b *Batch) Execute(ctx context.Context) error {
 	if len(b.items) == 0 {
 		return nil
 	}
-	if p, ok := b.engine.drv.(driver.Pipeliner); ok {
+	forcePrimary := false
+	for _, it := range b.items {
+		if it.primary {
+			forcePrimary = true
+			break
+		}
+	}
+
+	target := b.engine.rowDriver(ctx, forcePrimary) // primary, or a non-failed replica
+	if p, ok := target.(driver.Pipeliner); ok {
 		items := make([]driver.BatchItem, len(b.items))
 		for i, it := range b.items {
 			items[i] = driver.BatchItem{SQL: it.sql, Args: it.args}
 		}
 		res, err := p.SendBatch(ctx, items)
 		if err != nil {
+			// Fall back to the primary if the replica pipeline failed to send.
+			if !forcePrimary && target != b.engine.drv {
+				return b.executeSequential(ctx, b.engine.drv)
+			}
 			return dberr.Classify(err)
 		}
 		defer res.Close()
@@ -61,18 +77,22 @@ func (b *Batch) Execute(ctx context.Context) error {
 			}
 			if err := it.handler(rows); err != nil {
 				rows.Close()
-				return dberr.Classify(err)
+				return err
 			}
 			rows.Close()
 		}
 		return nil
 	}
 
-	// Sequential fallback (e.g. SQLite).
+	// Sequential fallback (e.g. SQLite, or a replica without pipelining).
+	return b.executeSequential(ctx, target)
+}
+
+func (b *Batch) executeSequential(ctx context.Context, d driver.Driver) error {
 	for _, it := range b.items {
-		rows, err := b.engine.queryInternal(ctx, it.sql, it.args...)
+		rows, err := b.engine.queryOn(ctx, d, it.sql, it.args...)
 		if err != nil {
-			return err
+			return err // already classified by queryOn
 		}
 		if err := it.handler(rows); err != nil {
 			rows.Close()
@@ -97,7 +117,7 @@ func (r *BatchResult[T]) Result() (T, error) { return r.value, r.err }
 func BatchAll[T any](b *Batch, q *QueryBuilder[T]) *BatchResult[[]*T] {
 	res := &BatchResult[[]*T]{}
 	built := q.engine.dialect().BuildSelect(q.buildAST(ast.QuerySelect))
-	b.add(built.SQL, built.Args, func(rows Rows) error {
+	b.add(built.SQL, built.Args, q.primary, func(rows Rows) error {
 		var items []*T
 		for rows.Next() {
 			it, err := q.meta.Scan(rows)
@@ -122,7 +142,7 @@ func BatchAll[T any](b *Batch, q *QueryBuilder[T]) *BatchResult[[]*T] {
 func BatchFirst[T any](b *Batch, q *QueryBuilder[T]) *BatchResult[*T] {
 	res := &BatchResult[*T]{}
 	built := q.engine.dialect().BuildSelect(q.Limit(1).buildAST(ast.QuerySelect))
-	b.add(built.SQL, built.Args, func(rows Rows) error {
+	b.add(built.SQL, built.Args, q.primary, func(rows Rows) error {
 		if rows.Next() {
 			it, err := q.meta.Scan(rows)
 			if err != nil {
@@ -146,7 +166,7 @@ func BatchFirst[T any](b *Batch, q *QueryBuilder[T]) *BatchResult[*T] {
 func BatchCount[T any](b *Batch, q *QueryBuilder[T]) *BatchResult[int] {
 	res := &BatchResult[int]{}
 	built := q.engine.dialect().BuildSelect(q.buildAST(ast.QueryCount))
-	b.add(built.SQL, built.Args, func(rows Rows) error {
+	b.add(built.SQL, built.Args, q.primary, func(rows Rows) error {
 		if rows.Next() {
 			var n int
 			if err := rows.Scan(&n); err != nil {
