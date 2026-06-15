@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
 	"github.com/alternayte/drel/internal/driver/sqlitedriver"
 )
+
+// replicaCooldown is how long a read replica is skipped after a failed read
+// before it is tried again.
+const replicaCooldown = 5 * time.Second
 
 // Engine holds a database driver and dialect for executing queries.
 type Engine struct {
@@ -35,6 +40,11 @@ type Engine struct {
 
 	replicas  []driver.Driver
 	rrCounter uint64
+
+	// replicaFailed maps a replica index → the UnixNano time it last failed a
+	// read. A replica within replicaCooldown of its last failure is skipped.
+	// A zero-value Engine (test literals) is safe: a missing key means "healthy".
+	replicaFailed sync.Map // map[int]int64
 }
 
 // Option configures Engine creation.
@@ -279,6 +289,77 @@ func (e *Engine) readDriver(primary bool) driver.Driver {
 	return e.replicas[(n-1)%uint64(len(e.replicas))]
 }
 
+// replicaCooling reports whether replica idx failed a read within the cooldown.
+func (e *Engine) replicaCooling(idx int, cutoff int64) bool {
+	v, ok := e.replicaFailed.Load(idx)
+	return ok && v.(int64) > cutoff
+}
+
+// markReplicaFailed records that replica idx failed a read at now (UnixNano).
+func (e *Engine) markReplicaFailed(idx int, now int64) {
+	e.replicaFailed.Store(idx, now)
+}
+
+// readWithFailover runs do against read replicas (skipping ones that recently
+// failed), falling back to the primary. It returns the first success or, if
+// every target fails, the last error. When primary is true or no replicas are
+// registered it runs against the primary directly.
+func (e *Engine) readWithFailover(ctx context.Context, primary bool, do func(d driver.Driver) (driver.Rows, error)) (driver.Rows, error) {
+	if primary || len(e.replicas) == 0 {
+		return do(e.drv)
+	}
+	now := time.Now().UnixNano()
+	cutoff := now - int64(replicaCooldown)
+	start := int(atomic.AddUint64(&e.rrCounter, 1) - 1)
+	n := len(e.replicas)
+
+	var lastErr error
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		if e.replicaCooling(idx, cutoff) {
+			continue // still cooling down from a recent failure
+		}
+		rows, err := do(e.replicas[idx])
+		if err == nil {
+			return rows, nil
+		}
+		e.markReplicaFailed(idx, now)
+		lastErr = err
+		if e.logger != nil {
+			e.logger.WarnContext(ctx, "drel: read replica failed, trying next target",
+				"replica", idx, "err", err)
+		}
+	}
+	if lastErr == nil && e.logger != nil {
+		// Every replica was within its cooldown window; go straight to primary.
+		e.logger.WarnContext(ctx, "drel: all read replicas recently failed, using primary")
+	}
+	return do(e.drv)
+}
+
+// rowDriver picks a read driver for the single-row path (and the batch path),
+// skipping replicas that recently failed a read. Unlike readWithFailover it
+// cannot retry after the fact, so it only avoids known-bad replicas and
+// otherwise round-robins.
+func (e *Engine) rowDriver(ctx context.Context, primary bool) driver.Driver {
+	if primary || len(e.replicas) == 0 {
+		return e.drv
+	}
+	cutoff := time.Now().UnixNano() - int64(replicaCooldown)
+	start := int(atomic.AddUint64(&e.rrCounter, 1) - 1)
+	n := len(e.replicas)
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		if !e.replicaCooling(idx, cutoff) {
+			return e.replicas[idx]
+		}
+	}
+	if e.logger != nil {
+		e.logger.WarnContext(ctx, "drel: all read replicas recently failed, using primary for row read")
+	}
+	return e.drv
+}
+
 // Exec executes a raw SQL statement and returns the number of rows affected.
 // $N placeholders are rewritten to ? on dialects that use ? (SQLite/libSQL).
 func (e *Engine) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
@@ -384,7 +465,9 @@ func (e *Engine) queryRoutedTimeout(ctx context.Context, primary bool, timeout t
 	rowCtx, cancel := applyTimeout(ctx, timeout)
 	rowCtx, endSpan := e.startSpan(rowCtx, "drel.query")
 	start := time.Now()
-	rows, err := e.readDriver(primary).Query(rowCtx, sql, args...)
+	rows, err := e.readWithFailover(rowCtx, primary, func(d driver.Driver) (driver.Rows, error) {
+		return d.Query(rowCtx, sql, args...)
+	})
 	endSpan(err)
 	e.notifyQueryHooks(rowCtx, sql, args, time.Since(start), err)
 	if err != nil {
@@ -412,10 +495,26 @@ func (e *Engine) queryRowRoutedTimeout(ctx context.Context, primary bool, timeou
 	rowCtx, cancel := applyTimeout(ctx, timeout)
 	rowCtx, endSpan := e.startSpan(rowCtx, "drel.queryRow")
 	start := time.Now()
-	row := e.readDriver(primary).QueryRow(rowCtx, sql, args...)
+	row := e.rowDriver(rowCtx, primary).QueryRow(rowCtx, sql, args...)
 	endSpan(nil)
 	e.notifyQueryHooks(rowCtx, sql, args, time.Since(start), nil)
 	return classifyRow{row: timeoutRow{row: row, cancel: cancel}}
+}
+
+// queryOn runs a read query against a specific driver (chosen by the batch's
+// single-target routing) with tracing, query-hook notification, and error
+// classification — the same plumbing as queryRoutedTimeout, but without
+// re-choosing the driver or applying a per-query timeout.
+func (e *Engine) queryOn(ctx context.Context, d driver.Driver, sql string, args ...any) (Rows, error) {
+	ctx, endSpan := e.startSpan(ctx, "drel.query")
+	start := time.Now()
+	rows, err := d.Query(ctx, sql, args...)
+	endSpan(err)
+	e.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
+	if err != nil {
+		return nil, dberr.Classify(err)
+	}
+	return rows, nil
 }
 
 func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
