@@ -99,6 +99,10 @@ func productScanReturning(p *Product, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func productNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var ProductMeta = drel.ModelMeta[Product]{
 	Table:         "products",
 	Columns:       []string{"id", "name", "price", "category", "in_stock", "created_at", "updated_at"},
@@ -110,6 +114,7 @@ var ProductMeta = drel.ModelMeta[Product]{
 	InsertColumns: productInsertColumns,
 	ScanReturning: productScanReturning,
 	ColumnValue:   productColumnValue,
+	NormalizeKey:  productNormalizeKey,
 }
 
 type ProductRepository struct {

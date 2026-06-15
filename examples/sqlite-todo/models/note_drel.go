@@ -99,6 +99,10 @@ func noteScanReturning(p *Note, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func noteNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var NoteMeta = drel.ModelMeta[Note]{
 	Table:         "notes",
 	Columns:       []string{"id", "slug", "title", "category", "pinned", "created_at", "updated_at"},
@@ -110,6 +114,7 @@ var NoteMeta = drel.ModelMeta[Note]{
 	InsertColumns: noteInsertColumns,
 	ScanReturning: noteScanReturning,
 	ColumnValue:   noteColumnValue,
+	NormalizeKey:  noteNormalizeKey,
 }
 
 type NoteRepository struct {

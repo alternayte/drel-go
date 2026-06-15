@@ -531,8 +531,10 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 				rows.Close()
 				return nil, err
 			}
-			// Normalize int64 → int so map lookups match PKValue which returns Go int.
-			pivotRows = append(pivotRows, pivotRow{sourceFK: normalizeInt(src), targetFK: normalizeInt(tgt)})
+			pivotRows = append(pivotRows, pivotRow{
+				sourceFK: normalizeKeyWith(ie.parentMeta, src),
+				targetFK: normalizeKeyWith(rel.RelatedMeta, tgt),
+			})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -585,6 +587,14 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 	}
 
 	return targets, nil
+}
+
+// normalizeKeyWith applies meta.NormalizeKey when present, else int normalization.
+func normalizeKeyWith(meta *ModelMetaBase, v any) any {
+	if meta != nil && meta.NormalizeKey != nil {
+		return meta.NormalizeKey(v)
+	}
+	return normalizeInt(v)
 }
 
 // normalizeInt converts int64/int32 to int so that map lookups match

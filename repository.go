@@ -22,8 +22,13 @@ type ModelMeta[T any] struct {
 	GenerateKey    func() any
 	SetKey         func(*T, any)
 	KeyIsZero      func(*T) bool
-	ColumnValue    func(*T, int) any
-	Filters        []NamedFilter
+	ColumnValue func(*T, int) any
+	// NormalizeKey converts a primary-key value scanned as a raw driver type
+	// (e.g. [16]byte/string for a UUID, int64 for an integer) into the canonical
+	// Go key type returned by PKValue, so pivot-table keys compare equal to it.
+	// Optional; when nil the loader falls back to int normalization.
+	NormalizeKey func(any) any
+	Filters      []NamedFilter
 	HasSoftDelete  bool
 	HasVersioned   bool
 	HasAudit       bool
@@ -71,6 +76,7 @@ func ToMetaBase[T any](meta *ModelMeta[T]) *ModelMetaBase {
 			return meta.ColumnValue(entity.(*T), colIdx)
 		}
 	}
+	base.NormalizeKey = meta.NormalizeKey
 	base.Filters = append([]NamedFilter(nil), meta.Filters...)
 	base.HasSoftDelete = meta.HasSoftDelete
 	base.HasVersioned = meta.HasVersioned

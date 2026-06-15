@@ -83,6 +83,10 @@ func logentryScanReturning(p *LogEntry, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func logentryNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var LogEntryMeta = drel.ModelMeta[LogEntry]{
 	Table:         "log_entries",
 	Columns:       []string{"id", "level", "message", "created_at", "updated_at"},
@@ -94,6 +98,7 @@ var LogEntryMeta = drel.ModelMeta[LogEntry]{
 	InsertColumns: logentryInsertColumns,
 	ScanReturning: logentryScanReturning,
 	ColumnValue:   logentryColumnValue,
+	NormalizeKey:  logentryNormalizeKey,
 }
 
 type LogEntryRepository struct {

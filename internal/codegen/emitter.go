@@ -217,6 +217,9 @@ func EmitModelFile(m ModelInfo) string {
 	// --- Scan returning ---
 	emitScanReturning(&b, m, lower)
 
+	// --- Key normalizer (matches pivot keys to the canonical PK type) ---
+	emitNormalizeKey(&b, m, lower)
+
 	// --- Key funcs (app-assigned PKs only) ---
 	if isAppAssignedPK(m.PKType) {
 		emitKeyFuncs(&b, m, lower)
@@ -431,6 +434,21 @@ func isAppAssignedPK(pkType string) bool {
 	}
 }
 
+func emitNormalizeKey(b *strings.Builder, m ModelInfo, lower string) {
+	b.WriteString(fmt.Sprintf("func %sNormalizeKey(v any) any {\n", lower))
+	switch {
+	case m.PKType == "uuid.UUID":
+		b.WriteString("\treturn drel.NormalizeUUIDKey(v)\n")
+	case isAppAssignedPK(m.PKType):
+		// string or other app-assigned key: identity.
+		b.WriteString("\treturn v\n")
+	default:
+		// integer auto-increment PK.
+		b.WriteString("\treturn drel.NormalizeIntKey(v)\n")
+	}
+	b.WriteString("}\n\n")
+}
+
 func emitKeyFuncs(b *strings.Builder, m ModelInfo, lower string) {
 	// emitTypedRepos renders FindByID with the raw m.PKType (e.g. "uuid.UUID");
 	// use the same so the type matches the generated import alias.
@@ -490,6 +508,7 @@ func emitMeta(b *strings.Builder, m ModelInfo, lower, varPlural string, allCols 
 	b.WriteString(fmt.Sprintf("\tInsertColumns: %sInsertColumns,\n", lower))
 	b.WriteString(fmt.Sprintf("\tScanReturning: %sScanReturning,\n", lower))
 	b.WriteString(fmt.Sprintf("\tColumnValue:   %sColumnValue,\n", lower))
+	b.WriteString(fmt.Sprintf("\tNormalizeKey:  %sNormalizeKey,\n", lower))
 
 	if isAppAssignedPK(m.PKType) {
 		pkType := m.PKType

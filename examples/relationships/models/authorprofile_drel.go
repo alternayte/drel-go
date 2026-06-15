@@ -83,6 +83,10 @@ func authorprofileScanReturning(p *AuthorProfile, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func authorprofileNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var AuthorProfileMeta = drel.ModelMeta[AuthorProfile]{
 	Table:         "author_profiles",
 	Columns:       []string{"id", "bio", "author_id", "created_at", "updated_at"},
@@ -94,6 +98,7 @@ var AuthorProfileMeta = drel.ModelMeta[AuthorProfile]{
 	InsertColumns: authorprofileInsertColumns,
 	ScanReturning: authorprofileScanReturning,
 	ColumnValue:   authorprofileColumnValue,
+	NormalizeKey:  authorprofileNormalizeKey,
 }
 
 type AuthorProfileRepository struct {

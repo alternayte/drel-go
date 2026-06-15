@@ -84,6 +84,10 @@ func orderScanReturning(p *Order, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func orderNormalizeKey(v any) any {
+	return drel.NormalizeUUIDKey(v)
+}
+
 func orderKeyIsZero(p *Order) bool {
 	var zero uuid.UUID
 	return p.ID() == zero
@@ -105,6 +109,7 @@ var OrderMeta = drel.ModelMeta[Order]{
 	InsertColumns: orderInsertColumns,
 	ScanReturning: orderScanReturning,
 	ColumnValue:   orderColumnValue,
+	NormalizeKey:  orderNormalizeKey,
 	KeyStrategy:   drel.KeyAppAssigned,
 	GenerateKey:   drel.UUIDv7Key,
 	SetKey:        func(p *Order, key any) { p.SetID(key.(uuid.UUID)) },

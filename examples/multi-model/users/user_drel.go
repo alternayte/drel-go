@@ -83,6 +83,10 @@ func userScanReturning(p *User, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func userNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var UserMeta = drel.ModelMeta[User]{
 	Table:         "users",
 	Columns:       []string{"id", "name", "balance", "created_at", "updated_at"},
@@ -94,6 +98,7 @@ var UserMeta = drel.ModelMeta[User]{
 	InsertColumns: userInsertColumns,
 	ScanReturning: userScanReturning,
 	ColumnValue:   userColumnValue,
+	NormalizeKey:  userNormalizeKey,
 }
 
 type UserRepository struct {

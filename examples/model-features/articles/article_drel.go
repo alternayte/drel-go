@@ -100,6 +100,10 @@ func articleScanReturning(p *Article, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func articleNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var ArticleMeta = drel.ModelMeta[Article]{
 	Table:         "articles",
 	Columns:       []string{"id", "title", "body", "deleted_at", "version", "created_by", "updated_by", "created_at", "updated_at"},
@@ -111,6 +115,7 @@ var ArticleMeta = drel.ModelMeta[Article]{
 	InsertColumns: articleInsertColumns,
 	ScanReturning: articleScanReturning,
 	ColumnValue:   articleColumnValue,
+	NormalizeKey:  articleNormalizeKey,
 	HasSoftDelete: true,
 	Filters:       []drel.NamedFilter{drel.SoftDeleteFilter},
 	HasVersioned:  true,

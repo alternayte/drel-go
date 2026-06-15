@@ -75,6 +75,10 @@ func authorScanReturning(p *Author, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func authorNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var AuthorMeta = drel.ModelMeta[Author]{
 	Table:         "authors",
 	Columns:       []string{"id", "name", "created_at", "updated_at"},
@@ -86,6 +90,7 @@ var AuthorMeta = drel.ModelMeta[Author]{
 	InsertColumns: authorInsertColumns,
 	ScanReturning: authorScanReturning,
 	ColumnValue:   authorColumnValue,
+	NormalizeKey:  authorNormalizeKey,
 }
 
 type AuthorRepository struct {

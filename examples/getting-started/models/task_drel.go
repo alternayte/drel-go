@@ -91,6 +91,10 @@ func taskScanReturning(p *Task, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func taskNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var TaskMeta = drel.ModelMeta[Task]{
 	Table:         "tasks",
 	Columns:       []string{"id", "title", "done", "priority", "created_at", "updated_at"},
@@ -102,6 +106,7 @@ var TaskMeta = drel.ModelMeta[Task]{
 	InsertColumns: taskInsertColumns,
 	ScanReturning: taskScanReturning,
 	ColumnValue:   taskColumnValue,
+	NormalizeKey:  taskNormalizeKey,
 }
 
 type TaskRepository struct {

@@ -83,6 +83,10 @@ func bookScanReturning(p *Book, row drel.Row) error {
 	return row.Scan(idPtr, createdAtPtr, updatedAtPtr)
 }
 
+func bookNormalizeKey(v any) any {
+	return drel.NormalizeIntKey(v)
+}
+
 var BookMeta = drel.ModelMeta[Book]{
 	Table:         "books",
 	Columns:       []string{"id", "title", "author_id", "created_at", "updated_at"},
@@ -94,6 +98,7 @@ var BookMeta = drel.ModelMeta[Book]{
 	InsertColumns: bookInsertColumns,
 	ScanReturning: bookScanReturning,
 	ColumnValue:   bookColumnValue,
+	NormalizeKey:  bookNormalizeKey,
 }
 
 type BookRepository struct {

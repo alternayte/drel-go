@@ -80,3 +80,33 @@ func SetKeyGenerator[T any](meta ModelMeta[T], gen func() any) {
 	cfg.Generate = gen
 	setKeyConfig(meta.Table, cfg)
 }
+
+// NormalizeUUIDKey converts a UUID primary-key value scanned as a raw driver
+// type into a uuid.UUID so it compares equal to PKValue. It accepts uuid.UUID,
+// [16]byte, []byte (16 bytes), and the canonical string form.
+func NormalizeUUIDKey(v any) any {
+	switch k := v.(type) {
+	case uuid.UUID:
+		return k
+	case [16]byte:
+		return uuid.UUID(k)
+	case []byte:
+		if u, err := uuid.FromBytes(k); err == nil {
+			return u
+		}
+		if u, err := uuid.Parse(string(k)); err == nil {
+			return u
+		}
+		return v
+	case string:
+		if u, err := uuid.Parse(k); err == nil {
+			return u
+		}
+		return v
+	default:
+		return v
+	}
+}
+
+// NormalizeIntKey collapses int64/int32 to int so pivot keys match an int PK.
+func NormalizeIntKey(v any) any { return normalizeInt(v) }

@@ -49,6 +49,7 @@ type ModelMetaBase struct {
 	AuditSetCreate func(entity any, actor string)
 	AuditSetUpdate func(entity any, actor string)
 	Filters        []NamedFilter
+	NormalizeKey   func(any) any
 }
 
 type trackedEntity struct {
