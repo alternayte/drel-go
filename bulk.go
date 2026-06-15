@@ -173,7 +173,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
-			return total, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(execErr))
+			return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
 		total += int(affected)
 	}
@@ -248,7 +248,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
-			return total, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, dberr.Classify(execErr))
+			return 0, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
 		total += int(affected)
 	}
