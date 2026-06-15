@@ -339,6 +339,11 @@ func TestBuildSchema_DefaultAndTypeOverride(t *testing.T) {
 			{Name: "age", GoType: "int", ColumnName: "age", Default: "0"},
 			{Name: "meta", GoType: "string", ColumnName: "meta", TypeOverride: "jsonb"},
 			{Name: "ts", GoType: "time.Time", ColumnName: "ts", Default: "now()"},
+			// String-typed columns with SQL-expression defaults must NOT be quoted.
+			{Name: "uid", GoType: "string", ColumnName: "uid", Default: "gen_random_uuid()"},
+			{Name: "arr", GoType: "string", ColumnName: "arr", Default: "ARRAY['a','b']"},
+			// Already-quoted literal: pass through as-is.
+			{Name: "pre", GoType: "string", ColumnName: "pre", Default: "'explicit'"},
 		},
 	}
 	cols := func(s Schema) map[string]Column {
@@ -356,11 +361,19 @@ func TestBuildSchema_DefaultAndTypeOverride(t *testing.T) {
 	assert.Equal(t, "now()", pg["ts"].Default)
 	// type= override replaces the inferred type.
 	assert.Equal(t, "jsonb", pg["meta"].Type)
+	// String-typed column with SQL-expression default must NOT be single-quoted.
+	assert.Equal(t, "gen_random_uuid()", pg["uid"].Default)
+	assert.Equal(t, "ARRAY['a','b']", pg["arr"].Default)
+	// Already-quoted literal must pass through as-is (not double-quoted).
+	assert.Equal(t, "'explicit'", pg["pre"].Default)
 
 	sl := cols(BuildSchema([]ModelInfo{m}, "sqlite"))
 	assert.Equal(t, "'user'", sl["role"].Default)
 	assert.Equal(t, "0", sl["age"].Default)
 	assert.Equal(t, "jsonb", sl["meta"].Type)
+	assert.Equal(t, "gen_random_uuid()", sl["uid"].Default)
+	assert.Equal(t, "ARRAY['a','b']", sl["arr"].Default)
+	assert.Equal(t, "'explicit'", sl["pre"].Default)
 }
 
 func TestDiffSchemas_DefaultAddDrop(t *testing.T) {

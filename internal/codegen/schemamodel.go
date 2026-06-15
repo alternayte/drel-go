@@ -348,7 +348,19 @@ func buildPivotTables(models []ModelInfo, dialect string) []Table {
 // enumDefaultLiteral renders a column's parsed default for DDL. String-typed
 // columns and string enums are single-quoted; integer enums and numeric/SQL
 // expression defaults are emitted verbatim.
+//
+// Pass-through cases (never quoted regardless of Go type):
+//   - The value already starts with a single quote — it is a pre-quoted literal.
+//   - The value contains '(' — it is a SQL function call such as gen_random_uuid()
+//     or now().
+//   - The value contains a single quote character — it is a SQL expression such as
+//     ARRAY['a','b'] that already embeds its own quoting.
 func enumDefaultLiteral(f FieldInfo) string {
+	// Pass through SQL expressions and already-quoted literals regardless of type.
+	if strings.ContainsRune(f.Default, '\'') || strings.ContainsRune(f.Default, '(') {
+		return f.Default
+	}
+
 	quote := false
 	if f.IsEnum {
 		quote = !f.EnumIsInt
