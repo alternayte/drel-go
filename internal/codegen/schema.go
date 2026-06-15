@@ -328,6 +328,20 @@ func DiffSchemas(old, newSchema Schema, dialect string) (upSQL, downSQL string) 
 		down = append(down, td...)
 	}
 
+	// 4b. Enums present in both — diff their value sets (Postgres string enums
+	// only; int enums and SQLite enums diff through the column CHECK path).
+	if dialect != "sqlite" {
+		for _, ne := range newSchema.Enums {
+			oe, ok := oldEnums[ne.Name]
+			if !ok {
+				continue
+			}
+			eu, ed := diffEnumValues(oe, ne)
+			up = append(up, eu...)
+			down = append(down, ed...)
+		}
+	}
+
 	// 5. Dropped enums (Postgres only) — drop after dependent tables are gone.
 	if dialect != "sqlite" {
 		for _, e := range old.Enums {
@@ -463,6 +477,49 @@ func diffColumn(table string, old, new Column, dialect string) (up, down []strin
 			quoteIdent(table), quoteIdent(new.Name), old.Check, new.Check))
 		down = append(down, fmt.Sprintf(`-- WARNING: CHECK constraint on %s.%s changed (%q -> %q); apply the new constraint manually (requires a table rebuild)`,
 			quoteIdent(table), quoteIdent(new.Name), new.Check, old.Check))
+	}
+
+	return up, down
+}
+
+// diffEnumValues emits migration SQL for added/removed values of a Postgres
+// string enum that exists in both schemas. Additions use ALTER TYPE ADD VALUE
+// (which cannot run inside a transaction and is not trivially reversible);
+// removals require a full type rebuild and surface as a loud WARNING.
+func diffEnumValues(old, new EnumDef) (up, down []string) {
+	oldSet := map[string]bool{}
+	for _, v := range old.Values {
+		oldSet[v] = true
+	}
+	newSet := map[string]bool{}
+	for _, v := range new.Values {
+		newSet[v] = true
+	}
+
+	// Additions (preserve new declaration order).
+	for _, v := range new.Values {
+		if oldSet[v] {
+			continue
+		}
+		up = append(up,
+			fmt.Sprintf("-- NOTE: ALTER TYPE ... ADD VALUE cannot run inside a transaction; run this migration outside a transaction block"),
+			fmt.Sprintf("ALTER TYPE %s ADD VALUE '%s';", quoteIdent(new.Name), strings.ReplaceAll(v, "'", "''")))
+		down = append(down,
+			fmt.Sprintf("-- WARNING: cannot drop enum value '%s' from %s; removing an enum value requires recreating the type. Apply manually.",
+				strings.ReplaceAll(v, "'", "''"), quoteIdent(new.Name)))
+	}
+
+	// Removals.
+	for _, v := range old.Values {
+		if newSet[v] {
+			continue
+		}
+		up = append(up,
+			fmt.Sprintf("-- WARNING: enum value '%s' removed from %s; Postgres cannot drop an enum value in place — recreate the type manually.",
+				strings.ReplaceAll(v, "'", "''"), quoteIdent(new.Name)))
+		down = append(down,
+			fmt.Sprintf("-- WARNING: re-adding enum value '%s' to %s requires ALTER TYPE ... ADD VALUE outside a transaction.",
+				strings.ReplaceAll(v, "'", "''"), quoteIdent(new.Name)))
 	}
 
 	return up, down

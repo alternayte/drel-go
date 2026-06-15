@@ -330,3 +330,76 @@ func TestBuildSchema_IndexesFromTags(t *testing.T) {
 	}
 	assert.Equal(t, "score >= 0", score.Check)
 }
+
+func TestDiffSchemas_GrowStringEnum_Postgres(t *testing.T) {
+	old := Schema{
+		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user"}, BaseType: "string"}},
+		Tables: []Table{
+			pgTable("users",
+				Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+				Column{Name: "role", Type: `"role"`, NotNull: true},
+			),
+		},
+	}
+	newS := Schema{
+		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user", "moderator"}, BaseType: "string"}},
+		Tables: []Table{
+			pgTable("users",
+				Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+				Column{Name: "role", Type: `"role"`, NotNull: true},
+			),
+		},
+	}
+	up, down := DiffSchemas(old, newS, "postgres")
+	assert.Contains(t, up, `ALTER TYPE "role" ADD VALUE 'moderator';`)
+	// down cannot trivially drop an enum value — must warn, not silently no-op.
+	assert.Contains(t, down, "WARNING")
+	assert.NotEqual(t, "", up)
+}
+
+func TestDiffSchemas_ShrinkStringEnum_Postgres_Warns(t *testing.T) {
+	old := Schema{
+		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user", "guest"}, BaseType: "string"}},
+		Tables: []Table{pgTable("users", Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true})},
+	}
+	newS := Schema{
+		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user"}, BaseType: "string"}},
+		Tables: []Table{pgTable("users", Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true})},
+	}
+	up, _ := DiffSchemas(old, newS, "postgres")
+	assert.Contains(t, up, "WARNING")
+	assert.Contains(t, up, "guest")
+}
+
+func TestDiffSchemas_GrowStringEnum_SQLiteNoAlterType(t *testing.T) {
+	// SQLite has no CREATE TYPE / ALTER TYPE; string enums never appear in
+	// s.Enums for SQLite, so growing one yields no ALTER TYPE here.
+	old := Schema{Tables: []Table{pgTable("users", Column{Name: "id", Type: "INTEGER PRIMARY KEY AUTOINCREMENT", NotNull: true, PK: true})}}
+	newS := Schema{Tables: []Table{pgTable("users", Column{Name: "id", Type: "INTEGER PRIMARY KEY AUTOINCREMENT", NotNull: true, PK: true})}}
+	up, _ := DiffSchemas(old, newS, "sqlite")
+	assert.NotContains(t, up, "ALTER TYPE")
+}
+
+func TestDiffSchemas_GrowIntEnum_ProducesMigration(t *testing.T) {
+	v1 := []ModelInfo{{
+		Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+			{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+				IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1"}},
+		},
+	}}
+	v2 := []ModelInfo{{
+		Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+			{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+				IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1", "2"}},
+		},
+	}}
+
+	for _, dialect := range []string{"postgres", "sqlite"} {
+		up, _ := DiffSchemas(BuildSchema(v1, dialect), BuildSchema(v2, dialect), dialect)
+		assert.NotEqual(t, "", up, "growing an int enum must not produce an empty migration on %s", dialect)
+		// The migration references the changed CHECK value set.
+		assert.Contains(t, up, "2", "migration should reference the newly added enum value on %s", dialect)
+	}
+}
+
+
