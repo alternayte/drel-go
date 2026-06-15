@@ -98,22 +98,28 @@ func (tx *Tx) TryAdvisoryLock(ctx context.Context, key int64) (bool, error) {
 }
 
 func (tx *Tx) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
+	ctx, endSpan := tx.engine.startSpan(ctx, "drel.exec")
 	start := time.Now()
 	n, err := tx.dbTx.Exec(ctx, sql, args...)
+	endSpan(err)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
 	return n, dberr.Classify(err)
 }
 
 func (tx *Tx) queryInternal(ctx context.Context, sql string, args ...any) (driver.Rows, error) {
+	ctx, endSpan := tx.engine.startSpan(ctx, "drel.query")
 	start := time.Now()
 	rows, err := tx.dbTx.Query(ctx, sql, args...)
+	endSpan(err)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), err)
 	return rows, dberr.Classify(err)
 }
 
 func (tx *Tx) queryRowInternal(ctx context.Context, sql string, args ...any) Row {
+	ctx, endSpan := tx.engine.startSpan(ctx, "drel.queryRow")
 	start := time.Now()
 	row := tx.dbTx.QueryRow(ctx, sql, args...)
+	endSpan(nil)
 	tx.engine.notifyQueryHooks(ctx, sql, args, time.Since(start), nil)
 	return classifyRow{row: row}
 }

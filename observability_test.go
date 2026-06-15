@@ -120,6 +120,69 @@ func TestObs_Tracer(t *testing.T) {
 	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
 }
 
+// TestObs_Tracer_TransactionPath verifies that executions inside an engine
+// Transaction emit tracing spans via the tx-path instrumentation (tx.execInternal,
+// tx.queryInternal, tx.queryRowInternal). The assertion is delta-based: we snapshot
+// len(tr.started) after setup (which itself emits a drel.exec span for the
+// CREATE TABLE) and then confirm that new spans were recorded only by the
+// in-transaction work. Removing the startSpan calls from tx.go must cause this
+// test to fail.
+func TestObs_Tracer_TransactionPath(t *testing.T) {
+	tr := &fakeTracer{}
+	engine := newObsEngine(t, drel.WithTracer(tr))
+	ctx := context.Background()
+
+	// Snapshot the span count after setup; CREATE TABLE already emitted spans.
+	tr.mu.Lock()
+	baseline := len(tr.started)
+	tr.mu.Unlock()
+
+	// Use tx.Exec (raw exec inside the transaction) to exercise tx.execInternal
+	// directly, guaranteeing a "drel.exec" span on the tx path regardless of
+	// which insert strategy the dialect chooses.
+	require.NoError(t, engine.Transaction(ctx, func(tx *drel.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO items (title) VALUES ('hello')`)
+		return err
+	}))
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	newSpans := tr.started[baseline:]
+	assert.NotEmpty(t, newSpans, "transaction path should emit at least one span")
+	assert.Contains(t, newSpans, "drel.exec",
+		"tx.Exec inside a transaction should emit a drel.exec span via tx-path instrumentation")
+	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
+}
+
+// TestObs_Tracer_BulkInsert verifies that BulkInsert emits tracing spans.
+// Like TestObs_Tracer_TransactionPath the assertion is delta-based: we
+// record the span count right after setup so that the CREATE TABLE span
+// already present does not satisfy the assertion for the bulk path.
+// Removing the startSpan call from bulk.go must cause this test to fail.
+func TestObs_Tracer_BulkInsert(t *testing.T) {
+	tr := &fakeTracer{}
+	engine := newObsEngine(t, drel.WithTracer(tr))
+	repo := drel.NewRepository(engine, sqliteItemMeta)
+	ctx := context.Background()
+
+	// Snapshot the span count after setup.
+	tr.mu.Lock()
+	baseline := len(tr.started)
+	tr.mu.Unlock()
+
+	// BulkInsert exercises a separate code path from the tracked-mutation path.
+	_, err := repo.BulkInsert(ctx, []*sqliteItem{{Title: "a"}, {Title: "b"}})
+	require.NoError(t, err)
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	newSpans := tr.started[baseline:]
+	assert.NotEmpty(t, newSpans, "BulkInsert should emit at least one span")
+	assert.Contains(t, newSpans, "drel.exec",
+		"BulkInsert should emit a drel.exec span for the batch statement")
+	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
+}
+
 func TestObs_N1Detector(t *testing.T) {
 	logger, buf := bufLogger()
 	engine := newObsEngine(t, drel.WithDevMode(), drel.WithLogger(logger))

@@ -207,9 +207,11 @@ func (r *Repository[T]) bulkInsert(ctx context.Context, entities []*T, withEvent
 		}
 
 		if copier, ok := dbTx.(driver.TxBulkCopier); ok {
+			spanCtx, endSpan := r.engine.startSpan(ctx, "drel.exec")
 			start := time.Now()
-			affected, copyErr := copier.CopyFrom(ctx, r.meta.Table, columns, rows)
-			r.engine.notifyQueryHooks(ctx, "COPY "+r.meta.Table, nil, time.Since(start), copyErr)
+			affected, copyErr := copier.CopyFrom(spanCtx, r.meta.Table, columns, rows)
+			endSpan(copyErr)
+			r.engine.notifyQueryHooks(spanCtx, "COPY "+r.meta.Table, nil, time.Since(start), copyErr)
 			if copyErr != nil {
 				return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(copyErr))
 			}
@@ -218,9 +220,11 @@ func (r *Repository[T]) bulkInsert(ctx context.Context, entities []*T, withEvent
 		}
 
 		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
+		spanCtx, endSpan := r.engine.startSpan(ctx, "drel.exec")
 		start := time.Now()
-		affected, execErr := dbTx.Exec(ctx, result.SQL, result.Args...)
-		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)
+		affected, execErr := dbTx.Exec(spanCtx, result.SQL, result.Args...)
+		endSpan(execErr)
+		r.engine.notifyQueryHooks(spanCtx, result.SQL, result.Args, time.Since(start), execErr)
 		if execErr != nil {
 			return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(execErr))
 		}
