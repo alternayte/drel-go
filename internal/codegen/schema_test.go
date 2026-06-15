@@ -618,3 +618,44 @@ func TestCreateTable_InlineCheck_SQLite(t *testing.T) {
 	// SQLite keeps the inline CHECK (no ALTER support; table rebuild required).
 	assert.Contains(t, sql, "CHECK(price > 0)")
 }
+
+// TestBuildTable_JSONAndArrayColumns asserts that buildTable assigns the correct
+// inferred SQL column type for JSON/array fields on both dialects:
+//   - []string (IsJSON+IsArray, no override) -> jsonb (Postgres) / TEXT (SQLite)
+//   - map[string]string (IsJSON, no override) -> jsonb (Postgres) / TEXT (SQLite)
+//   - []string with type=text[] override -> text[] verbatim (both dialects)
+//   - explicit type=jsonb override -> jsonb verbatim
+func TestBuildTable_JSONAndArrayColumns(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Doc",
+		TableName: "docs",
+		PKType:    "int",
+		Fields: []FieldInfo{
+			{Name: "Tags", GoType: "[]string", ColumnName: "tags", LocalGoType: "[]string", IsJSON: true, IsArray: true},
+			{Name: "Meta", GoType: "map[string]string", ColumnName: "meta", LocalGoType: "map[string]string", IsJSON: true},
+			{Name: "Arr", GoType: "[]string", ColumnName: "arr", LocalGoType: "[]string", IsJSON: true, IsArray: true, TypeOverride: "text[]"},
+			{Name: "Raw", GoType: "map[string]any", ColumnName: "raw", LocalGoType: "map[string]any", IsJSON: true, TypeOverride: "jsonb"},
+		},
+	}
+
+	pgCols := columnsByName(buildTable(m, nil, "postgres").Columns)
+	assert.Equal(t, "jsonb", pgCols["tags"].Type, "default slice -> jsonb on postgres")
+	assert.Equal(t, "jsonb", pgCols["meta"].Type, "default map -> jsonb on postgres")
+	assert.Equal(t, "text[]", pgCols["arr"].Type, "type=text[] override wins on postgres")
+	assert.Equal(t, "jsonb", pgCols["raw"].Type, "type=jsonb override")
+
+	sqCols := columnsByName(buildTable(m, nil, "sqlite").Columns)
+	assert.Equal(t, "TEXT", sqCols["tags"].Type, "slice -> TEXT (JSON) on sqlite")
+	assert.Equal(t, "TEXT", sqCols["meta"].Type, "map -> TEXT (JSON) on sqlite")
+	// type= override is dialect-agnostic verbatim; text[] on sqlite is the author's responsibility.
+	assert.Equal(t, "text[]", sqCols["arr"].Type)
+}
+
+// columnsByName indexes a column slice by column name for assertions.
+func columnsByName(cols []Column) map[string]Column {
+	m := make(map[string]Column, len(cols))
+	for _, c := range cols {
+		m[c.Name] = c
+	}
+	return m
+}
