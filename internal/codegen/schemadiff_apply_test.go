@@ -122,6 +122,40 @@ func TestDiffSchemas_NoChange(t *testing.T) {
 	assert.Empty(t, down)
 }
 
+// TestEnumDefault_AppliesToRealSQLite proves a parsed default= produces a usable
+// column DEFAULT: a NULL-omitting INSERT picks it up.
+func TestEnumDefault_AppliesToRealSQLite(t *testing.T) {
+	ctx := context.Background()
+	drv, err := sqlitedriver.New(":memory:")
+	require.NoError(t, err)
+	defer drv.Close()
+
+	models := []codegen.ModelInfo{{
+		Name: "Account", TableName: "accounts", PKType: "int",
+		Fields: []codegen.FieldInfo{
+			{Name: "Name", GoType: "string", ColumnName: "name", IsExported: true},
+			{Name: "Role", GoType: "accounts.Role", ColumnName: "role", LocalGoType: "Role",
+				IsExported: true, IsEnum: true, EnumBaseType: "string",
+				EnumValues: []string{"admin", "user"}, Default: "user"},
+		},
+	}}
+
+	_, err = drv.Exec(ctx, codegen.GenerateSchema(models, "sqlite"))
+	require.NoError(t, err)
+
+	// Insert without specifying role; the DEFAULT 'user' should apply.
+	_, err = drv.Exec(ctx, "INSERT INTO accounts (name) VALUES ('alice')")
+	require.NoError(t, err)
+
+	rows, err := drv.Query(ctx, "SELECT role FROM accounts WHERE name = 'alice'")
+	require.NoError(t, err)
+	defer rows.Close()
+	require.True(t, rows.Next())
+	var role string
+	require.NoError(t, rows.Scan(&role))
+	assert.Equal(t, "user", role)
+}
+
 // TestIntEnum_AppliesToRealSQLite proves the generated integer-enum DDL is valid
 // SQLite and that the unquoted numeric CHECK enforces the value set.
 func TestIntEnum_AppliesToRealSQLite(t *testing.T) {
