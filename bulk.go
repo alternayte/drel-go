@@ -69,6 +69,30 @@ func safeBatchSize(numCols int) int {
 	return n
 }
 
+// appendUniformRow validates that an entity's insert columns match the batch's
+// established column list (same names, same order, same length) and appends its
+// values. The first entity establishes `columns`. A mismatch is a loud error
+// rather than a silent positional bind against the wrong columns.
+func appendUniformRow(table string, columns *[]string, rows *[][]any, cols []string, vals []any) error {
+	if len(cols) != len(vals) {
+		return fmt.Errorf("drel: bulk %s: InsertColumns returned %d columns but %d values", table, len(cols), len(vals))
+	}
+	if *columns == nil {
+		*columns = cols
+	} else {
+		if len(cols) != len(*columns) {
+			return fmt.Errorf("drel: bulk %s: non-uniform column shape (%d vs %d columns); InsertColumns must return a fixed column set", table, len(cols), len(*columns))
+		}
+		for i := range cols {
+			if cols[i] != (*columns)[i] {
+				return fmt.Errorf("drel: bulk %s: non-uniform column shape (column %d %q vs %q); InsertColumns must return a fixed column set", table, i, cols[i], (*columns)[i])
+			}
+		}
+	}
+	*rows = append(*rows, vals)
+	return nil
+}
+
 // BulkInsert inserts multiple entities in batches, bypassing change tracking.
 // Returns the total number of rows affected.
 func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
@@ -98,12 +122,11 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 
 		var columns []string
 		var rows [][]any
-		for j, entity := range batch {
+		for _, entity := range batch {
 			cols, vals := r.meta.InsertColumns(entity)
-			if j == 0 {
-				columns = cols
+			if err := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); err != nil {
+				return 0, err
 			}
-			rows = append(rows, vals)
 		}
 
 		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
@@ -167,12 +190,11 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 
 		var columns []string
 		var rows [][]any
-		for j, entity := range batch {
+		for _, entity := range batch {
 			cols, vals := r.meta.InsertColumns(entity)
-			if j == 0 {
-				columns = cols
+			if err := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); err != nil {
+				return 0, err
 			}
-			rows = append(rows, vals)
 		}
 
 		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols)
