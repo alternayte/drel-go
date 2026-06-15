@@ -172,6 +172,13 @@ func (q *IncludableQuery[T]) WithoutFilter(name string) *IncludableQuery[T] {
 	return q.with(q.builder.WithoutFilter(name))
 }
 
+// Primary forces both the root query and all included sub-queries to read from
+// the primary connection instead of a read replica. Use it for read-your-writes
+// consistency immediately after a write. No effect when no replicas configured.
+func (q *IncludableQuery[T]) Primary() *IncludableQuery[T] {
+	return q.with(q.builder.Primary())
+}
+
 func (q *IncludableQuery[T]) loadInto(ctx context.Context, entities []*T) error {
 	if len(entities) == 0 {
 		return nil
@@ -183,6 +190,7 @@ func (q *IncludableQuery[T]) loadInto(ctx context.Context, entities []*T) error 
 	exec := &includeExecutor{
 		engine:     q.repo.engine,
 		parentMeta: ToMetaBase(&q.repo.meta),
+		primary:    q.builder.primary,
 	}
 	return exec.loadRelations(ctx, parents, q.includes)
 }
@@ -229,6 +237,7 @@ func (q *IncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
 type includeExecutor struct {
 	engine     *Engine
 	parentMeta *ModelMetaBase
+	primary    bool // route sub-queries to the primary (forced by .Primary() or a UoW)
 }
 
 func (ie *includeExecutor) loadRelations(ctx context.Context, parents []any, includes []IncludeSpec) error {
@@ -263,6 +272,7 @@ func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc 
 		childExec := &includeExecutor{
 			engine:     ie.engine,
 			parentMeta: inc.rel.RelatedMeta,
+			primary:    ie.primary,
 		}
 		if err := childExec.loadRelations(ctx, related, inc.then); err != nil {
 			return err
@@ -465,7 +475,7 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 		}
 
 		result := ie.engine.dialect().BuildSelect(node)
-		rows, err := ie.engine.queryInternal(ctx, result.SQL, result.Args...)
+		rows, err := ie.engine.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
 		if err != nil {
 			return nil, err
 		}
@@ -528,7 +538,7 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 		}
 
 		result := ie.engine.dialect().BuildSelect(node)
-		rows, err := ie.engine.queryInternal(ctx, result.SQL, result.Args...)
+		rows, err := ie.engine.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
 		if err != nil {
 			return nil, err
 		}

@@ -556,10 +556,27 @@ type timeoutRows struct {
 	cancel context.CancelFunc
 }
 
-func (r timeoutRows) Next() bool          { return r.rows.Next() }
-func (r timeoutRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
-func (r timeoutRows) Err() error          { return r.rows.Err() }
+func (r timeoutRows) Next() bool {
+	if r.rows == nil {
+		return false
+	}
+	return r.rows.Next()
+}
+func (r timeoutRows) Scan(dest ...any) error {
+	if r.rows == nil {
+		return nil
+	}
+	return r.rows.Scan(dest...)
+}
+func (r timeoutRows) Err() error {
+	if r.rows == nil {
+		return nil
+	}
+	return r.rows.Err()
+}
 func (r timeoutRows) Close() {
-	r.rows.Close()
+	if r.rows != nil {
+		r.rows.Close()
+	}
 	r.cancel()
 }
