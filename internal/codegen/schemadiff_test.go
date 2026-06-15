@@ -1,9 +1,11 @@
 package codegen
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // helper column/table builders ----------------------------------------------
@@ -473,6 +475,45 @@ func TestDiffSchemas_GrowIntEnum_ProducesMigration(t *testing.T) {
 		// The migration references the changed CHECK value set.
 		assert.Contains(t, up, "2", "migration should reference the newly added enum value on %s", dialect)
 	}
+}
+
+func TestDiffSchemas_DropToEmpty_CoversPivotsAndEnums(t *testing.T) {
+	desired := Schema{
+		Enums: []EnumDef{{Name: "status", Values: []string{"active", "archived"}}},
+		Tables: []Table{
+			pgTable("users", Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true}),
+			pgTable("roles", Column{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true}),
+			{
+				Name: "users_roles",
+				Columns: []Column{
+					{Name: "user_id", Type: "bigint", NotNull: true, Ref: "users"},
+					{Name: "role_id", Type: "bigint", NotNull: true, Ref: "roles"},
+				},
+				PrimaryKey: []string{"user_id", "role_id"},
+			},
+		},
+	}
+
+	// up = drop everything; down = recreate everything.
+	up, down := DiffSchemas(desired, Schema{}, "postgres")
+
+	// The first-migration DOWN is this "up" (drop) direction.
+	assert.Contains(t, up, `DROP TABLE IF EXISTS "users_roles";`)
+	assert.Contains(t, up, `DROP TABLE IF EXISTS "users";`)
+	assert.Contains(t, up, `DROP TABLE IF EXISTS "roles";`)
+	assert.Contains(t, up, `DROP TYPE "status";`)
+
+	// All three tables must appear in the drop output.
+	pivotIdx := strings.Index(up, `DROP TABLE IF EXISTS "users_roles";`)
+	usersIdx := strings.Index(up, `DROP TABLE IF EXISTS "users";`)
+	require.Greater(t, pivotIdx, -1)
+	require.Greater(t, usersIdx, -1)
+
+	// Enum DROP TYPE comes after the tables that use it (at the end of the output).
+	enumIdx := strings.Index(up, `DROP TYPE "status";`)
+	assert.Less(t, usersIdx, enumIdx, "DROP TYPE must come after table drops")
+
+	_ = down // down (recreate) is exercised by other tests
 }
 
 
