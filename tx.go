@@ -386,6 +386,24 @@ func (q *TxQueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 	return node
 }
 
+// queryRows runs a built SELECT on the transaction connection. Implements the
+// projectable interface used by Select/GroupBy.
+func (q *TxQueryBuilder[T]) queryRows(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return q.tx.queryInternal(ctx, sql, args...)
+}
+
+// queryRow runs a built single-row SELECT on the transaction connection.
+// Implements the projectable interface used by Aggregate.
+func (q *TxQueryBuilder[T]) queryRow(ctx context.Context, sql string, args ...any) Row {
+	return q.tx.queryRowInternal(ctx, sql, args...)
+}
+
+// metaPtr returns the model metadata. Implements the projectable interface.
+func (q *TxQueryBuilder[T]) metaPtr() *ModelMeta[T] { return q.meta }
+
+// projectionDialect returns the dialect for building projection SQL.
+func (q *TxQueryBuilder[T]) projectionDialect() dialect.Dialect { return q.tx.engine.dialect() }
+
 // Unscoped returns a new builder with all global filters removed.
 func (q *TxQueryBuilder[T]) Unscoped() *TxQueryBuilder[T] {
 	c := q.clone()

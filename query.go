@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dialect"
 )
 
 // ErrNotFound is returned when a query expects a result but finds none.
@@ -194,6 +195,24 @@ func (q *QueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 
 	return node
 }
+
+// queryRows runs a built SELECT on the engine, honoring the builder's primary
+// routing flag. Implements the projectable interface used by Select/GroupBy.
+func (q *QueryBuilder[T]) queryRows(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return q.engine.queryRouted(ctx, q.primary, sql, args...)
+}
+
+// queryRow runs a built single-row SELECT on the engine, honoring primary
+// routing. Implements the projectable interface used by Aggregate.
+func (q *QueryBuilder[T]) queryRow(ctx context.Context, sql string, args ...any) Row {
+	return q.engine.queryRowRouted(ctx, q.primary, sql, args...)
+}
+
+// metaPtr returns the model metadata. Implements the projectable interface.
+func (q *QueryBuilder[T]) metaPtr() *ModelMeta[T] { return q.meta }
+
+// projectionDialect returns the dialect for building projection SQL. Implements the projectable interface.
+func (q *QueryBuilder[T]) projectionDialect() dialect.Dialect { return q.engine.dialect() }
 
 // Unscoped returns a new builder with all global filters removed.
 func (q *QueryBuilder[T]) Unscoped() *QueryBuilder[T] {

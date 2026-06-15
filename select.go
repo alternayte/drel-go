@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dialect"
 )
 
 // ColumnRef identifies a database column for use in Select projections.
@@ -78,10 +79,21 @@ func replaceAllDoubleQuote(s string) string {
 	return string(out)
 }
 
+// projectable is satisfied by both *QueryBuilder[T] and *TxQueryBuilder[T],
+// letting Select/Aggregate/GroupBy run against either the engine or an active
+// transaction. It is unexported so it is not part of the public API.
+type projectable[T any] interface {
+	buildAST(ast.QueryType) ast.SelectNode
+	metaPtr() *ModelMeta[T]
+	projectionDialect() dialect.Dialect
+	queryRows(ctx context.Context, sql string, args ...any) (Rows, error)
+	queryRow(ctx context.Context, sql string, args ...any) Row
+}
+
 // Select executes a projection query, returning only specified columns into DTO type R.
-// Because Go does not allow new type parameters on methods, this is a standalone function
-// that takes a *QueryBuilder[T] and projects into a different type R.
-func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...ColumnRef) ([]*R, error) {
+// It accepts either an engine-level *QueryBuilder[T] or a transaction-bound
+// *TxQueryBuilder[T]; in the latter case the projection runs inside the transaction.
+func Select[R any, T any](ctx context.Context, q projectable[T], cols ...ColumnRef) ([]*R, error) {
 	plan := getScanPlan(reflect.TypeOf((*R)(nil)).Elem())
 
 	colNames := make([]string, len(cols))
@@ -96,8 +108,8 @@ func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...Colum
 	node := q.buildAST(ast.QuerySelect)
 	node.Columns = colNames
 
-	result := q.engine.dialect().BuildSelect(node)
-	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
+	result := q.projectionDialect().BuildSelect(node)
+	rows, err := q.queryRows(ctx, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +169,8 @@ func CountDistinct(col ColumnRef) AggExpr {
 }
 
 // Aggregate executes a single aggregate function and returns the scalar result.
-func Aggregate[R any, T any](ctx context.Context, q *QueryBuilder[T], agg AggExpr) (R, error) {
+// Accepts an engine-level *QueryBuilder[T] or a transaction-bound *TxQueryBuilder[T].
+func Aggregate[R any, T any](ctx context.Context, q projectable[T], agg AggExpr) (R, error) {
 	var zero R
 	node := q.buildAST(ast.QuerySelect)
 	node.Columns = nil
@@ -165,8 +178,8 @@ func Aggregate[R any, T any](ctx context.Context, q *QueryBuilder[T], agg AggExp
 		{Func: agg.fn, Column: agg.column, Alias: "result", Distinct: agg.distinct, CoalesceZero: agg.coalesceZero},
 	}
 
-	result := q.engine.dialect().BuildSelect(node)
-	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
+	result := q.projectionDialect().BuildSelect(node)
+	row := q.queryRow(ctx, result.SQL, result.Args...)
 	var val R
 	if err := row.Scan(&val); err != nil {
 		return zero, fmt.Errorf("drel: aggregate: %w", err)
@@ -208,7 +221,8 @@ func Having(pred Predicate) GroupByOpt {
 }
 
 // GroupBy executes a GROUP BY query with aggregates, returning results as []*R.
-func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []GroupSpec, aggs []AliasedAgg, opts ...GroupByOpt) ([]*R, error) {
+// Accepts an engine-level *QueryBuilder[T] or a transaction-bound *TxQueryBuilder[T].
+func GroupBy[R any, T any](ctx context.Context, q projectable[T], groups []GroupSpec, aggs []AliasedAgg, opts ...GroupByOpt) ([]*R, error) {
 	cfg := &groupByConfig{}
 	for _, opt := range opts {
 		opt(cfg)
@@ -253,8 +267,8 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 		node.Having = &clause
 	}
 
-	result := q.engine.dialect().BuildSelect(node)
-	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
+	result := q.projectionDialect().BuildSelect(node)
+	rows, err := q.queryRows(ctx, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
