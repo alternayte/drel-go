@@ -431,6 +431,12 @@ func (e *Engine) dialect() dialect.Dialect {
 	return e.dia
 }
 
+// DialectName reports the engine's dialect: "postgres" or "sqlite".
+// libSQL/Turso reuse the SQLite dialect, so they also report "sqlite".
+func (e *Engine) DialectName() string {
+	return e.dia.Name()
+}
+
 // startSpan begins a tracing span for a query if a tracer is configured.
 // It returns the (possibly augmented) context and a no-op-safe end function.
 func (e *Engine) startSpan(ctx context.Context, name string) (context.Context, func(err error)) {
