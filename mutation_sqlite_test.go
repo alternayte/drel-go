@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -382,4 +384,51 @@ func TestTransaction_HookAddedEntityEventReachesAfterCommit(t *testing.T) {
 	assert.Contains(t, received, eventItemCreated{Title: "main"})
 	assert.Contains(t, received, eventItemCreated{Title: "audit"})
 	assert.Len(t, received, 2, "no event dropped, none double-dispatched")
+}
+
+func TestSQLiteMutation_Insert_UsesReturning(t *testing.T) {
+	var captured []string
+	engine, err := drel.NewEngine(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { engine.Close() })
+	engine.OnQuery(func(_ context.Context, ev drel.QueryEvent) { captured = append(captured, ev.SQL) })
+
+	ctx := context.Background()
+	_, err = engine.Exec(ctx, `
+		CREATE TABLE items (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			title      TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`)
+	require.NoError(t, err)
+
+	item := &sqliteItem{Title: "Returning"}
+	err = engine.Transaction(ctx, func(tx *drel.Tx) error {
+		drel.NewTxRepository(tx, sqliteItemMeta).Add(item)
+		return tx.SaveChanges(ctx)
+	})
+	require.NoError(t, err)
+	assert.NotZero(t, item.ID)
+
+	// At least one captured statement is an INSERT ... RETURNING; none is a
+	// last_insert_rowid() readback.
+	var sawReturningInsert, sawRowidReadback bool
+	for _, sql := range captured {
+		if strings.Contains(sql, "INSERT INTO") && strings.Contains(sql, "RETURNING") {
+			sawReturningInsert = true
+		}
+		if strings.Contains(sql, "last_insert_rowid()") {
+			sawRowidReadback = true
+		}
+	}
+	assert.True(t, sawReturningInsert, "insert must use RETURNING; captured=%v", captured)
+	assert.False(t, sawRowidReadback, "insert must not use last_insert_rowid() readback; captured=%v", captured)
+}
+
+func TestMutation_NoLastInsertRowidReadback(t *testing.T) {
+	src, err := os.ReadFile("mutation.go")
+	require.NoError(t, err)
+	assert.NotContains(t, string(src), "last_insert_rowid()",
+		"the fragile last_insert_rowid() readback must be removed in favor of RETURNING")
 }

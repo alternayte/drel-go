@@ -58,22 +58,22 @@ func TestDialect_Now_SQLite(t *testing.T) {
 
 // ─── SQLite dialect mutation SQL shapes ─────────────────────────────────────
 
-func TestSQLite_BuildInsert_IgnoresReturning(t *testing.T) {
+func TestSQLite_BuildInsert_EmitsReturning(t *testing.T) {
 	sq := dialectsqlite.New()
 	result := sq.BuildInsert("users", []string{"name", "email"}, []any{"Alice", "alice@test.com"}, []string{"id", "created_at", "updated_at"})
-	assert.NotContains(t, result.SQL, "RETURNING")
-	assert.Equal(t, `INSERT INTO "users" ("name", "email") VALUES (?, ?)`, result.SQL)
+	assert.Contains(t, result.SQL, "RETURNING")
+	assert.Equal(t, `INSERT INTO "users" ("name", "email") VALUES (?, ?) RETURNING "id", "created_at", "updated_at"`, result.SQL)
 }
 
-func TestSQLite_BuildUpdateVersioned_NoReturning(t *testing.T) {
+func TestSQLite_BuildUpdateVersioned_EmitsReturning(t *testing.T) {
 	sq := dialectsqlite.New()
 	result := sq.BuildUpdateVersioned("items",
 		[]dialect.ColumnValue{{Column: "name", Value: "Widget"}},
 		"id", 3, "version", 2,
 	)
-	assert.NotContains(t, result.SQL, "RETURNING")
+	assert.Contains(t, result.SQL, "RETURNING")
 	assert.Equal(t,
-		`UPDATE "items" SET "name" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		`UPDATE "items" SET "name" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ? RETURNING "version"`,
 		result.SQL,
 	)
 	assert.Equal(t, []any{"Widget", 3, 2}, result.Args)

@@ -30,7 +30,7 @@ func dedupLastWins(changes []dialect.ColumnValue) []dialect.ColumnValue {
 	return out
 }
 
-func (s *SQLite) SupportsReturning() bool        { return false }
+func (s *SQLite) SupportsReturning() bool        { return true }
 func (s *SQLite) UsesQuestionPlaceholders() bool { return true }
 
 func (s *SQLite) Now() string { return "CURRENT_TIMESTAMP" }
@@ -348,7 +348,7 @@ func operatorToSQL(op ast.Operator) string {
 	}
 }
 
-func (s *SQLite) BuildInsert(table string, columns []string, values []any, _ []string) dialect.Result {
+func (s *SQLite) BuildInsert(table string, columns []string, values []any, returningCols []string) dialect.Result {
 	var b strings.Builder
 	b.WriteString("INSERT INTO ")
 	b.WriteString(quoteIdent(table))
@@ -367,7 +367,16 @@ func (s *SQLite) BuildInsert(table string, columns []string, values []any, _ []s
 		b.WriteString("?")
 	}
 	b.WriteString(")")
-	// SQLite does not support RETURNING; returningCols is ignored.
+	// SQLite 3.35+ (and libSQL/Turso) support RETURNING.
+	if len(returningCols) > 0 {
+		b.WriteString(" RETURNING ")
+		for i, col := range returningCols {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(quoteIdent(col))
+		}
+	}
 	return dialect.Result{SQL: b.String(), Args: values}
 }
 
@@ -407,32 +416,34 @@ func (s *SQLite) BuildSoftDelete(table string, pkColumn string, pkValue any) dia
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
-// BuildDeleteVersioned generates a versioned DELETE for SQLite. SQLite does not
-// support RETURNING here, so the caller detects a concurrency conflict via the
-// affected-row count.
+// BuildDeleteVersioned generates a versioned DELETE for SQLite. SQLite 3.35+
+// supports RETURNING; the primary key is returned so the mutation layer can
+// detect a concurrency conflict via no-rows (mirroring Postgres).
 func (s *SQLite) BuildDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
 	sql := fmt.Sprintf(
-		"DELETE FROM %s WHERE %s = ? AND %s = ?",
-		quoteIdent(table), quoteIdent(pkColumn), quoteIdent(versionCol),
+		"DELETE FROM %s WHERE %s = ? AND %s = ? RETURNING %s",
+		quoteIdent(table), quoteIdent(pkColumn), quoteIdent(versionCol), quoteIdent(pkColumn),
 	)
 	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
 }
 
-// BuildSoftDeleteVersioned generates a versioned soft-delete for SQLite. The
-// caller detects a concurrency conflict via the affected-row count.
+// BuildSoftDeleteVersioned generates a versioned soft-delete for SQLite.
+// SQLite 3.35+ supports RETURNING; the primary key is returned so the mutation
+// layer can detect a concurrency conflict via no-rows (mirroring Postgres).
 func (s *SQLite) BuildSoftDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
 	sql := fmt.Sprintf(
-		"UPDATE %s SET %s = CURRENT_TIMESTAMP, %s = %s + 1 WHERE %s = ? AND %s = ?",
+		"UPDATE %s SET %s = CURRENT_TIMESTAMP, %s = %s + 1 WHERE %s = ? AND %s = ? RETURNING %s",
 		quoteIdent(table), quoteIdent("deleted_at"),
 		quoteIdent(versionCol), quoteIdent(versionCol),
 		quoteIdent(pkColumn), quoteIdent(versionCol),
+		quoteIdent(pkColumn),
 	)
 	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
 }
 
-// BuildUpdateVersioned generates a versioned UPDATE for SQLite.
-// SQLite does not support RETURNING, so the new version cannot be retrieved
-// from the statement itself; the caller must increment the version client-side.
+// BuildUpdateVersioned generates a versioned UPDATE for SQLite. SQLite 3.35+
+// supports RETURNING, so the new version is returned and read back by the
+// mutation layer (mirroring Postgres).
 func (s *SQLite) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
 	changes = dedupLastWins(changes)
 	var b strings.Builder
@@ -462,7 +473,10 @@ func (s *SQLite) BuildUpdateVersioned(table string, changes []dialect.ColumnValu
 	b.WriteString(fmt.Sprintf(" AND %s = ?", quoteIdent(versionCol)))
 	args = append(args, currentVersion)
 
-	// No RETURNING clause — SQLite does not support it.
+	// SQLite 3.35+ supports RETURNING; surface the incremented version so the
+	// mutation layer can read it back like Postgres.
+	b.WriteString(fmt.Sprintf(" RETURNING %s", quoteIdent(versionCol)))
+
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 

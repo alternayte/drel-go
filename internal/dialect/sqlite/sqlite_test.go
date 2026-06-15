@@ -13,7 +13,7 @@ func intPtr(n int) *int { return &n }
 // ─── SupportsReturning ────────────────────────────────────────────────────────
 
 func TestSQLite_SupportsReturning(t *testing.T) {
-	assert.False(t, New().SupportsReturning())
+	assert.True(t, New().SupportsReturning())
 }
 
 // ─── Now ─────────────────────────────────────────────────────────────────────
@@ -573,8 +573,14 @@ func TestSQLite_BuildInsert(t *testing.T) {
 		assert.Equal(t, []any{"Alice", "alice@example.com"}, r.Args)
 	})
 
-	t.Run("returningCols ignored", func(t *testing.T) {
-		r := s.BuildInsert("users", []string{"name"}, []any{"Bob"}, []string{"id", "created_at"})
+	t.Run("returningCols emit RETURNING", func(t *testing.T) {
+		r := s.BuildInsert("users", []string{"name"}, []any{"Bob"}, []string{"id", "created_at", "updated_at"})
+		assert.Equal(t, `INSERT INTO "users" ("name") VALUES (?) RETURNING "id", "created_at", "updated_at"`, r.SQL)
+		assert.Equal(t, []any{"Bob"}, r.Args)
+	})
+
+	t.Run("no returningCols omits RETURNING", func(t *testing.T) {
+		r := s.BuildInsert("users", []string{"name"}, []any{"Bob"}, nil)
 		assert.Equal(t, `INSERT INTO "users" ("name") VALUES (?)`, r.SQL)
 		assert.NotContains(t, r.SQL, "RETURNING")
 	})
@@ -638,11 +644,10 @@ func TestSQLite_BuildUpdateVersioned(t *testing.T) {
 		"id", 3, "version", 2,
 	)
 	assert.Equal(t,
-		`UPDATE "items" SET "name" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		`UPDATE "items" SET "name" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ? RETURNING "version"`,
 		r.SQL,
 	)
 	assert.Equal(t, []any{"Widget", 3, 2}, r.Args)
-	assert.NotContains(t, r.SQL, "RETURNING")
 }
 
 // ─── BuildBulkInsert ─────────────────────────────────────────────────────────
@@ -942,7 +947,7 @@ func TestSQLite_BuildUpdateVersioned_DeduplicatesColumns(t *testing.T) {
 		},
 		"id", 5, "version", 2)
 	assert.Equal(t,
-		`UPDATE "a_products" SET "name" = ?, "updated_by" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		`UPDATE "a_products" SET "name" = ?, "updated_by" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ? RETURNING "version"`,
 		res.SQL)
 	assert.Equal(t, []any{"x", "bob", 5, 2}, res.Args)
 }
@@ -951,7 +956,7 @@ func TestSQLite_BuildDeleteVersioned(t *testing.T) {
 	s := New()
 	res := s.BuildDeleteVersioned("v_products", "id", 7, "version", 3)
 	assert.Equal(t,
-		`DELETE FROM "v_products" WHERE "id" = ? AND "version" = ?`,
+		`DELETE FROM "v_products" WHERE "id" = ? AND "version" = ? RETURNING "id"`,
 		res.SQL)
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
@@ -960,7 +965,7 @@ func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
 	s := New()
 	res := s.BuildSoftDeleteVersioned("v_products", "id", 7, "version", 3)
 	assert.Equal(t,
-		`UPDATE "v_products" SET "deleted_at" = CURRENT_TIMESTAMP, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		`UPDATE "v_products" SET "deleted_at" = CURRENT_TIMESTAMP, "version" = "version" + 1 WHERE "id" = ? AND "version" = ? RETURNING "id"`,
 		res.SQL)
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
