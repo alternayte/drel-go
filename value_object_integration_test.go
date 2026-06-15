@@ -31,14 +31,14 @@ func voZeroNullRoundTrip(t *testing.T, engine *drel.Engine, dialect string, null
 	require.NoError(t, err, "create nullable-email accounts table")
 
 	// Build a meta that targets the nullable table.
-	nullMeta := vomodels.AccountMeta
+	nullMeta := vomodels.UserAccountMeta
 	nullMeta.Table = "accounts_nullable"
 
 	// Insert an account with a zero Email (zero value, not constructed via NewEmail).
 	var id int
 	err = engine.Transaction(ctx, func(tx *drel.Tx) error {
 		repo := drel.NewTxRepository(tx, nullMeta)
-		a := vomodels.NewAccount(vomodels.Email{}, vomodels.NewCents(42))
+		a := vomodels.NewUserAccount(vomodels.Email{}, vomodels.NewCents(42))
 		repo.Add(a)
 		if err := tx.SaveChanges(ctx); err != nil {
 			return err
@@ -72,8 +72,8 @@ func voRoundTrip(t *testing.T, engine *drel.Engine, dialect string) {
 	// Insert.
 	var id int
 	err = engine.Transaction(ctx, func(tx *drel.Tx) error {
-		repo := drel.NewTxRepository(tx, vomodels.AccountMeta)
-		a := vomodels.NewAccount(email, vomodels.NewCents(1000))
+		repo := drel.NewTxRepository(tx, vomodels.UserAccountMeta)
+		a := vomodels.NewUserAccount(email, vomodels.NewCents(1000))
 		repo.Add(a)
 		if err := tx.SaveChanges(ctx); err != nil {
 			return err
@@ -86,21 +86,21 @@ func voRoundTrip(t *testing.T, engine *drel.Engine, dialect string) {
 	// Prove the int64-backed VO stored as an integer, not text: arithmetic in SQL
 	// must work (it would error/compare lexically on a TEXT column).
 	row := engine.QueryRow(ctx,
-		"SELECT balance + 1 FROM accounts WHERE id = "+voPlaceholder(dialect, 1), id)
+		"SELECT balance + 1 FROM user_accounts WHERE id = "+voPlaceholder(dialect, 1), id)
 	var balPlus int64
 	require.NoError(t, row.Scan(&balPlus))
 	assert.Equal(t, int64(1001), balPlus, "balance must be stored as an integer column")
 
 	// Query by VO equality (Where(Accounts.Email.Eq(vo))).
-	repo := drel.NewRepository(engine, vomodels.AccountMeta)
-	got, err := repo.Where(vomodels.Accounts.Email.Eq(email)).First(ctx)
+	repo := drel.NewRepository(engine, vomodels.UserAccountMeta)
+	got, err := repo.Where(vomodels.UserAccounts.Email.Eq(email)).First(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "alice@example.com", got.Email().String())
 	assert.Equal(t, int64(1000), got.Balance().Int64())
 
 	// Mutate via a tracked unit of work and SaveChanges; diff must fire.
 	err = engine.Transaction(ctx, func(tx *drel.Tx) error {
-		trepo := drel.NewTxRepository(tx, vomodels.AccountMeta)
+		trepo := drel.NewTxRepository(tx, vomodels.UserAccountMeta)
 		acc, err := trepo.Find(ctx, id)
 		if err != nil {
 			return err
@@ -110,7 +110,7 @@ func voRoundTrip(t *testing.T, engine *drel.Engine, dialect string) {
 	})
 	require.NoError(t, err)
 
-	after, err := drel.NewRepository(engine, vomodels.AccountMeta).Find(ctx, id)
+	after, err := drel.NewRepository(engine, vomodels.UserAccountMeta).Find(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2500), after.Balance().Int64())
 }
@@ -150,7 +150,7 @@ func TestIntegration_ValueObject_RoundTrip_Postgres(t *testing.T) {
 	ctx := context.Background()
 	// email is nullable: Email has IsZero() -> Value() returns nil for zero ->
 	// codegen now emits email without NOT NULL. A non-zero email still stores fine.
-	_, err := engine.Exec(ctx, `CREATE TABLE accounts (
+	_, err := engine.Exec(ctx, `CREATE TABLE user_accounts (
 		id         SERIAL PRIMARY KEY,
 		email      text,
 		balance    bigint NOT NULL,
@@ -166,7 +166,7 @@ func TestIntegration_ValueObject_RoundTrip_SQLite(t *testing.T) {
 	engine := dreltest.NewSQLite(t)
 	ctx := context.Background()
 	// email is nullable to match codegen output (HasIsZero -> no NOT NULL).
-	_, err := engine.Exec(ctx, `CREATE TABLE accounts (
+	_, err := engine.Exec(ctx, `CREATE TABLE user_accounts (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		email      TEXT,
 		balance    INTEGER NOT NULL,
