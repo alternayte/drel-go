@@ -36,6 +36,14 @@ func (s *SQLite) Now() string { return "CURRENT_TIMESTAMP" }
 
 func (s *SQLite) Explain(query string) (string, bool) { return "", false }
 
+// AdvisoryLockSQL reports that SQLite has no advisory-lock primitive. SQLite
+// serializes writers at the database level, so the runtime treats advisory
+// locks as a documented no-op (returns supported=false). The mode argument is
+// ignored.
+func (s *SQLite) AdvisoryLockSQL(key int64, mode dialect.AdvisoryLockMode) (dialect.Result, bool) {
+	return dialect.Result{}, false
+}
+
 func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 	var b strings.Builder
 	var args []any

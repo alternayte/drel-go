@@ -995,3 +995,14 @@ func TestSQLite_BuildSelect_PartitionLimit(t *testing.T) {
 	assert.Equal(t, want, result.SQL)
 	assert.Equal(t, []any{1, 2}, result.Args)
 }
+
+func TestSQLite_AdvisoryLockSQL_Unsupported(t *testing.T) {
+	s := New()
+	res, supported := s.AdvisoryLockSQL(42, dialect.AdvisoryLockBlocking)
+	assert.False(t, supported)
+	assert.Equal(t, dialect.Result{}, res)
+
+	res, supported = s.AdvisoryLockSQL(42, dialect.AdvisoryLockTry)
+	assert.False(t, supported)
+	assert.Equal(t, dialect.Result{}, res)
+}
