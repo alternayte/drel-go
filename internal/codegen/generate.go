@@ -44,8 +44,12 @@ func Generate(configPath string) error {
 		cfgDir = abs
 	}
 
-	scanDir := ResolveModuleRoot(cfgDir)
-	models, err := ScanPackages(cfg.Packages, scanDir)
+	// Patterns in drel.yaml (e.g. ./models) are resolved relative to the
+	// directory that contains the config file. go/packages.Load discovers the
+	// module root on its own from the working directory, so cfgDir is the
+	// correct base — NOT ResolveModuleRoot(cfgDir), which would resolve
+	// ./models relative to the repo root when the config lives in a subdir.
+	models, err := ScanPackages(cfg.Packages, cfgDir)
 	if err != nil {
 		return err
 	}

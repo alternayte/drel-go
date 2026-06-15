@@ -260,3 +260,51 @@ output:
 	assert.FileExists(t, filepath.Join(dir, "models", "user_drel.go"))
 	assert.FileExists(t, filepath.Join(dir, "db", "drel_gen.go"))
 }
+
+// TestGoGenerate_InvokesCodegen_SubdirLayout proves that //go:generate works
+// when drel.yaml lives in a subdirectory of the module root — the layout every
+// example uses (e.g. examples/getting-started/ inside the repo root).
+// Before the fix, `drel generate` resolved ./models relative to the module root
+// (found by walking up from cfgDir to the nearest go.mod), so a config in
+// <module>/app/ with packages: [./models] looked for <module>/models, not
+// <module>/app/models.
+func TestGoGenerate_InvokesCodegen_SubdirLayout(t *testing.T) {
+	moduleRoot := findModuleRoot(t)
+
+	// dir is the module root for the temp test project.
+	dir := setupGenerateModule(t, map[string]string{
+		// The "app" subdirectory mirrors how examples sit inside the repo root.
+		"app/models/user.go": `package models
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		// drel.yaml and the go:generate file live inside the subdirectory.
+		"app/drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+		// gen.go carries the directive; go generate sets GOFILE/cwd to app/.
+		"app/gen.go": `package app
+
+//go:generate go run ` + moduleRoot + `/cmd/drel generate
+`,
+	})
+
+	// Run go generate from the module root (as `go generate ./examples/...`
+	// does in the real repo), which processes app/gen.go.
+	cmd := exec.Command("go", "generate", "./...")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "go generate ./... from module root failed: %s", string(out))
+
+	assert.FileExists(t, filepath.Join(dir, "app", "models", "user_drel.go"),
+		"model file must be generated relative to config dir, not module root")
+	assert.FileExists(t, filepath.Join(dir, "app", "db", "drel_gen.go"),
+		"db file must be generated relative to config dir, not module root")
+}

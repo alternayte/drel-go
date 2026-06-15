@@ -30,8 +30,8 @@ func watchDirs(configPath string) ([]string, error) {
 		cfgDir = abs
 	}
 
-	scanDir := ResolveModuleRoot(cfgDir)
-	models, err := ScanPackages(cfg.Packages, scanDir)
+	// Patterns are resolved relative to the config directory, matching Generate.
+	models, err := ScanPackages(cfg.Packages, cfgDir)
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +188,11 @@ func quickWatchDirs(configPath string) (skip map[string]bool, dirs []string, err
 		}
 		cfgDir = abs
 	}
-	moduleRoot := ResolveModuleRoot(cfgDir)
 
 	seen := make(map[string]bool)
 	for _, pat := range cfg.Packages {
-		// Strip the leading ./ if present; filepath.Join handles it correctly.
-		d := filepath.Join(moduleRoot, pat)
+		// Patterns are resolved relative to the config directory, matching Generate.
+		d := filepath.Join(cfgDir, pat)
 		if seen[d] {
 			continue
 		}
@@ -204,18 +203,3 @@ func quickWatchDirs(configPath string) (skip map[string]bool, dirs []string, err
 	return skip, dirs, nil
 }
 
-// watchSkipAndDirs resolves the DB-output basename to skip and the directories
-// to watch for a config by running a full ScanPackages. Used by watchDirs (which
-// is tested in isolation) but NOT by the hot poll loop in GenerateWatch.
-func watchSkipAndDirs(configPath string) (skip map[string]bool, dirs []string, err error) {
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	skip = map[string]bool{filepath.Base(cfg.Output.DB): true}
-	dirs, err = watchDirs(configPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	return skip, dirs, nil
-}

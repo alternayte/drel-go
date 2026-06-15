@@ -221,7 +221,9 @@ func TestResolveModuleRoot_NoGoMod_FallsBackToStart(t *testing.T) {
 
 func TestGenerate_ConfigInSubdirOfModule(t *testing.T) {
 	dir := setupGenerateModule(t, map[string]string{
-		"models/product.go": `package models
+		// Models live under the config subdirectory — packages in drel.yaml are
+		// resolved relative to the config file's directory, not the module root.
+		"config/models/product.go": `package models
 
 import "github.com/alternayte/drel"
 
@@ -237,12 +239,12 @@ output:
 `,
 	})
 
-	// Config lives in <module>/config, packages are relative to the module root.
+	// Config lives in <module>/config; ./models resolves to <module>/config/models.
 	err := Generate(filepath.Join(dir, "config", "drel.yaml"))
 	require.NoError(t, err)
 
-	// Model file is written next to the scanned package (module-rooted).
-	assert.FileExists(t, filepath.Join(dir, "models", "product_drel.go"))
+	// Model file is written next to the scanned package (config-dir-rooted).
+	assert.FileExists(t, filepath.Join(dir, "config", "models", "product_drel.go"))
 	// DB output stays anchored to the config's directory.
 	assert.FileExists(t, filepath.Join(dir, "config", "db", "drel_gen.go"))
 }
