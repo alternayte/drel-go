@@ -20,6 +20,16 @@ type RawExpr struct {
 	SQL string
 }
 
+// AdvisoryLockMode selects blocking vs non-blocking advisory-lock acquisition.
+type AdvisoryLockMode int
+
+const (
+	// AdvisoryLockBlocking waits until the lock is acquired.
+	AdvisoryLockBlocking AdvisoryLockMode = iota
+	// AdvisoryLockTry attempts to acquire without blocking and reports success.
+	AdvisoryLockTry
+)
+
 // Dialect generates SQL for a specific database backend.
 type Dialect interface {
 	SupportsReturning() bool
@@ -43,4 +53,10 @@ type Dialect interface {
 	BuildBulkDelete(table string, where *ast.WhereClause) Result
 	BuildBulkSoftDelete(table string, where *ast.WhereClause) Result
 	BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string, doNothing bool) Result
+	// AdvisoryLockSQL returns the SQL + args to acquire a transaction-scoped
+	// advisory lock for key, and whether the dialect supports advisory locks.
+	// When supported is false the runtime treats the call as a documented no-op.
+	// For AdvisoryLockTry the returned query yields a single boolean column
+	// reporting whether the lock was acquired.
+	AdvisoryLockSQL(key int64, mode AdvisoryLockMode) (Result, bool)
 }
