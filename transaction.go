@@ -25,6 +25,7 @@ type TxOption func(*txConfig)
 
 type txConfig struct {
 	isolation *IsolationLevel
+	retry     *RetryConfig
 }
 
 // WithIsolation sets the isolation level for the transaction.
