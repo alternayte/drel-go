@@ -180,6 +180,17 @@ output:
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
 }
 
+func TestResolveModuleRoot_IsExportedForMigrateNew(t *testing.T) {
+	// migrate new must scan from the module root, not the config dir, identical
+	// to Generate. This guards that the shared helper exists and is exported so
+	// cmd/drel/migrate.go can call it.
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n\ngo 1.22\n"), 0644))
+	sub := filepath.Join(root, "deploy")
+	require.NoError(t, os.MkdirAll(sub, 0755))
+	assert.Equal(t, root, ResolveModuleRoot(sub))
+}
+
 func TestResolveModuleRoot_ConfigInSubdir(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module testmod\n\ngo 1.22\n"), 0644))

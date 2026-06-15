@@ -140,7 +140,8 @@ func runMigrateNew() {
 	}
 
 	cfgDir, _ := filepath.Abs(filepath.Dir(cp))
-	models, err := codegen.ScanPackages(cfg.Packages, cfgDir)
+	scanDir := codegen.ResolveModuleRoot(cfgDir)
+	models, err := codegen.ScanPackages(cfg.Packages, scanDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate new: %v\n", err)
 		os.Exit(1)
