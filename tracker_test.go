@@ -270,6 +270,51 @@ func TestTracker_RemoveLoadedStillDeletes(t *testing.T) {
 	assert.Equal(t, StateDeleted, ct.index[e].state)
 }
 
+func TestMarkDeleted_AfterFlush_StillEmitsDelete(t *testing.T) {
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Flushed", Age: 7}
+	ct.MarkAdded(e, testMeta)
+
+	// Simulate a prior flush within the same live transaction: the insert ran
+	// but the transaction is still open, so the entity stays StateAdded with
+	// flushed=true (W1-G3 PostCommit-finalize semantics).
+	pc := ct.GetPendingChanges()
+	if len(pc.Added) != 1 {
+		t.Fatalf("expected 1 added before marking flushed, got %d", len(pc.Added))
+	}
+	for _, te := range pc.Added {
+		te.flushed = true
+	}
+
+	// Removing an already-flushed insert must NOT detach/cancel; it must stage a delete.
+	if err := ct.MarkDeleted(e); err != nil {
+		t.Fatalf("MarkDeleted after flush: %v", err)
+	}
+	pc2 := ct.GetPendingChanges()
+	if len(pc2.Deleted) != 1 {
+		t.Fatalf("delete of an already-flushed insert must be emitted: Deleted=%d", len(pc2.Deleted))
+	}
+	if len(pc2.Added) != 0 {
+		t.Fatalf("entity should no longer be in Added list: Added=%d", len(pc2.Added))
+	}
+}
+
+func TestMarkDeleted_BeforeFlush_CancelsOut(t *testing.T) {
+	ct := newChangeTracker()
+	e := &testEntity{Name: "Ghost2", Age: 8}
+	ct.MarkAdded(e, testMeta)
+
+	// No flush. Add-then-Remove before any flush must cancel out entirely.
+	if err := ct.MarkDeleted(e); err != nil {
+		t.Fatalf("MarkDeleted before flush: %v", err)
+	}
+	pc := ct.GetPendingChanges()
+	if len(pc.Added)+len(pc.Deleted) != 0 {
+		t.Fatalf("unflushed Add-then-Remove must cancel out, got Added=%d Deleted=%d",
+			len(pc.Added), len(pc.Deleted))
+	}
+}
+
 func TestTracker_ForceUpdateClearedAfterFinalize(t *testing.T) {
 	ct := newChangeTracker()
 	e := &testEntity{Name: "Attached", Age: 10}

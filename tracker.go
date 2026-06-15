@@ -167,15 +167,19 @@ func (ct *changeTracker) MarkDeleted(entity any) error {
 	if !exists {
 		return fmt.Errorf("%w: cannot remove an entity that is not tracked", ErrEntityNotTracked)
 	}
-	// An entity staged for insert that is then removed before flush should
-	// cancel out entirely (EF Core semantics): detach it so no SQL is emitted.
-	// A subsequent MarkAdded re-tracks it (the pointer index entry is now gone).
-	if te.state == StateAdded {
+	// Add-then-Remove BEFORE any flush cancels out (EF Core semantics): detach so
+	// no SQL is emitted. But once the insert has been flushed to the DB in this
+	// transaction (e.g. a mid-tx SaveChanges), it cannot be cancelled — fall
+	// through to emit a delete instead.
+	if te.state == StateAdded && !te.flushed {
 		ct.Detach(entity)
 		return nil
 	}
 	te.state = StateDeleted
 	te.everDirty = true
+	// Clear the stale flush marker so the new delete is picked up on the next
+	// GetPendingChanges / flush (otherwise GetPendingChanges skips flushed entities).
+	te.flushed = false
 	return nil
 }
 
@@ -199,6 +203,9 @@ func (ct *changeTracker) MarkHardDeleted(entity any) error {
 	te.state = StateDeleted
 	te.hardDelete = true
 	te.everDirty = true
+	// Clear the stale flush marker so the delete is picked up on the next flush
+	// even when the entity's prior state (e.g. StateAdded) was already flushed.
+	te.flushed = false
 	return nil
 }
 
