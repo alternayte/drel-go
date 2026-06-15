@@ -258,7 +258,8 @@ func TestParseDBTag_Options(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			col, opts := parseDBTag(tt.tag)
+			col, opts, err := parseDBTag(tt.tag)
+			require.NoError(t, err)
 			assert.Equal(t, tt.col, col)
 			assert.Equal(t, tt.opts, opts)
 		})
@@ -453,7 +454,8 @@ type Ticket struct {
 }
 
 func TestParseDBTag_Default(t *testing.T) {
-	col, opts := parseDBTag(`db:"role,default=user"`)
+	col, opts, err := parseDBTag(`db:"role,default=user"`)
+	require.NoError(t, err)
 	assert.Equal(t, "role", col)
 	assert.Equal(t, "user", opts.def)
 }
@@ -489,4 +491,45 @@ type Account struct {
 	}
 	require.NotNil(t, f)
 	assert.Equal(t, "user", f.Default)
+}
+
+func TestParseDBTag_UnknownOptionErrors(t *testing.T) {
+	cases := []struct {
+		tag   string
+		token string
+	}{
+		{`db:"email,uniqe"`, "uniqe"},
+		{`db:"age,idex"`, "idex"},
+		{`db:"x,chek=x > 0"`, "chek=x > 0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tag, func(t *testing.T) {
+			_, _, err := parseDBTag(tc.tag)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.token)
+		})
+	}
+
+	// Known options still parse without error.
+	_, _, err := parseDBTag(`db:"role,unique,check=role IN ('a','b'),default=a"`)
+	require.NoError(t, err)
+}
+
+func TestScanner_UnknownTagOptionFailsLoud(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Account struct {
+	drel.Model[int]
+	email string ` + "`db:\"email,uniqe\"`" + `
+}
+`,
+	})
+
+	_, err := ScanPackages([]string{"./models"}, dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "uniqe")
+	assert.Contains(t, err.Error(), "email")
 }

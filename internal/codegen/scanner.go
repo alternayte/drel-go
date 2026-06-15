@@ -85,7 +85,11 @@ func scanPackage(pkg *packages.Package) ([]ModelInfo, error) {
 
 		mi.TableName = inferTableName(tn.Name())
 		mi.HasSoftDelete, mi.HasVersioned, mi.HasAudit = detectEmbeds(st)
-		mi.Fields = extractFields(st, pkg.PkgPath)
+		flds, fErr := extractFields(st, pkg.PkgPath)
+		if fErr != nil {
+			return nil, fmt.Errorf("codegen: model %s: %w", tn.Name(), fErr)
+		}
+		mi.Fields = flds
 
 		// Populate m2m convention defaults for relationship fields.
 		for j := range mi.Fields {
@@ -181,7 +185,7 @@ func detectEmbeds(st *types.Struct) (softDelete, versioned, audit bool) {
 	return
 }
 
-func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
+func extractFields(st *types.Struct, ownerPkgPath string) ([]FieldInfo, error) {
 	var fields []FieldInfo
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
@@ -189,8 +193,26 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 			continue
 		}
 		tag := st.Tag(i)
-		dbCol, dbOpts := parseDBTag(tag)
 		relTag := parseRelTag(tag)
+
+		// For multi-column VOs every comma-separated segment in the db tag is a
+		// column name, not an option keyword. Check the type before strict-parsing
+		// to avoid falsely rejecting column names as unknown options.
+		isMultiCol := isMultiColumnMapper(f.Type())
+
+		var dbCol string
+		var dbOpts dbTagOpts
+		if isMultiCol {
+			// Lenient: just extract the first column name without option parsing.
+			dbCol = firstDBTagSegment(tag)
+		} else {
+			var err error
+			dbCol, dbOpts, err = parseDBTag(tag)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", f.Name(), err)
+			}
+		}
+
 		if dbCol == "" && relTag == "" {
 			continue
 		}
@@ -235,7 +257,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 					fi.IsComparable = types.Comparable(voUnderlyingNamed(f.Type()))
 					fi.HasIsZero = hasMethod(f.Type(), "IsZero")
 				}
-				if isMultiColumnMapper(f.Type()) {
+				if isMultiCol {
 					fi.IsMultiColVO = true
 					names := splitMultiColNames(rawDBTag(tag))
 					fi.MultiColNames = names
@@ -257,7 +279,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 						fi.MultiColTypes = defaultMultiColTypes(names)
 					}
 				}
-				if !isPrimitiveType(goTypeStr) && !fi.IsVO && !fi.IsMultiColVO {
+				if !isPrimitiveType(goTypeStr) && !fi.IsVO && !isMultiCol {
 					enumValues, enumIsInt, enumBase := findEnumValues(f.Type())
 					if len(enumValues) > 0 {
 						fi.IsEnum = true
@@ -271,7 +293,22 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 
 		fields = append(fields, fi)
 	}
-	return fields
+	return fields, nil
+}
+
+// firstDBTagSegment returns just the column name (the first comma-separated
+// segment) from a db struct tag, without parsing options. Used for multi-column
+// VOs where every comma segment is a column name, not an option keyword.
+func firstDBTagSegment(rawTag string) string {
+	st := reflect.StructTag(rawTag)
+	raw, ok := st.Lookup("db")
+	if !ok || raw == "" {
+		return ""
+	}
+	if i := strings.IndexByte(raw, ','); i >= 0 {
+		return strings.TrimSpace(raw[:i])
+	}
+	return strings.TrimSpace(raw)
 }
 
 func parseRelTagStructured(tag string) *RelationFieldInfo {
@@ -321,12 +358,13 @@ type dbTagOpts struct {
 //	db:"age,check=age >= 0"           — column CHECK constraint
 //	db:"role,check=role IN ('a','b')" — IN-list CHECK with embedded commas
 //
+// Returns an error if an unrecognized option token is encountered.
 // Returns an empty column name when no db tag is present.
-func parseDBTag(rawTag string) (string, dbTagOpts) {
+func parseDBTag(rawTag string) (string, dbTagOpts, error) {
 	st := reflect.StructTag(rawTag)
 	raw, ok := st.Lookup("db")
 	if !ok || raw == "" {
-		return "", dbTagOpts{}
+		return "", dbTagOpts{}, nil
 	}
 	// The column name is the first comma-separated segment; options follow.
 	name := raw
@@ -357,9 +395,11 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 			opts.def = strings.TrimSpace(strings.TrimPrefix(p, "default="))
 		case strings.HasPrefix(p, "type="):
 			opts.typ = strings.TrimSpace(strings.TrimPrefix(p, "type="))
+		default:
+			return "", dbTagOpts{}, fmt.Errorf("unknown db tag option %q (known: unique, index, index=, check=, default=, type=)", p)
 		}
 	}
-	return col, opts
+	return col, opts, nil
 }
 
 // splitTagOptions splits a db-tag option list on commas, ignoring commas that
