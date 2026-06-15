@@ -664,7 +664,10 @@ func TestEmitModelFileChecked_UnsupportedType(t *testing.T) {
 	assert.Contains(t, err.Error(), `model "Post"`)
 	assert.Contains(t, err.Error(), `field "tags"`)
 	assert.Contains(t, err.Error(), "[]string")
-	assert.Contains(t, err.Error(), "drel.ColumnMapper")
+	// Error must name the real contract (sql.Scanner + driver.Valuer), not the
+	// phantom drel.ColumnMapper interface that does not exist in the runtime.
+	assert.Contains(t, err.Error(), "sql.Scanner")
+	assert.Contains(t, err.Error(), "driver.Valuer")
 }
 
 func TestEmitModelFileChecked_SupportedTypesPass(t *testing.T) {

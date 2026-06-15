@@ -202,7 +202,7 @@ func EmitModelFileChecked(m ModelInfo) (string, error) {
 			continue
 		}
 		if !isComparableForDiff(f) {
-			return "", fmt.Errorf("drel: model %q field %q has unsupported type %q for code generation; implement drel.ColumnMapper or remove the db tag", m.Name, f.Name, f.GoType)
+			return "", fmt.Errorf("drel: model %q field %q has unsupported type %q for code generation; implement sql.Scanner + driver.Valuer (single-column value object) or remove the db tag", m.Name, f.Name, f.GoType)
 		}
 	}
 	return EmitModelFile(m), nil
