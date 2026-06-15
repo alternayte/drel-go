@@ -869,3 +869,19 @@ func TestPostgres_BuildBulkUpsert(t *testing.T) {
 		assert.Equal(t, []any{1, "Alice"}, r.Args)
 	})
 }
+
+func TestPostgres_AdvisoryLockSQL_Blocking(t *testing.T) {
+	pg := New()
+	res, supported := pg.AdvisoryLockSQL(42, dialect.AdvisoryLockBlocking)
+	assert.True(t, supported)
+	assert.Equal(t, "SELECT pg_advisory_xact_lock($1)", res.SQL)
+	assert.Equal(t, []any{int64(42)}, res.Args)
+}
+
+func TestPostgres_AdvisoryLockSQL_Try(t *testing.T) {
+	pg := New()
+	res, supported := pg.AdvisoryLockSQL(7, dialect.AdvisoryLockTry)
+	assert.True(t, supported)
+	assert.Equal(t, "SELECT pg_try_advisory_xact_lock($1)", res.SQL)
+	assert.Equal(t, []any{int64(7)}, res.Args)
+}

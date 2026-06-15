@@ -36,6 +36,20 @@ func (p *Postgres) Now() string { return "NOW()" }
 
 func (p *Postgres) Explain(query string) (string, bool) { return "EXPLAIN " + query, true }
 
+// AdvisoryLockSQL returns the SQL to acquire a transaction-scoped advisory lock.
+// Transaction-scoped locks (pg_advisory_xact_lock) auto-release on commit or
+// rollback, so the runtime never needs an explicit unlock.
+func (p *Postgres) AdvisoryLockSQL(key int64, mode dialect.AdvisoryLockMode) (dialect.Result, bool) {
+	fn := "pg_advisory_xact_lock"
+	if mode == dialect.AdvisoryLockTry {
+		fn = "pg_try_advisory_xact_lock"
+	}
+	return dialect.Result{
+		SQL:  "SELECT " + fn + "($1)",
+		Args: []any{key},
+	}, true
+}
+
 func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 	var b strings.Builder
 	var args []any
