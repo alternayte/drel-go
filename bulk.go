@@ -93,6 +93,38 @@ func appendUniformRow(table string, columns *[]string, rows *[][]any, cols []str
 	return nil
 }
 
+// bulkInsertColumns runs the same per-entity marker logic as the single-row
+// insert path (mutation.go) for a bulk batch: audit-stamp create fields,
+// initialize the version, stamp+prepend an app-assigned primary key with a
+// loud zero-key guard. It returns the (possibly PK-prefixed) column and value
+// slices to be appended to the batch. DB-generated id/timestamp back-fill
+// (RETURNING hydration) is intentionally not performed for bulk inserts; only
+// app-assigned keys (produced by the app/generator) are set on the entities.
+func bulkInsertColumns(ctx context.Context, base *ModelMetaBase, entity any) ([]string, []any, error) {
+	if base.HasAudit && base.AuditSetCreate != nil {
+		base.AuditSetCreate(entity, ActorFromContext(ctx))
+	}
+	if base.HasVersioned && base.SetVersion != nil {
+		base.SetVersion(entity, 1)
+	}
+
+	cols, vals := base.InsertColumns(entity)
+
+	if base.KeyStrategy == KeyAppAssigned {
+		// Stamp a key via the generator (honoring the runtime registry) when one
+		// is not already set, then require it be non-zero — mirroring
+		// mutation.go:47-59. A forgotten key is a loud error, never a zero PK.
+		stampKey(entity, base)
+		if base.KeyIsZero != nil && base.KeyIsZero(entity) {
+			return nil, nil, fmt.Errorf("drel: bulk insert %s: app-assigned primary key is zero (no key generator registered and no key was set)", base.Table)
+		}
+		cols = append([]string{base.PKColumn}, cols...)
+		vals = append([]any{base.PKValue(entity)}, vals...)
+	}
+
+	return cols, vals, nil
+}
+
 // BulkInsert inserts multiple entities in batches, bypassing change tracking.
 // Returns the total number of rows affected.
 func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
@@ -102,6 +134,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 
 	drv := r.engine.driver()
 	d := r.engine.dialect()
+	base := ToMetaBase(&r.meta)
 
 	tx, err := drv.Begin(ctx)
 	if err != nil {
@@ -109,7 +142,10 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	firstCols, _ := r.meta.InsertColumns(entities[0])
+	firstCols, _, err := bulkInsertColumns(ctx, base, entities[0])
+	if err != nil {
+		return 0, err
+	}
 	batchSize := safeBatchSize(len(firstCols))
 
 	total := 0
@@ -123,7 +159,10 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 		var columns []string
 		var rows [][]any
 		for _, entity := range batch {
-			cols, vals := r.meta.InsertColumns(entity)
+			cols, vals, prepErr := bulkInsertColumns(ctx, base, entity)
+			if prepErr != nil {
+				return 0, prepErr
+			}
 			if err := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); err != nil {
 				return 0, err
 			}
@@ -170,6 +209,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 
 	drv := r.engine.driver()
 	d := r.engine.dialect()
+	base := ToMetaBase(&r.meta)
 
 	tx, err := drv.Begin(ctx)
 	if err != nil {
@@ -177,7 +217,10 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	firstCols, _ := r.meta.InsertColumns(entities[0])
+	firstCols, _, err := bulkInsertColumns(ctx, base, entities[0])
+	if err != nil {
+		return 0, err
+	}
 	batchSize := safeBatchSize(len(firstCols))
 
 	total := 0
@@ -191,7 +234,10 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 		var columns []string
 		var rows [][]any
 		for _, entity := range batch {
-			cols, vals := r.meta.InsertColumns(entity)
+			cols, vals, prepErr := bulkInsertColumns(ctx, base, entity)
+			if prepErr != nil {
+				return 0, prepErr
+			}
 			if err := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); err != nil {
 				return 0, err
 			}
