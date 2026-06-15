@@ -1,6 +1,10 @@
 package dreltest_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/alternayte/drel/internal/dialect/postgres"
+)
 
 // fakeT wraps *testing.T but intercepts Fatalf/FailNow so a helper's failure
 // path can be asserted without aborting the real test. FailNow panics to unwind
@@ -24,3 +28,7 @@ func (f *fakeT) Fatal(args ...any) {
 func (f *fakeT) FailNow() {
 	panic("fakeT.FailNow")
 }
+
+// pgDialect returns the Postgres dialect for forcing an engine's dialect in
+// guard tests (no container required).
+func pgDialect() *postgres.Postgres { return postgres.New() }
