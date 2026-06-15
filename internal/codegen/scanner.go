@@ -205,8 +205,8 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 			Indexed:      dbOpts.indexed,
 			IndexName:    dbOpts.indexName,
 			CheckExpr:    dbOpts.check,
-			Default:      dbOpts.defaultVal,
-			TypeOverride: dbOpts.typeOverride,
+			Default:      dbOpts.def,
+			TypeOverride: dbOpts.typ,
 		}
 
 		if relTag != "" {
@@ -302,12 +302,12 @@ func parseRelTagStructured(tag string) *RelationFieldInfo {
 
 // dbTagOpts holds the options parsed from a db struct tag after the column name.
 type dbTagOpts struct {
-	unique       bool
-	indexed      bool
-	indexName    string
-	check        string
-	defaultVal   string
-	typeOverride string
+	unique    bool
+	indexed   bool
+	indexName string
+	check     string
+	def       string // db tag option: column DEFAULT value (db:"...,default=expr")
+	typ       string // db tag option: explicit SQL type override (db:"...,type=jsonb")
 }
 
 // parseDBTag splits a db struct tag into its column name and options. The first
@@ -354,21 +354,22 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 		case strings.HasPrefix(p, "check="):
 			opts.check = strings.TrimSpace(strings.TrimPrefix(p, "check="))
 		case strings.HasPrefix(p, "default="):
-			opts.defaultVal = strings.TrimSpace(strings.TrimPrefix(p, "default="))
+			opts.def = strings.TrimSpace(strings.TrimPrefix(p, "default="))
 		case strings.HasPrefix(p, "type="):
-			opts.typeOverride = strings.TrimSpace(strings.TrimPrefix(p, "type="))
+			opts.typ = strings.TrimSpace(strings.TrimPrefix(p, "type="))
 		}
 	}
 	return col, opts
 }
 
 // splitTagOptions splits a db-tag option list on commas, ignoring commas that
-// appear inside single-quoted strings or parentheses so that option values like
-// check=role IN ('a','b') and check=substr(x,1,2) survive intact.
+// appear inside single-quoted strings, parentheses, or square brackets so that
+// option values like check=role IN ('a','b'), check=substr(x,1,2), and
+// default=ARRAY['a','b'] survive intact.
 func splitTagOptions(s string) []string {
 	var parts []string
 	var cur strings.Builder
-	depth := 0
+	depth := 0    // tracks nesting depth of ( ) and [ ]
 	inQuote := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -376,10 +377,10 @@ func splitTagOptions(s string) []string {
 		case c == '\'':
 			inQuote = !inQuote
 			cur.WriteByte(c)
-		case c == '(' && !inQuote:
+		case (c == '(' || c == '[') && !inQuote:
 			depth++
 			cur.WriteByte(c)
-		case c == ')' && !inQuote:
+		case (c == ')' || c == ']') && !inQuote:
 			if depth > 0 {
 				depth--
 			}

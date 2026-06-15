@@ -251,6 +251,10 @@ func TestParseDBTag_Options(t *testing.T) {
 		{"check with in-list", `db:"role,check=role IN ('admin','user')"`, "role", dbTagOpts{check: "role IN ('admin','user')"}},
 		{"check with func commas", `db:"x,check=substr(x,1,2) = 'ab'"`, "x", dbTagOpts{check: "substr(x,1,2) = 'ab'"}},
 		{"unique then check with comma", `db:"role,unique,check=role IN ('a','b')"`, "role", dbTagOpts{unique: true, check: "role IN ('a','b')"}},
+		{"default string", `db:"role,default=user"`, "role", dbTagOpts{def: "user"}},
+		{"default with comma value", `db:"flags,default=ARRAY['a','b']"`, "flags", dbTagOpts{def: "ARRAY['a','b']"}},
+		{"type override", `db:"meta,type=jsonb"`, "meta", dbTagOpts{typ: "jsonb"}},
+		{"unique then default", `db:"role,unique,default=user"`, "role", dbTagOpts{unique: true, def: "user"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -292,6 +296,32 @@ type Account struct {
 	assert.True(t, byCol["first"].Indexed)
 	assert.Equal(t, "ix_name", byCol["first"].IndexName)
 	assert.Equal(t, "score > 0", byCol["score"].CheckExpr)
+}
+
+func TestScanner_DefaultAndTypeTags(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Account struct {
+	drel.Model[int]
+	role string ` + "`db:\"role,default=user\"`" + `
+	meta string ` + "`db:\"meta,type=jsonb\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	byCol := map[string]FieldInfo{}
+	for _, f := range models[0].Fields {
+		byCol[f.ColumnName] = f
+	}
+	assert.Equal(t, "user", byCol["role"].Default)
+	assert.Equal(t, "jsonb", byCol["meta"].TypeOverride)
 }
 
 func TestScanner_RejectsUnsignedPK(t *testing.T) {
@@ -425,7 +455,7 @@ type Ticket struct {
 func TestParseDBTag_Default(t *testing.T) {
 	col, opts := parseDBTag(`db:"role,default=user"`)
 	assert.Equal(t, "role", col)
-	assert.Equal(t, "user", opts.defaultVal)
+	assert.Equal(t, "user", opts.def)
 }
 
 func TestScanner_EnumDefault_RecordedOnField(t *testing.T) {

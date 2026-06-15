@@ -410,7 +410,7 @@ func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
 func TestParseDBTag_TypeOverride(t *testing.T) {
 	col, opts := parseDBTag(`db:"data,type=jsonb"`)
 	assert.Equal(t, "data", col)
-	assert.Equal(t, "jsonb", opts.typeOverride)
+	assert.Equal(t, "jsonb", opts.typ)
 }
 
 func TestGenerateCreateTable_TypeOverride(t *testing.T) {
