@@ -362,6 +362,18 @@ func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
 
+func TestAggregate_SumEmptySetReturnsZero(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	// No rows match this category, so SUM over an empty set must return 0,
+	// not error scanning SQL NULL into a non-nullable int/float64.
+	qb := repo.Where(drel.NewStringCol("category").Eq("nonexistent"))
+	total, err := drel.Aggregate[float64](ctx, qb, drel.Sum(drel.ColRef("price")))
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, total, 0.001)
+}
+
 func TestAggregate_CountDistinct(t *testing.T) {
 	_, repo := setupSelectEngine(t)
 	ctx := context.Background()

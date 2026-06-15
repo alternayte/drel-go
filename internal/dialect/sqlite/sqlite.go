@@ -70,6 +70,9 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 			if len(node.Columns) > 0 || aggIdx > 0 {
 				b.WriteString(", ")
 			}
+			if agg.CoalesceZero {
+				b.WriteString("COALESCE(")
+			}
 			b.WriteString(aggFuncSQL(agg.Func))
 			b.WriteString("(")
 			if agg.Func == ast.AggCount && agg.Column == "" {
@@ -81,6 +84,9 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 				b.WriteString(quoteIdent(agg.Column))
 			}
 			b.WriteString(")")
+			if agg.CoalesceZero {
+				b.WriteString(", 0)")
+			}
 			if agg.Alias != "" {
 				b.WriteString(" AS ")
 				b.WriteString(quoteIdent(agg.Alias))

@@ -42,7 +42,7 @@ func Select[R any, T any](ctx context.Context, q *QueryBuilder[T], cols ...Colum
 	node.Columns = colNames
 
 	result := q.engine.dialect().BuildSelect(node)
-	rows, err := q.engine.queryInternal(ctx, result.SQL, result.Args...)
+	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -72,8 +72,9 @@ type AggExpr struct {
 	coalesceZero bool
 }
 
-// Sum creates a SUM aggregate expression.
-func Sum(col ColumnRef) AggExpr { return AggExpr{fn: ast.AggSum, column: col.name} }
+// Sum creates a SUM aggregate expression. Over an empty set it returns 0 via
+// COALESCE so it scans cleanly into a non-nullable numeric result type.
+func Sum(col ColumnRef) AggExpr { return AggExpr{fn: ast.AggSum, column: col.name, coalesceZero: true} }
 
 // Avg creates an AVG aggregate expression.
 func Avg(col ColumnRef) AggExpr { return AggExpr{fn: ast.AggAvg, column: col.name} }
@@ -110,7 +111,7 @@ func Aggregate[R any, T any](ctx context.Context, q *QueryBuilder[T], agg AggExp
 	}
 
 	result := q.engine.dialect().BuildSelect(node)
-	row := q.engine.queryRowInternal(ctx, result.SQL, result.Args...)
+	row := q.engine.queryRowRouted(ctx, q.primary, result.SQL, result.Args...)
 	var val R
 	if err := row.Scan(&val); err != nil {
 		return zero, fmt.Errorf("drel: aggregate: %w", err)
@@ -198,7 +199,7 @@ func GroupBy[R any, T any](ctx context.Context, q *QueryBuilder[T], groups []Gro
 	}
 
 	result := q.engine.dialect().BuildSelect(node)
-	rows, err := q.engine.queryInternal(ctx, result.SQL, result.Args...)
+	rows, err := q.engine.queryRouted(ctx, q.primary, result.SQL, result.Args...)
 	if err != nil {
 		return nil, err
 	}

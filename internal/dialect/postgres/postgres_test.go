@@ -899,6 +899,17 @@ func TestBuildSelectDistinct(t *testing.T) {
 	assert.Nil(t, result.Args)
 }
 
+func TestBuildSelectSumCoalesced(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:      "orders",
+		Aggregates: []ast.AggregateExpr{{Func: ast.AggSum, Column: "amount", Alias: "result", CoalesceZero: true}},
+		Type:       ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t, `SELECT COALESCE(SUM("amount"), 0) AS "result" FROM "orders"`, result.SQL)
+}
+
 func TestBuildSelectCountDistinct(t *testing.T) {
 	d := New()
 	node := ast.SelectNode{
