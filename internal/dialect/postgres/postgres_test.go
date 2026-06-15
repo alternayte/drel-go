@@ -726,6 +726,24 @@ func TestBuildSelectGroupByWithWhere(t *testing.T) {
 	assert.Equal(t, []any{"2024-01-01"}, result.Args)
 }
 
+func TestPostgres_BuildDeleteVersioned(t *testing.T) {
+	pg := New()
+	res := pg.BuildDeleteVersioned("v_products", "id", 7, "version", 3)
+	assert.Equal(t,
+		`DELETE FROM "v_products" WHERE "id" = $1 AND "version" = $2 RETURNING "id"`,
+		res.SQL)
+	assert.Equal(t, []any{7, 3}, res.Args)
+}
+
+func TestPostgres_BuildSoftDeleteVersioned(t *testing.T) {
+	pg := New()
+	res := pg.BuildSoftDeleteVersioned("v_products", "id", 7, "version", 3)
+	assert.Equal(t,
+		`UPDATE "v_products" SET "deleted_at" = NOW(), "version" = "version" + 1 WHERE "id" = $1 AND "version" = $2 RETURNING "id"`,
+		res.SQL)
+	assert.Equal(t, []any{7, 3}, res.Args)
+}
+
 func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
 	p := New()
 	sql := "a = ? AND b = ?"

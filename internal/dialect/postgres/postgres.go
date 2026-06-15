@@ -348,6 +348,24 @@ func (p *Postgres) BuildSoftDelete(table string, pkColumn string, pkValue any) d
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
+func (p *Postgres) BuildDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	sql := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s = $1 AND %s = $2 RETURNING %s",
+		quoteIdent(table), quoteIdent(pkColumn), quoteIdent(versionCol), quoteIdent(pkColumn),
+	)
+	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
+}
+
+func (p *Postgres) BuildSoftDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	sql := fmt.Sprintf(
+		"UPDATE %s SET %s = NOW(), %s = %s + 1 WHERE %s = $1 AND %s = $2 RETURNING %s",
+		quoteIdent(table), quoteIdent("deleted_at"),
+		quoteIdent(versionCol), quoteIdent(versionCol),
+		quoteIdent(pkColumn), quoteIdent(versionCol), quoteIdent(pkColumn),
+	)
+	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
+}
+
 func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
 	var b strings.Builder
 	var args []any

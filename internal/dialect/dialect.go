@@ -36,6 +36,8 @@ type Dialect interface {
 	BuildDelete(table string, pkColumn string, pkValue any) Result
 	BuildSoftDelete(table string, pkColumn string, pkValue any) Result
 	BuildUpdateVersioned(table string, changes []ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) Result
+	BuildDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) Result
+	BuildSoftDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) Result
 	BuildBulkInsert(table string, columns []string, rows [][]any) Result
 	BuildBulkUpdate(table string, sets []ColumnValue, where *ast.WhereClause) Result
 	BuildBulkDelete(table string, where *ast.WhereClause) Result

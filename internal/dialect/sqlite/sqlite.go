@@ -324,6 +324,29 @@ func (s *SQLite) BuildSoftDelete(table string, pkColumn string, pkValue any) dia
 	return dialect.Result{SQL: sql, Args: []any{pkValue}}
 }
 
+// BuildDeleteVersioned generates a versioned DELETE for SQLite. SQLite does not
+// support RETURNING here, so the caller detects a concurrency conflict via the
+// affected-row count.
+func (s *SQLite) BuildDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	sql := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s = ? AND %s = ?",
+		quoteIdent(table), quoteIdent(pkColumn), quoteIdent(versionCol),
+	)
+	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
+}
+
+// BuildSoftDeleteVersioned generates a versioned soft-delete for SQLite. The
+// caller detects a concurrency conflict via the affected-row count.
+func (s *SQLite) BuildSoftDeleteVersioned(table string, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	sql := fmt.Sprintf(
+		"UPDATE %s SET %s = CURRENT_TIMESTAMP, %s = %s + 1 WHERE %s = ? AND %s = ?",
+		quoteIdent(table), quoteIdent("deleted_at"),
+		quoteIdent(versionCol), quoteIdent(versionCol),
+		quoteIdent(pkColumn), quoteIdent(versionCol),
+	)
+	return dialect.Result{SQL: sql, Args: []any{pkValue, currentVersion}}
+}
+
 // BuildUpdateVersioned generates a versioned UPDATE for SQLite.
 // SQLite does not support RETURNING, so the new version cannot be retrieved
 // from the statement itself; the caller must increment the version client-side.

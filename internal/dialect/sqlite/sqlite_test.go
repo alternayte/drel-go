@@ -898,6 +898,24 @@ func TestSQLite_BuildSelectGroupByWithWhere(t *testing.T) {
 	assert.Equal(t, []any{"2024-01-01"}, result.Args)
 }
 
+func TestSQLite_BuildDeleteVersioned(t *testing.T) {
+	s := New()
+	res := s.BuildDeleteVersioned("v_products", "id", 7, "version", 3)
+	assert.Equal(t,
+		`DELETE FROM "v_products" WHERE "id" = ? AND "version" = ?`,
+		res.SQL)
+	assert.Equal(t, []any{7, 3}, res.Args)
+}
+
+func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
+	s := New()
+	res := s.BuildSoftDeleteVersioned("v_products", "id", 7, "version", 3)
+	assert.Equal(t,
+		`UPDATE "v_products" SET "deleted_at" = CURRENT_TIMESTAMP, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		res.SQL)
+	assert.Equal(t, []any{7, 3}, res.Args)
+}
+
 // ─── Interface compliance ─────────────────────────────────────────────────────
 
 func TestSQLite_ImplementsDialect(t *testing.T) {
