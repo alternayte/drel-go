@@ -25,6 +25,8 @@ type FieldInfo struct {
 	IsVO           bool   // implements sql.Scanner + driver.Valuer (single-column VO)
 	IsMultiColVO   bool   // implements drel.MultiColumnMapper (multi-column VO)
 	MultiColPrefix string // db tag used as column prefix for multi-column VOs
+	MultiColNames  []string // expanded sub-column names from the db tag (multi-column VOs)
+	MultiColTypes  []string // resolved SQL types per sub-column (default "text"; multi-column VOs)
 	LocalGoType    string // type name without package qualifier, for same-package generated code
 	TypePkgPath    string // import path of the field type's package (empty for primitives/same-package)
 	IsPointer      bool   // whether the field is a pointer type
