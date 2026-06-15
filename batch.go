@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dberr"
 	"github.com/alternayte/drel/internal/driver"
 )
 
@@ -50,17 +51,17 @@ func (b *Batch) Execute(ctx context.Context) error {
 		}
 		res, err := p.SendBatch(ctx, items)
 		if err != nil {
-			return err
+			return dberr.Classify(err)
 		}
 		defer res.Close()
 		for _, it := range b.items {
 			rows, err := res.Query()
 			if err != nil {
-				return err
+				return dberr.Classify(err)
 			}
 			if err := it.handler(rows); err != nil {
 				rows.Close()
-				return err
+				return dberr.Classify(err)
 			}
 			rows.Close()
 		}
