@@ -3,6 +3,7 @@ package drel
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -75,13 +76,30 @@ func (p *scanPlan) scanDest(v reflect.Value) []any {
 	return dests
 }
 
+// colKey returns the lookup key for a (possibly table-qualified) column name.
+// A bare column "name" maps to itself; a qualified "products.name" maps to "name"
+// (the unqualified part) when the qualified form has no direct match. This lets
+// QualifiedColRef("products","name").Ref() bind to a DTO field tagged `db:"name"`.
+func (p *scanPlan) colKey(col string) string {
+	if _, ok := p.byColumn[col]; ok {
+		return col
+	}
+	if i := strings.LastIndex(col, "."); i >= 0 {
+		unqualified := col[i+1:]
+		if _, ok := p.byColumn[unqualified]; ok {
+			return unqualified
+		}
+	}
+	return col // caller will detect the missing key and return ErrUnknownProjectionColumn
+}
+
 // validateColumns returns ErrUnknownProjectionColumn for the first requested
 // column that has no matching db-tagged DTO field. Select/GroupBy call this
 // before executing the query so an unknown projected column fails loudly even
 // when the result set is empty (scanDestFor only runs per row).
 func (p *scanPlan) validateColumns(columns []string) error {
 	for _, col := range columns {
-		if _, ok := p.byColumn[col]; !ok {
+		if _, ok := p.byColumn[p.colKey(col)]; !ok {
 			return fmt.Errorf("%w: %q", ErrUnknownProjectionColumn, col)
 		}
 	}
@@ -105,7 +123,7 @@ func (p *scanPlan) scanDestFor(v reflect.Value, columns []string) ([]any, error)
 	}
 	dests := make([]any, len(columns))
 	for i, col := range columns {
-		dests[i] = v.Field(p.fields[p.byColumn[col]].index).Addr().Interface()
+		dests[i] = v.Field(p.fields[p.byColumn[p.colKey(col)]].index).Addr().Interface()
 	}
 	return dests, nil
 }

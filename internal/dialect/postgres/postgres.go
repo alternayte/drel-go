@@ -193,7 +193,7 @@ func writeOrderBy(b *strings.Builder, orderBy []ast.OrderByExpr) {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(quoteIdent(ob.Column))
+		b.WriteString(quoteCol(ob.Column))
 		if ob.Direction == ast.Desc {
 			b.WriteString(" DESC")
 		}

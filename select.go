@@ -23,6 +23,61 @@ func (c ColumnRef) Name() string {
 	return c.name
 }
 
+// QualifiedCol is a table-qualified column reference (table.column) used to build
+// JOIN ON expressions and cross-table projections.
+type QualifiedCol struct {
+	table  string
+	column string
+}
+
+// QualifiedColRef creates a table-qualified column reference.
+func QualifiedColRef(table, column string) QualifiedCol {
+	return QualifiedCol{table: table, column: column}
+}
+
+// Ref returns a ColumnRef whose name is the qualified "table.column" string, for
+// use as a Select projection column. The dialect quotes each segment.
+func (q QualifiedCol) Ref() ColumnRef {
+	return ColumnRef{name: q.table + "." + q.column}
+}
+
+// Qualified returns the raw "table.column" string.
+func (q QualifiedCol) Qualified() string {
+	return q.table + "." + q.column
+}
+
+// JoinOn is a fully-qualified ON expression for a JOIN clause. It is produced by
+// QualifiedCol.EqCol and consumed by QueryBuilder.LeftJoin/InnerJoin.
+type JoinOn struct {
+	sql string
+}
+
+// EqCol builds an equality ON expression between two qualified columns, with each
+// identifier segment quoted (e.g. "categories"."name" = "products"."category").
+func (q QualifiedCol) EqCol(other QualifiedCol) JoinOn {
+	return JoinOn{sql: quoteQualified(q) + " = " + quoteQualified(other)}
+}
+
+func quoteQualified(q QualifiedCol) string {
+	return `"` + escapeIdent(q.table) + `"."` + escapeIdent(q.column) + `"`
+}
+
+func escapeIdent(s string) string {
+	return replaceAllDoubleQuote(s)
+}
+
+func replaceAllDoubleQuote(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' {
+			out = append(out, '"', '"')
+		} else {
+			out = append(out, s[i])
+		}
+	}
+	return string(out)
+}
+
 // Select executes a projection query, returning only specified columns into DTO type R.
 // Because Go does not allow new type parameters on methods, this is a standalone function
 // that takes a *QueryBuilder[T] and projects into a different type R.

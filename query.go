@@ -26,6 +26,7 @@ type QueryBuilder[T any] struct {
 	filters  []NamedFilter
 	primary  bool
 	distinct bool
+	joins    []ast.JoinNode
 
 	// allowFullTable, when set via AllRows(), opts a BulkUpdate/BulkDelete out of
 	// the full-table safety guard for deliberate whole-table writes.
@@ -58,6 +59,7 @@ func (q *QueryBuilder[T]) clone() *QueryBuilder[T] {
 		filters:        append([]NamedFilter(nil), q.filters...),
 		primary:        q.primary,
 		distinct:       q.distinct,
+		joins:          append([]ast.JoinNode(nil), q.joins...),
 		allowFullTable: q.allowFullTable,
 		tracker:        q.tracker,
 		base:           q.base,
@@ -88,6 +90,23 @@ func (q *QueryBuilder[T]) Primary() *QueryBuilder[T] {
 func (q *QueryBuilder[T]) Distinct() *QueryBuilder[T] {
 	c := q.clone()
 	c.distinct = true
+	return c
+}
+
+// LeftJoin adds a LEFT JOIN to the given table on the supplied ON expression.
+// Projection columns from the joined table must be table-qualified via
+// QualifiedColRef(...).Ref(). Joins affect Select and GroupBy projections only.
+func (q *QueryBuilder[T]) LeftJoin(table string, on JoinOn) *QueryBuilder[T] {
+	c := q.clone()
+	c.joins = append(c.joins, ast.JoinNode{Table: table, Type: ast.JoinLeft, On: on.sql})
+	return c
+}
+
+// InnerJoin adds an INNER JOIN to the given table on the supplied ON expression.
+// See LeftJoin for column-qualification requirements.
+func (q *QueryBuilder[T]) InnerJoin(table string, on JoinOn) *QueryBuilder[T] {
+	c := q.clone()
+	c.joins = append(c.joins, ast.JoinNode{Table: table, Type: ast.JoinInner, On: on.sql})
 	return c
 }
 
@@ -130,6 +149,7 @@ func (q *QueryBuilder[T]) buildAST(queryType ast.QueryType) ast.SelectNode {
 		Offset:   q.offset,
 		Type:     queryType,
 		Distinct: q.distinct,
+		Joins:    q.joins,
 	}
 
 	allWheres := make([]ast.WhereClause, 0, len(q.filters)+len(q.wheres))

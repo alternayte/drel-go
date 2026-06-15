@@ -220,6 +220,16 @@ func (r *Repository[T]) Distinct() *QueryBuilder[T] {
 	return r.newBuilder().Distinct()
 }
 
+// LeftJoin returns a query builder with a LEFT JOIN added.
+func (r *Repository[T]) LeftJoin(table string, on JoinOn) *QueryBuilder[T] {
+	return r.newBuilder().LeftJoin(table, on)
+}
+
+// InnerJoin returns a query builder with an INNER JOIN added.
+func (r *Repository[T]) InnerJoin(table string, on JoinOn) *QueryBuilder[T] {
+	return r.newBuilder().InnerJoin(table, on)
+}
+
 // Unscoped returns a query builder with all global filters removed.
 func (r *Repository[T]) Unscoped() *QueryBuilder[T] {
 	return r.newBuilder().Unscoped()

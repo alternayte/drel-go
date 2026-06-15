@@ -362,6 +362,51 @@ func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
 
+// setupJoinEngine creates products + categories and seeds a joinable dataset.
+func setupJoinEngine(t *testing.T) (*drel.Engine, *drel.Repository[selectProduct]) {
+	t.Helper()
+	engine, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	_, err := engine.Exec(ctx, `
+		CREATE TABLE categories (
+			name        TEXT PRIMARY KEY,
+			description TEXT NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, "INSERT INTO categories (name, description) VALUES (?, ?)", "electronics", "Powered devices")
+	require.NoError(t, err)
+	_, err = engine.Exec(ctx, "INSERT INTO categories (name, description) VALUES (?, ?)", "accessories", "Add-ons")
+	require.NoError(t, err)
+	return engine, repo
+}
+
+type joinedDTO struct {
+	Name        string `db:"name"`
+	Description string `db:"description"`
+}
+
+func TestSelect_LeftJoinProjection(t *testing.T) {
+	_, repo := setupJoinEngine(t)
+	ctx := context.Background()
+
+	on := drel.QualifiedColRef("categories", "name").EqCol(drel.QualifiedColRef("products", "category"))
+	qb := repo.
+		LeftJoin("categories", on).
+		OrderBy(drel.NewStringCol("products.name").Asc())
+
+	results, err := drel.Select[joinedDTO](ctx, qb,
+		drel.QualifiedColRef("products", "name").Ref(),
+		drel.QualifiedColRef("categories", "description").Ref(),
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 4)
+	// Gadget C is in accessories.
+	assert.Equal(t, "Gadget C", results[0].Name)
+	assert.Equal(t, "Add-ons", results[0].Description)
+}
+
 func TestAggregate_SumEmptySetReturnsZero(t *testing.T) {
 	_, repo := setupSelectEngine(t)
 	ctx := context.Background()
