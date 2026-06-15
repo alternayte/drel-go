@@ -145,6 +145,8 @@ func demoRollbackIsAtomic(ctx context.Context, database *db.DB) {
 func relay(ctx context.Context, database *db.DB) {
 	fmt.Println("\n=== Relay poll ===")
 
+	// Canonical relay poll. Backed by the partial index emitted by
+	// drel.OutboxSchema: WHERE processed_at IS NULL ORDER BY id.
 	rows, err := database.Query(ctx,
 		`SELECT id, type, payload FROM outbox WHERE processed_at IS NULL ORDER BY id`)
 	if err != nil {
@@ -239,8 +241,10 @@ func setup(ctx context.Context, database *db.DB) {
 	)`)
 	mustExec(ctx, database, `CREATE INDEX idx_orders_status ON orders (status)`)
 
-	// drel.OutboxSchema returns dialect-appropriate DDL for the outbox table:
-	// (id, type, payload, created_at, processed_at). A relay stamps processed_at.
+	// drel.OutboxSchema returns dialect-appropriate DDL for the outbox table,
+	// including a partial index on unprocessed rows
+	// (CREATE INDEX ... WHERE processed_at IS NULL) so the relay poll below
+	// performs an index seek instead of a sequential scan as the table grows.
 	mustExec(ctx, database, drel.OutboxSchema("outbox", "sqlite"))
 }
 
