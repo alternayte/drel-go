@@ -170,8 +170,9 @@ func (q *QueryBuilder[T]) All(ctx context.Context) ([]*T, error) {
 		return nil, err
 	}
 	if q.tracker != nil && q.base != nil && q.meta.Snapshot != nil {
-		for _, item := range items {
-			q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		for i, item := range items {
+			canon := q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+			items[i] = canon.(*T)
 		}
 	}
 	return items, nil
@@ -375,8 +376,9 @@ func (q *QueryBuilder[T]) Page(ctx context.Context) (*CursorPage[T], error) {
 	}
 
 	if q.tracker != nil && q.base != nil && q.meta.Snapshot != nil {
-		for _, item := range page.Items {
-			q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+		for i, item := range page.Items {
+			canon := q.tracker.Track(item, q.meta.Snapshot(item), q.base)
+			page.Items[i] = canon.(*T)
 		}
 	}
 	return page, nil
