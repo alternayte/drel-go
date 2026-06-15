@@ -37,6 +37,17 @@ func ScanPackages(patterns []string, dir ...string) ([]ModelInfo, error) {
 		}
 		models = append(models, pkgModels...)
 	}
+
+	// Deterministic cross-package ordering: packages.Load order is not
+	// contractual, so sort by import path then model name. Within a package
+	// scope.Names() is already sorted, but across packages it is not. This
+	// keeps the aggregated DB file byte-identical across runs/OSes/tool versions.
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].PkgPath != models[j].PkgPath {
+			return models[i].PkgPath < models[j].PkgPath
+		}
+		return models[i].Name < models[j].Name
+	})
 	return models, nil
 }
 

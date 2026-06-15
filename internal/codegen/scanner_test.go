@@ -533,3 +533,48 @@ type Account struct {
 	assert.Contains(t, err.Error(), "uniqe")
 	assert.Contains(t, err.Error(), "email")
 }
+
+func TestScanPackages_DeterministicOrder(t *testing.T) {
+	// Two packages whose names sort the opposite way to a naive append order:
+	// "zpkg" defines "Apple", "apkg" defines "Zebra". A final sort by
+	// (PkgPath, Name) must put testmod/apkg.Zebra before testmod/zpkg.Apple.
+	dir := setupTestModule(t, map[string]string{
+		"zpkg/model.go": `package zpkg
+
+import "github.com/alternayte/drel"
+
+type Apple struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"apkg/model.go": `package apkg
+
+import "github.com/alternayte/drel"
+
+type Zebra struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./apkg", "./zpkg"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 2)
+
+	// Deterministic: sorted by PkgPath then Name regardless of pattern order.
+	assert.Equal(t, "testmod/apkg", models[0].PkgPath)
+	assert.Equal(t, "Zebra", models[0].Name)
+	assert.Equal(t, "testmod/zpkg", models[1].PkgPath)
+	assert.Equal(t, "Apple", models[1].Name)
+
+	// Re-scanning with the patterns reversed yields the identical order.
+	models2, err := ScanPackages([]string{"./zpkg", "./apkg"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models2, 2)
+	assert.Equal(t, models[0].PkgPath, models2[0].PkgPath)
+	assert.Equal(t, models[0].Name, models2[0].Name)
+	assert.Equal(t, models[1].PkgPath, models2[1].PkgPath)
+	assert.Equal(t, models[1].Name, models2[1].Name)
+}
