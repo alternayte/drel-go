@@ -21,6 +21,8 @@
 //	go run .
 package main
 
+//go:generate go run ../../cmd/drel generate
+
 import (
 	"context"
 	"fmt"
