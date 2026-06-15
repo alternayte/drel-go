@@ -2,7 +2,6 @@ package drel_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/alternayte/drel"
@@ -199,5 +198,3 @@ func TestBulkInsert_Versioned_InitializesVersionToOne(t *testing.T) {
 	}
 }
 
-// guard against confusing a guard error with a generic insert error
-var _ = errors.Is
