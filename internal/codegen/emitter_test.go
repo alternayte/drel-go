@@ -1,10 +1,13 @@
 package codegen
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEmitModelFile_SimpleModel(t *testing.T) {
@@ -376,22 +379,33 @@ func TestEmitModelFile_MultiColVOSnapshotDiff(t *testing.T) {
 	assert.Contains(t, out, `drel.FieldChange{Column: "balance_currency", Value: cur[1]}`)
 }
 
-func TestEmitModelFile_MultiColVOReturnsError(t *testing.T) {
+func TestEmitModelFile_MultiColVOCheckedSucceeds(t *testing.T) {
 	m := ModelInfo{
-		Name:      "Product",
+		Name:      "Account",
 		PkgName:   "models",
 		PKType:    "int",
-		TableName: "products",
+		TableName: "accounts",
 		Fields: []FieldInfo{
 			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
-			{Name: "balance", GoType: "testmod/models.Money", ColumnName: "balance", IsMultiColVO: true, LocalGoType: "Money"},
+			{
+				Name:          "balance",
+				GoType:        "testmod/models.Money",
+				ColumnName:    "balance_amount",
+				LocalGoType:   "Money",
+				IsMultiColVO:  true,
+				MultiColNames: []string{"balance_amount", "balance_currency"},
+				MultiColTypes: []string{"text", "text"},
+			},
 		},
 	}
 
-	_, err := EmitModelFileChecked(m)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "MultiColumnMapper")
-	assert.Contains(t, err.Error(), "balance")
+	out, err := EmitModelFileChecked(m)
+	require.NoError(t, err)
+	assert.Contains(t, out, "func accountMultiVals(v Money) []any {")
+
+	// The emitted source must be syntactically valid Go.
+	_, perr := parser.ParseFile(token.NewFileSet(), "account_drel.go", out, parser.AllErrors)
+	require.NoError(t, perr)
 }
 
 func TestEmitModelFile_SoftDeleteMeta(t *testing.T) {

@@ -185,13 +185,9 @@ func columnFields(fields []FieldInfo) []FieldInfo {
 }
 
 // EmitModelFileChecked generates the per-model file, returning an error if the
-// model uses unsupported features.
+// model uses unsupported features. Multi-column value objects are fully
+// supported (see emitMultiValHelpers / expanded scan/diff/DDL).
 func EmitModelFileChecked(m ModelInfo) (string, error) {
-	for _, f := range m.Fields {
-		if f.IsMultiColVO {
-			return "", fmt.Errorf("drel: model %q field %q implements MultiColumnMapper but multi-column value objects are not yet supported in code generation. Use a single-column ColumnMapper instead, or remove the MultiColumnMapper implementation", m.Name, f.Name)
-		}
-	}
 	return EmitModelFile(m), nil
 }
 
