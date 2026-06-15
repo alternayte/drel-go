@@ -53,3 +53,28 @@ func TestUnitOfWork_RollbackRunsWithCancelledContext(t *testing.T) {
 	n := countItems(t, engine)
 	assert.Equal(t, 0, n, "uow rollback must run even when caller ctx is cancelled")
 }
+
+func TestTransaction_FailsFastOnCancelledContext(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	called := false
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, called, "fn must not run when ctx is already cancelled")
+}
+
+func TestUnitOfWork_FailsFastOnCancelledContext(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	uow := engine.NewUnitOfWork()
+	drel.NewUoWRepository(uow, sqliteItemMeta).Add(&sqliteItem{Title: "x"})
+	err := uow.SaveChanges(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+}

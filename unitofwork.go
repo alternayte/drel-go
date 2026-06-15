@@ -36,6 +36,9 @@ func (e *Engine) NewUnitOfWork() *UnitOfWork {
 // success, dispatches recorded domain events to after-commit hooks. The unit of
 // work may continue to be used after a successful SaveChanges.
 func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("drel: save changes: %w", err)
+	}
 	dbTx, err := u.engine.drv.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("drel: begin: %w", err)

@@ -44,6 +44,10 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 		opt(cfg)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("drel: transaction: %w", err)
+	}
+
 	var dbTx driver.Tx
 	var err error
 	if cfg.isolation != nil {
