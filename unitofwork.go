@@ -45,11 +45,11 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 	committed := false
 	defer func() {
 		if p := recover(); p != nil {
-			_ = dbTx.Rollback(ctx)
+			_ = dbTx.Rollback(context.WithoutCancel(ctx))
 			panic(p)
 		}
 		if !committed {
-			_ = dbTx.Rollback(ctx)
+			_ = dbTx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
 

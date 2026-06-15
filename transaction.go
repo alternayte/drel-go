@@ -72,11 +72,11 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 
 	defer func() {
 		if p := recover(); p != nil {
-			_ = dbTx.Rollback(ctx)
+			_ = dbTx.Rollback(context.WithoutCancel(ctx))
 			panic(p)
 		}
 		if retErr != nil {
-			_ = dbTx.Rollback(ctx)
+			_ = dbTx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
 

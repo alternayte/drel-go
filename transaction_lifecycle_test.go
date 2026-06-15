@@ -1,0 +1,55 @@
+package drel_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/alternayte/drel"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// When the caller's context is already cancelled and fn returns an error, the
+// deferred rollback must still run and clean up so the row is not persisted.
+// With the old code (Rollback(ctx) on a dead ctx) cleanup is unreliable; with
+// a detached rollback ctx the row must never appear.
+func TestTransaction_RollbackRunsWithCancelledContext(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sentinel := errors.New("boom")
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		drel.NewTxRepository(tx, sqliteItemMeta).Add(&sqliteItem{Title: "ghost"})
+		if e := tx.SaveChanges(ctx); e != nil {
+			return e
+		}
+		// Cancel the caller context *before* returning the error, so the
+		// deferred rollback executes against an already-cancelled ctx.
+		cancel()
+		return sentinel
+	})
+	require.ErrorIs(t, err, sentinel)
+
+	// The insert must have been rolled back; cancellation must not skip cleanup.
+	n := countItems(t, engine)
+	assert.Equal(t, 0, n, "rollback must run even when caller ctx is cancelled")
+}
+
+func TestUnitOfWork_RollbackRunsWithCancelledContext(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	uow := engine.NewUnitOfWork()
+	drel.NewUoWRepository(uow, sqliteItemMeta).Add(&sqliteItem{Title: "ghost"})
+
+	// Cancel before SaveChanges so begin succeeds but the flush/commit path
+	// observes a dead ctx; rollback must still clean up.
+	cancel()
+	err := uow.SaveChanges(ctx)
+	require.Error(t, err)
+
+	n := countItems(t, engine)
+	assert.Equal(t, 0, n, "uow rollback must run even when caller ctx is cancelled")
+}
