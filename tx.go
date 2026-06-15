@@ -8,6 +8,7 @@ import (
 
 	"github.com/alternayte/drel/internal/ast"
 	"github.com/alternayte/drel/internal/dberr"
+	"github.com/alternayte/drel/internal/dialect"
 	"github.com/alternayte/drel/internal/driver"
 )
 
@@ -38,6 +39,42 @@ func (tx *Tx) Exec(ctx context.Context, sql string, args ...any) (int64, error) 
 // QueryRow executes a raw SQL query within the transaction that returns at most one row.
 func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	return tx.queryRowInternal(ctx, sql, args...)
+}
+
+// AdvisoryLock acquires a Postgres transaction-scoped advisory lock for key,
+// blocking until it is granted. The lock is released automatically when the
+// transaction commits or rolls back. On SQLite this is a documented no-op
+// (returns nil) because SQLite serializes writers at the database level and has
+// no advisory-lock primitive. Must be called within a transaction.
+func (tx *Tx) AdvisoryLock(ctx context.Context, key int64) error {
+	res, supported := tx.engine.dialect().AdvisoryLockSQL(key, dialect.AdvisoryLockBlocking)
+	if !supported {
+		return nil
+	}
+	row := tx.queryRowInternal(ctx, res.SQL, res.Args...)
+	var ignored any
+	if err := row.Scan(&ignored); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TryAdvisoryLock attempts to acquire a Postgres transaction-scoped advisory
+// lock for key without blocking, reporting whether it was acquired. The lock is
+// released automatically when the transaction commits or rolls back. On SQLite
+// this is a documented no-op and always returns (true, nil). Must be called
+// within a transaction.
+func (tx *Tx) TryAdvisoryLock(ctx context.Context, key int64) (bool, error) {
+	res, supported := tx.engine.dialect().AdvisoryLockSQL(key, dialect.AdvisoryLockTry)
+	if !supported {
+		return true, nil
+	}
+	row := tx.queryRowInternal(ctx, res.SQL, res.Args...)
+	var acquired bool
+	if err := row.Scan(&acquired); err != nil {
+		return false, err
+	}
+	return acquired, nil
 }
 
 func (tx *Tx) execInternal(ctx context.Context, sql string, args ...any) (int64, error) {
