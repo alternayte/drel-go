@@ -533,3 +533,25 @@ func TestBuildEnums_OnlyStringEnums(t *testing.T) {
 	assert.Equal(t, "role", enums[0].Name)
 	assert.False(t, enums[0].IsInt)
 }
+
+func TestGenerateCreateTable_Postgres_IntEnum(t *testing.T) {
+	m := ModelInfo{Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+		{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+			IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1", "2"}},
+	}}
+	sql := GenerateCreateTable(m, nil, "postgres")
+	// Integer column type, NOT a quoted enum type name.
+	assert.Contains(t, sql, `"priority" integer NOT NULL CHECK("priority" IN (0, 1, 2))`)
+	assert.NotContains(t, sql, `"priority" "priority"`)
+}
+
+func TestGenerateCreateTable_SQLite_IntEnum(t *testing.T) {
+	m := ModelInfo{Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+		{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+			IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1", "2"}},
+	}}
+	sql := GenerateCreateTable(m, nil, "sqlite")
+	// INTEGER column, unquoted numeric CHECK.
+	assert.Contains(t, sql, `"priority" INTEGER NOT NULL CHECK("priority" IN (0, 1, 2))`)
+	assert.NotContains(t, sql, "TEXT")
+}

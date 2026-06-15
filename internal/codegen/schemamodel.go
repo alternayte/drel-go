@@ -173,7 +173,10 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 			sqlType = GoTypeToSQL(f.VOBaseType, dialect)
 		}
 		if f.IsEnum {
-			if dialect == "sqlite" {
+			if f.EnumIsInt {
+				// Integer enum: underlying integer column type on both dialects.
+				sqlType = GoTypeToSQL(f.EnumBaseType, dialect)
+			} else if dialect == "sqlite" {
 				sqlType = "TEXT"
 			} else {
 				sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
@@ -184,8 +187,10 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 		}
 		c.Type = sqlType
 
-		if f.IsEnum && dialect == "sqlite" && len(f.EnumValues) > 0 {
-			c.Check = fmt.Sprintf("%s IN (%s)", quoteIdent(f.ColumnName), quoteEnumValues(f.EnumValues))
+		if f.IsEnum && len(f.EnumValues) > 0 && (dialect == "sqlite" || f.EnumIsInt) {
+			// SQLite enums (string + int) and Postgres int enums are enforced via
+			// a column CHECK. Postgres string enums rely on the CREATE TYPE enum.
+			c.Check = fmt.Sprintf("%s IN (%s)", quoteIdent(f.ColumnName), enumValueList(f.EnumValues, !f.EnumIsInt))
 		} else if f.CheckExpr != "" {
 			c.Check = f.CheckExpr
 		}
@@ -334,6 +339,16 @@ func buildPivotTables(models []ModelInfo, dialect string) []Table {
 		}
 	}
 	return pivots
+}
+
+// enumValueList renders enum values as a comma-separated list. When quoted is
+// true each value is single-quoted (string enums); when false the values are
+// emitted as bare numeric literals (integer enums).
+func enumValueList(values []string, quoted bool) string {
+	if quoted {
+		return quoteEnumValues(values)
+	}
+	return strings.Join(values, ", ")
 }
 
 // quoteEnumValues renders enum values as a SQL-quoted comma-separated list.
