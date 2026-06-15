@@ -898,6 +898,36 @@ func TestSQLite_BuildSelectGroupByWithWhere(t *testing.T) {
 	assert.Equal(t, []any{"2024-01-01"}, result.Args)
 }
 
+func TestSQLite_BuildUpdate_DeduplicatesColumns(t *testing.T) {
+	s := New()
+	res := s.BuildUpdate("a_products",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "x"},
+			{Column: "updated_by", Value: "alice"},
+			{Column: "updated_by", Value: "bob"},
+		},
+		"id", 5)
+	assert.Equal(t,
+		`UPDATE "a_products" SET "name" = ?, "updated_by" = ? WHERE "id" = ?`,
+		res.SQL)
+	assert.Equal(t, []any{"x", "bob", 5}, res.Args)
+}
+
+func TestSQLite_BuildUpdateVersioned_DeduplicatesColumns(t *testing.T) {
+	s := New()
+	res := s.BuildUpdateVersioned("a_products",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "x"},
+			{Column: "updated_by", Value: "alice"},
+			{Column: "updated_by", Value: "bob"},
+		},
+		"id", 5, "version", 2)
+	assert.Equal(t,
+		`UPDATE "a_products" SET "name" = ?, "updated_by" = ?, "version" = "version" + 1 WHERE "id" = ? AND "version" = ?`,
+		res.SQL)
+	assert.Equal(t, []any{"x", "bob", 5, 2}, res.Args)
+}
+
 func TestSQLite_BuildDeleteVersioned(t *testing.T) {
 	s := New()
 	res := s.BuildDeleteVersioned("v_products", "id", 7, "version", 3)

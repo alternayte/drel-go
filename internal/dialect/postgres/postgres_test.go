@@ -726,6 +726,37 @@ func TestBuildSelectGroupByWithWhere(t *testing.T) {
 	assert.Equal(t, []any{"2024-01-01"}, result.Args)
 }
 
+func TestPostgres_BuildUpdate_DeduplicatesColumns(t *testing.T) {
+	pg := New()
+	res := pg.BuildUpdate("a_products",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "x"},
+			{Column: "updated_by", Value: "alice"},
+			{Column: "updated_by", Value: "bob"}, // duplicate: last wins
+		},
+		"id", 5)
+	// Single updated_by assignment, keeping the last value (bob -> $3 ... pkVal -> $4).
+	assert.Equal(t,
+		`UPDATE "a_products" SET "name" = $1, "updated_by" = $2 WHERE "id" = $3`,
+		res.SQL)
+	assert.Equal(t, []any{"x", "bob", 5}, res.Args)
+}
+
+func TestPostgres_BuildUpdateVersioned_DeduplicatesColumns(t *testing.T) {
+	pg := New()
+	res := pg.BuildUpdateVersioned("a_products",
+		[]dialect.ColumnValue{
+			{Column: "name", Value: "x"},
+			{Column: "updated_by", Value: "alice"},
+			{Column: "updated_by", Value: "bob"},
+		},
+		"id", 5, "version", 2)
+	assert.Equal(t,
+		`UPDATE "a_products" SET "name" = $1, "updated_by" = $2, "version" = "version" + 1 WHERE "id" = $3 AND "version" = $4 RETURNING "version"`,
+		res.SQL)
+	assert.Equal(t, []any{"x", "bob", 5, 2}, res.Args)
+}
+
 func TestPostgres_BuildDeleteVersioned(t *testing.T) {
 	pg := New()
 	res := pg.BuildDeleteVersioned("v_products", "id", 7, "version", 3)

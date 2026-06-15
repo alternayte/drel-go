@@ -12,6 +12,24 @@ type Postgres struct{}
 
 func New() *Postgres { return &Postgres{} }
 
+// dedupLastWins returns the change set with duplicate columns collapsed to a
+// single entry, keeping the LAST assignment for each column and preserving the
+// order of first appearance. This prevents "multiple assignments to the same
+// column" SQL errors (e.g. an audit updated_by appended twice).
+func dedupLastWins(changes []dialect.ColumnValue) []dialect.ColumnValue {
+	idx := make(map[string]int, len(changes))
+	out := make([]dialect.ColumnValue, 0, len(changes))
+	for _, cv := range changes {
+		if i, ok := idx[cv.Column]; ok {
+			out[i] = cv // last wins; keep original position
+			continue
+		}
+		idx[cv.Column] = len(out)
+		out = append(out, cv)
+	}
+	return out
+}
+
 func (p *Postgres) SupportsReturning() bool { return true }
 
 func (p *Postgres) Now() string { return "NOW()" }
@@ -312,6 +330,7 @@ func (p *Postgres) BuildInsert(table string, columns []string, values []any, ret
 }
 
 func (p *Postgres) BuildUpdate(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any) dialect.Result {
+	changes = dedupLastWins(changes)
 	var b strings.Builder
 	var args []any
 	paramIdx := 1
@@ -367,6 +386,7 @@ func (p *Postgres) BuildSoftDeleteVersioned(table string, pkColumn string, pkVal
 }
 
 func (p *Postgres) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	changes = dedupLastWins(changes)
 	var b strings.Builder
 	var args []any
 	paramIdx := 1

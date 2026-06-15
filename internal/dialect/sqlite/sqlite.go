@@ -12,6 +12,24 @@ type SQLite struct{}
 
 func New() *SQLite { return &SQLite{} }
 
+// dedupLastWins returns the change set with duplicate columns collapsed to a
+// single entry, keeping the LAST assignment for each column and preserving the
+// order of first appearance. This prevents "duplicate column name" SQL errors
+// (e.g. an audit updated_by appended twice).
+func dedupLastWins(changes []dialect.ColumnValue) []dialect.ColumnValue {
+	idx := make(map[string]int, len(changes))
+	out := make([]dialect.ColumnValue, 0, len(changes))
+	for _, cv := range changes {
+		if i, ok := idx[cv.Column]; ok {
+			out[i] = cv
+			continue
+		}
+		idx[cv.Column] = len(out)
+		out = append(out, cv)
+	}
+	return out
+}
+
 func (s *SQLite) SupportsReturning() bool { return false }
 
 func (s *SQLite) Now() string { return "CURRENT_TIMESTAMP" }
@@ -290,6 +308,7 @@ func (s *SQLite) BuildInsert(table string, columns []string, values []any, _ []s
 }
 
 func (s *SQLite) BuildUpdate(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any) dialect.Result {
+	changes = dedupLastWins(changes)
 	var b strings.Builder
 	var args []any
 	b.WriteString("UPDATE ")
@@ -351,6 +370,7 @@ func (s *SQLite) BuildSoftDeleteVersioned(table string, pkColumn string, pkValue
 // SQLite does not support RETURNING, so the new version cannot be retrieved
 // from the statement itself; the caller must increment the version client-side.
 func (s *SQLite) BuildUpdateVersioned(table string, changes []dialect.ColumnValue, pkColumn string, pkValue any, versionCol string, currentVersion int) dialect.Result {
+	changes = dedupLastWins(changes)
 	var b strings.Builder
 	var args []any
 
