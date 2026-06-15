@@ -74,6 +74,69 @@ func TestScanner_MultiColTypesDefaultText(t *testing.T) {
 	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
 }
 
+func TestScanner_SingleColVO_HasEqual(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import (
+	"database/sql/driver"
+	"fmt"
+
+	"github.com/alternayte/drel"
+)
+
+// Email has no Equal method.
+type Email struct{ address string }
+
+func (e Email) Value() (driver.Value, error) { return e.address, nil }
+func (e *Email) Scan(src any) error {
+	s, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	e.address = s
+	return nil
+}
+
+// Tags is a slice-backed VO with an Equal method.
+type Tags struct{ items []string }
+
+func (tg Tags) Value() (driver.Value, error) { return "", nil }
+func (tg *Tags) Scan(src any) error          { return nil }
+func (tg Tags) Equal(other Tags) bool {
+	if len(tg.items) != len(other.items) {
+		return false
+	}
+	for i := range tg.items {
+		if tg.items[i] != other.items[i] {
+			return false
+		}
+	}
+	return true
+}
+
+type Account struct {
+	drel.Model[int]
+	email Email ` + "`db:\"email\"`" + `
+	tags  Tags  ` + "`db:\"tags\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	fields := models[0].Fields
+	require.Len(t, fields, 2)
+
+	assert.True(t, fields[0].IsVO)
+	assert.False(t, fields[0].HasEqual, "Email has no Equal method")
+
+	assert.True(t, fields[1].IsVO)
+	assert.True(t, fields[1].HasEqual, "Tags has an Equal method")
+}
+
 func TestScanner_SingleColVO_BaseType(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
 		"models/model.go": `package models
