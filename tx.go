@@ -31,14 +31,34 @@ func (tx *Tx) SaveChanges(ctx context.Context) error {
 	return nil
 }
 
-// Exec executes a raw SQL statement within the transaction.
+// Exec executes a raw SQL statement within the transaction. $N placeholders are
+// rewritten to ? on dialects that use ? (SQLite/libSQL).
 func (tx *Tx) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	if needsPlaceholderRewrite(tx.engine) {
+		sql = rewritePlaceholders(sql)
+	}
 	return tx.execInternal(ctx, sql, args...)
 }
 
-// QueryRow executes a raw SQL query within the transaction that returns at most one row.
+// QueryRow executes a raw SQL query within the transaction that returns at most
+// one row. $N placeholders are rewritten to ? on dialects that use ?
+// (SQLite/libSQL).
 func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	if needsPlaceholderRewrite(tx.engine) {
+		sql = rewritePlaceholders(sql)
+	}
 	return tx.queryRowInternal(ctx, sql, args...)
+}
+
+// Query executes a raw SQL query within the transaction and returns the result
+// rows. The caller must close the returned Rows when done. $N placeholders are
+// rewritten to ? on dialects that use ? (SQLite/libSQL). It mirrors Engine.Query
+// so the raw escape hatch is identical inside and outside a transaction.
+func (tx *Tx) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	if needsPlaceholderRewrite(tx.engine) {
+		sql = rewritePlaceholders(sql)
+	}
+	return tx.queryInternal(ctx, sql, args...)
 }
 
 // AdvisoryLock acquires a Postgres transaction-scoped advisory lock for key,

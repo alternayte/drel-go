@@ -266,18 +266,30 @@ func (e *Engine) readDriver(primary bool) driver.Driver {
 }
 
 // Exec executes a raw SQL statement and returns the number of rows affected.
+// $N placeholders are rewritten to ? on dialects that use ? (SQLite/libSQL).
 func (e *Engine) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	if needsPlaceholderRewrite(e) {
+		sql = rewritePlaceholders(sql)
+	}
 	return e.execInternal(ctx, sql, args...)
 }
 
 // Query executes a raw SQL query and returns the result rows.
-// The caller must close the returned Rows when done.
+// The caller must close the returned Rows when done. $N placeholders are
+// rewritten to ? on dialects that use ? (SQLite/libSQL).
 func (e *Engine) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	if needsPlaceholderRewrite(e) {
+		sql = rewritePlaceholders(sql)
+	}
 	return e.queryInternal(ctx, sql, args...)
 }
 
 // QueryRow executes a raw SQL query that is expected to return at most one row.
+// $N placeholders are rewritten to ? on dialects that use ? (SQLite/libSQL).
 func (e *Engine) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	if needsPlaceholderRewrite(e) {
+		sql = rewritePlaceholders(sql)
+	}
 	return e.queryRowInternal(ctx, sql, args...)
 }
 
