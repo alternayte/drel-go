@@ -547,7 +547,9 @@ func TestSQLite_RawPlaceholder_EscapedSingleQuote(t *testing.T) {
 	assert.Equal(t, []any{1}, r.Args)
 }
 
-func TestSQLite_RawPlaceholder_MismatchReturnsError(t *testing.T) {
+func TestSQLite_RawPlaceholder_MismatchDoesNotInjectError(t *testing.T) {
+	// After removing the ERROR: fallback, a mismatch (constructed directly via
+	// AST, bypassing Raw's panic) emits partial SQL but does NOT inject "ERROR:".
 	s := New()
 	sql := "a = ? AND b = ?"
 	node := ast.SelectNode{
@@ -560,7 +562,7 @@ func TestSQLite_RawPlaceholder_MismatchReturnsError(t *testing.T) {
 		Type: ast.QuerySelect,
 	}
 	r := s.BuildSelect(node)
-	assert.Contains(t, r.SQL, "ERROR")
+	assert.NotContains(t, r.SQL, "ERROR:")
 }
 
 // ─── BuildInsert ─────────────────────────────────────────────────────────────
@@ -969,6 +971,24 @@ func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
 		`UPDATE "v_products" SET "deleted_at" = CURRENT_TIMESTAMP, "version" = "version" + 1 WHERE "id" = ? AND "version" = ? RETURNING "id"`,
 		res.SQL)
 	assert.Equal(t, []any{7, 3}, res.Args)
+}
+
+func TestSQLite_BuildSelect_RawNoErrorInjection(t *testing.T) {
+	s := New()
+	raw := "note = 'huh?' AND n = ?"
+	node := ast.SelectNode{
+		Table:   "notes",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Raw:     &raw,
+			RawArgs: []any{1},
+		},
+	}
+	got := s.BuildSelect(node)
+	assert.Equal(t, `SELECT "id" FROM "notes" WHERE note = 'huh?' AND n = ?`, got.SQL)
+	assert.NotContains(t, got.SQL, "ERROR:")
+	assert.Equal(t, []any{1}, got.Args)
 }
 
 func TestSQLite_BuildSelect_EmptyClauses(t *testing.T) {

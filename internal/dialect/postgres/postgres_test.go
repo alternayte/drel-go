@@ -775,6 +775,24 @@ func TestPostgres_BuildSoftDeleteVersioned(t *testing.T) {
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
 
+func TestPostgres_BuildSelect_RawNoErrorInjection(t *testing.T) {
+	pg := New()
+	raw := "note = 'huh?' AND n = ?"
+	node := ast.SelectNode{
+		Table:   "notes",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Raw:     &raw,
+			RawArgs: []any{1},
+		},
+	}
+	got := pg.BuildSelect(node)
+	assert.Equal(t, `SELECT "id" FROM "notes" WHERE note = 'huh?' AND n = $1`, got.SQL)
+	assert.NotContains(t, got.SQL, "ERROR:")
+	assert.Equal(t, []any{1}, got.Args)
+}
+
 func TestPostgres_BuildSelect_EmptyClauses(t *testing.T) {
 	pg := New()
 
@@ -865,7 +883,11 @@ func TestPostgres_BuildSelect_EmptyIn(t *testing.T) {
 	assert.Empty(t, got.Args)
 }
 
-func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
+func TestRawPlaceholder_MismatchDoesNotInjectError(t *testing.T) {
+	// After removing the ERROR: fallback, a mismatch (constructed directly via
+	// AST, bypassing Raw's panic) emits partial SQL but does NOT inject "ERROR:".
+	// In normal usage Raw() panics before reaching the emitter, so this path is
+	// only reachable via direct AST construction.
 	p := New()
 	sql := "a = ? AND b = ?"
 	node := ast.SelectNode{
@@ -878,7 +900,7 @@ func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
 		Type: ast.QuerySelect,
 	}
 	r := p.BuildSelect(node)
-	assert.Contains(t, r.SQL, "ERROR")
+	assert.NotContains(t, r.SQL, "ERROR:")
 }
 
 func TestPostgres_BuildSelect_PartitionLimit(t *testing.T) {

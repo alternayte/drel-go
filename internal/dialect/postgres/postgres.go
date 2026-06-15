@@ -233,7 +233,6 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 	if clause.Raw != nil {
 		raw := *clause.Raw
 		argIdx := 0
-		placeholderCount := 0
 		state := 0 // 0=normal, 1=single-quote, 2=double-quote, 3=dollar-quote
 		for i := 0; i < len(raw); i++ {
 			ch := raw[i]
@@ -251,7 +250,6 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 					i++
 					b.WriteByte(raw[i])
 				} else if ch == '?' {
-					placeholderCount++
 					if argIdx < len(clause.RawArgs) {
 						b.WriteString(fmt.Sprintf("$%d", paramIdx))
 						*args = append(*args, clause.RawArgs[argIdx])
@@ -287,11 +285,6 @@ func writeWhere(b *strings.Builder, args *[]any, clause ast.WhereClause, paramId
 					state = 0
 				}
 			}
-		}
-		// Defense-in-depth: validate placeholder count matches args.
-		if placeholderCount != len(clause.RawArgs) {
-			b.Reset()
-			b.WriteString(fmt.Sprintf("ERROR: raw predicate has %d placeholder(s) but %d argument(s)", placeholderCount, len(clause.RawArgs)))
 		}
 		return paramIdx
 	}
