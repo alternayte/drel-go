@@ -1,10 +1,15 @@
 package drel
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/alternayte/drel/internal/ast"
 )
+
+// ErrRawArgMismatch is returned by RawErr when the number of ? placeholders in
+// the raw SQL does not match the number of supplied arguments.
+var ErrRawArgMismatch = errors.New("drel: raw predicate placeholder/argument count mismatch")
 
 type Predicate struct {
 	clause ast.WhereClause
@@ -187,6 +192,22 @@ func Raw(sql string, args ...any) Predicate {
 			RawArgs: args,
 		},
 	}
+}
+
+// RawErr is like Raw but returns an error wrapping ErrRawArgMismatch on a
+// placeholder/argument-count mismatch instead of panicking. Use it when the raw
+// SQL or its argument list is built dynamically and a mismatch is recoverable.
+func RawErr(sql string, args ...any) (Predicate, error) {
+	count := countRawPlaceholders(sql)
+	if count != len(args) {
+		return Predicate{}, fmt.Errorf("%w: %d placeholder(s) but %d argument(s)", ErrRawArgMismatch, count, len(args))
+	}
+	return Predicate{
+		clause: ast.WhereClause{
+			Raw:     &sql,
+			RawArgs: args,
+		},
+	}, nil
 }
 
 func (p Predicate) ToAST() ast.WhereClause {

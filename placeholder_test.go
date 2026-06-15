@@ -1,6 +1,7 @@
 package drel
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/alternayte/drel/internal/dialect/postgres"
@@ -127,5 +128,29 @@ func TestNeedsPlaceholderRewrite(t *testing.T) {
 	lite := &Engine{dia: dialectsqlite.New()}
 	if !needsPlaceholderRewrite(lite) {
 		t.Fatal("sqlite engine must rewrite placeholders")
+	}
+}
+
+func TestRawErr_ReturnsErrorOnMismatch(t *testing.T) {
+	_, err := RawErr("a = ? AND b = ?", 1)
+	if err == nil {
+		t.Fatal("expected error for 2 placeholders but 1 arg, got nil")
+	}
+	if !errors.Is(err, ErrRawArgMismatch) {
+		t.Fatalf("expected ErrRawArgMismatch, got %v", err)
+	}
+}
+
+func TestRawErr_SucceedsOnMatch(t *testing.T) {
+	p, err := RawErr("note = 'huh?' AND n = ?", 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	clause := p.ToAST()
+	if clause.Raw == nil {
+		t.Fatal("expected non-nil Raw clause")
+	}
+	if len(clause.RawArgs) != 1 || clause.RawArgs[0] != 7 {
+		t.Fatalf("expected RawArgs [7], got %v", clause.RawArgs)
 	}
 }
