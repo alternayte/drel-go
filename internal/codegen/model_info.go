@@ -42,6 +42,7 @@ type FieldInfo struct {
 	Indexed        bool   // db tag option: index on this column
 	IndexName      string // explicit index name (db:"...,index=name"); fields sharing a name form a composite index
 	CheckExpr      string // db tag option: column CHECK constraint expression (db:"...,check=expr")
+	Default        string // db tag option: column DEFAULT value (db:"...,default=expr")
 	TypeOverride   string // db tag option: explicit SQL type (db:"...,type=jsonb"); overrides inference
 }
 

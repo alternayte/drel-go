@@ -205,6 +205,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 			Indexed:      dbOpts.indexed,
 			IndexName:    dbOpts.indexName,
 			CheckExpr:    dbOpts.check,
+			Default:      dbOpts.defaultVal,
 			TypeOverride: dbOpts.typeOverride,
 		}
 
@@ -305,6 +306,7 @@ type dbTagOpts struct {
 	indexed      bool
 	indexName    string
 	check        string
+	defaultVal   string
 	typeOverride string
 }
 
@@ -338,6 +340,8 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 			opts.indexName = strings.TrimSpace(strings.TrimPrefix(p, "index="))
 		case strings.HasPrefix(p, "check="):
 			opts.check = strings.TrimSpace(strings.TrimPrefix(p, "check="))
+		case strings.HasPrefix(p, "default="):
+			opts.defaultVal = strings.TrimSpace(strings.TrimPrefix(p, "default="))
 		case strings.HasPrefix(p, "type="):
 			opts.typeOverride = strings.TrimSpace(strings.TrimPrefix(p, "type="))
 		}

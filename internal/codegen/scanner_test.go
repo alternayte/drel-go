@@ -418,3 +418,42 @@ type Ticket struct {
 	assert.Equal(t, "int", f.EnumBaseType)
 	assert.Equal(t, []string{"0", "1", "2"}, f.EnumValues)
 }
+
+func TestParseDBTag_Default(t *testing.T) {
+	col, opts := parseDBTag(`db:"role,default=user"`)
+	assert.Equal(t, "role", col)
+	assert.Equal(t, "user", opts.defaultVal)
+}
+
+func TestScanner_EnumDefault_RecordedOnField(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Role string
+
+const (
+	RoleAdmin Role = "admin"
+	RoleUser  Role = "user"
+)
+
+type Account struct {
+	drel.Model[int]
+	role Role ` + "`db:\"role,default=user\"`" + `
+}
+`,
+	})
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	var f *FieldInfo
+	for i := range models[0].Fields {
+		if models[0].Fields[i].ColumnName == "role" {
+			f = &models[0].Fields[i]
+		}
+	}
+	require.NotNil(t, f)
+	assert.Equal(t, "user", f.Default)
+}
