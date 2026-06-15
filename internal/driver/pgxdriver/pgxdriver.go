@@ -23,15 +23,7 @@ func New(ctx context.Context, dsn string, pc ...driver.PoolConfig) (*PgxDriver, 
 		return nil, fmt.Errorf("pgxdriver: parse dsn: %w", err)
 	}
 	if len(pc) > 0 {
-		if pc[0].MaxConns > 0 {
-			cfg.MaxConns = int32(pc[0].MaxConns)
-		}
-		if pc[0].ConnMaxLifetime > 0 {
-			cfg.MaxConnLifetime = pc[0].ConnMaxLifetime
-		}
-		if pc[0].ConnMaxIdleTime > 0 {
-			cfg.MaxConnIdleTime = pc[0].ConnMaxIdleTime
-		}
+		applyPoolConfig(cfg, pc[0])
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -42,6 +34,31 @@ func New(ctx context.Context, dsn string, pc ...driver.PoolConfig) (*PgxDriver, 
 		return nil, fmt.Errorf("pgxdriver: ping: %w", err)
 	}
 	return &PgxDriver{pool: pool}, nil
+}
+
+// applyPoolConfig maps a driver.PoolConfig onto a parsed pgxpool config. Zero
+// values are left at the pgx/DSN defaults.
+func applyPoolConfig(cfg *pgxpool.Config, pc driver.PoolConfig) {
+	if pc.MaxConns > 0 {
+		cfg.MaxConns = int32(pc.MaxConns)
+	}
+	if pc.ConnMaxLifetime > 0 {
+		cfg.MaxConnLifetime = pc.ConnMaxLifetime
+	}
+	if pc.ConnMaxIdleTime > 0 {
+		cfg.MaxConnIdleTime = pc.ConnMaxIdleTime
+	}
+	if pc.SimpleProtocol {
+		// PgBouncer (transaction/statement pooling) rejects server-side prepared
+		// statements; the simple protocol avoids them entirely.
+		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	}
+}
+
+// parseConfigForTest is a thin test seam exposing pgxpool.ParseConfig to the
+// package's white-box tests without a live database.
+func parseConfigForTest(dsn string) (*pgxpool.Config, error) {
+	return pgxpool.ParseConfig(dsn)
 }
 
 // QueryRow executes a query that returns at most one row.

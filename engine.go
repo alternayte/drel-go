@@ -187,6 +187,14 @@ func WithConnMaxIdleTime(d time.Duration) Option {
 	return func(cfg *engineConfig) { cfg.poolConfig.ConnMaxIdleTime = d }
 }
 
+// WithSimpleProtocol makes the Postgres driver use pgx's simple query protocol
+// (no server-side prepared statements), required for PgBouncer transaction or
+// statement pooling. It is a no-op for SQLite and libSQL/Turso. The equivalent
+// DSN escape hatch is "?default_query_exec_mode=simple_protocol".
+func WithSimpleProtocol() Option {
+	return func(cfg *engineConfig) { cfg.poolConfig.SimpleProtocol = true }
+}
+
 // WithAuthToken sets the authentication token for a libSQL/Turso connection.
 // It is appended to the DSN as the authToken query parameter.
 func WithAuthToken(token string) Option {

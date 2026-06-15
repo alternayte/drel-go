@@ -11,6 +11,10 @@ type PoolConfig struct {
 	MaxConns        int           // maximum open connections
 	ConnMaxLifetime time.Duration // recycle connections older than this
 	ConnMaxIdleTime time.Duration // close connections idle longer than this
+	// SimpleProtocol, when true, makes the Postgres driver use pgx's simple
+	// query protocol (no server-side prepared statements) for compatibility with
+	// PgBouncer transaction/statement pooling. Ignored by SQLite/libSQL.
+	SimpleProtocol bool
 }
 
 // PoolStat is a dialect-neutral snapshot of connection-pool utilisation, used
