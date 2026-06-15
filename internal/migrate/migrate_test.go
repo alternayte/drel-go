@@ -60,6 +60,14 @@ func TestWriteMigration(t *testing.T) {
 	assert.Equal(t, "DROP TABLE users;", string(down))
 }
 
+func TestNewRunner_Dialect(t *testing.T) {
+	r := NewRunner(nil, "/tmp/migrations", "postgres")
+	assert.Equal(t, "postgres", r.Dialect())
+
+	r2 := NewRunner(nil, "/tmp/migrations", "sqlite")
+	assert.Equal(t, "sqlite", r2.Dialect())
+}
+
 func TestChecksumContent(t *testing.T) {
 	cs1 := ChecksumContent("CREATE TABLE users();")
 	cs2 := ChecksumContent("CREATE TABLE users();")

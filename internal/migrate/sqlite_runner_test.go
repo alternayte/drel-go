@@ -10,6 +10,72 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRunner_Lock_SQLite(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	_, err := migrate.WriteMigration(dir, "init",
+		"CREATE TABLE a (id INTEGER PRIMARY KEY);",
+		"DROP TABLE a;")
+	require.NoError(t, err)
+
+	drv, err := sqlitedriver.New(":memory:")
+	require.NoError(t, err)
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, dir, "sqlite")
+
+	// A normal Up acquires and releases the lock, so a second Up is fine.
+	_, err = runner.Up(ctx)
+	require.NoError(t, err)
+	_, err = runner.Up(ctx)
+	require.NoError(t, err)
+
+	// Simulate a concurrent holder: insert the sentinel row directly, then Up
+	// must report a clear "locked by another process" error.
+	require.NoError(t, migrate.ForceLockForTest(ctx, drv))
+	_, err = runner.Up(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked by another process")
+
+	// Releasing the sentinel lets Up proceed again.
+	require.NoError(t, migrate.ForceUnlockForTest(ctx, drv))
+	_, err = runner.Up(ctx)
+	require.NoError(t, err)
+}
+
+func TestRunner_Pending(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	_, err := migrate.WriteMigration(dir, "init",
+		"CREATE TABLE a (id INTEGER PRIMARY KEY);", "DROP TABLE a;")
+	require.NoError(t, err)
+	_, err = migrate.WriteMigration(dir, "add_b",
+		"CREATE TABLE b (id INTEGER PRIMARY KEY);", "DROP TABLE b;")
+	require.NoError(t, err)
+
+	drv, err := sqlitedriver.New(":memory:")
+	require.NoError(t, err)
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, dir, "sqlite")
+
+	// Before any Up, both migrations are pending.
+	pending, err := runner.Pending(ctx)
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+	assert.Equal(t, "init", pending[0].Name)
+	assert.Equal(t, "add_b", pending[1].Name)
+
+	// After Up, none are pending.
+	_, err = runner.Up(ctx)
+	require.NoError(t, err)
+	pending, err = runner.Pending(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
+
 // TestRunner_SQLite_EndToEnd exercises the migration runner against the SQLite
 // driver: a portable tracking table, multi-statement Up SQL, Status, Lint, and
 // Down all working without any Postgres-specific syntax.
@@ -32,7 +98,7 @@ func TestRunner_SQLite_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "sqlite")
 
 	n, err := runner.Up(ctx)
 	require.NoError(t, err)

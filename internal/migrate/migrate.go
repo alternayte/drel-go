@@ -141,14 +141,85 @@ func ChecksumContent(content string) string {
 
 // Runner executes migrations against a database using the driver interface.
 type Runner struct {
-	drv driver.Driver
-	dir string
+	drv     driver.Driver
+	dir     string
+	dialect string
 }
 
 // NewRunner creates a Runner that reads migration files from dir and executes
-// them against the provided driver.
-func NewRunner(drv driver.Driver, dir string) *Runner {
-	return &Runner{drv: drv, dir: dir}
+// them against the provided driver. dialect ("postgres", "sqlite", or "libsql")
+// selects the migration-lock strategy used by Up/Down.
+func NewRunner(drv driver.Driver, dir, dialect string) *Runner {
+	return &Runner{drv: drv, dir: dir, dialect: dialect}
+}
+
+// Dialect returns the dialect string the Runner was constructed with.
+func (r *Runner) Dialect() string { return r.dialect }
+
+// migrationLockID is a fixed key for the Postgres session advisory lock that
+// serialises migration runs. The value is arbitrary but must be stable.
+const migrationLockID int64 = 728341
+
+// ensureLockTable creates the SQLite/libSQL sentinel lock table if absent.
+func (r *Runner) ensureLockTable(ctx context.Context) error {
+	_, err := r.drv.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS drel_migration_lock (
+			id         INTEGER PRIMARY KEY CHECK (id = 1),
+			locked_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate: create lock table: %w", err)
+	}
+	return nil
+}
+
+// lock acquires the migration lock. It returns a clear error if another process
+// already holds it. The returned func releases the lock and must be deferred.
+func (r *Runner) lock(ctx context.Context) (func(), error) {
+	if r.dialect == "postgres" {
+		// pg_try_advisory_lock returns false when another session holds it; it
+		// auto-releases on disconnect, so no stale lock can survive a crash.
+		row := r.drv.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", migrationLockID)
+		var ok bool
+		if err := row.Scan(&ok); err != nil {
+			return nil, fmt.Errorf("migrate: acquire advisory lock: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("migrate: migrations are locked by another process")
+		}
+		return func() {
+			_, _ = r.drv.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationLockID)
+		}, nil
+	}
+
+	// SQLite / libSQL: a single sentinel row guards the run. INSERT of id=1 fails
+	// (PK violation) when the lock is already held.
+	if err := r.ensureLockTable(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := r.drv.Exec(ctx, "INSERT INTO drel_migration_lock (id) VALUES (1)"); err != nil {
+		return nil, fmt.Errorf("migrate: migrations are locked by another process (delete the drel_migration_lock row to clear a stale lock): %w", err)
+	}
+	return func() {
+		_, _ = r.drv.Exec(ctx, "DELETE FROM drel_migration_lock WHERE id = 1")
+	}, nil
+}
+
+// ForceLockForTest acquires the SQLite/libSQL sentinel lock out of band. Test-only.
+func ForceLockForTest(ctx context.Context, drv driver.Driver) error {
+	r := &Runner{drv: drv, dialect: "sqlite"}
+	if err := r.ensureLockTable(ctx); err != nil {
+		return err
+	}
+	_, err := drv.Exec(ctx, "INSERT INTO drel_migration_lock (id) VALUES (1)")
+	return err
+}
+
+// ForceUnlockForTest releases the SQLite/libSQL sentinel lock. Test-only.
+func ForceUnlockForTest(ctx context.Context, drv driver.Driver) error {
+	_, err := drv.Exec(ctx, "DELETE FROM drel_migration_lock WHERE id = 1")
+	return err
 }
 
 func (r *Runner) ensureTable(ctx context.Context) error {
@@ -192,6 +263,12 @@ func (r *Runner) Up(ctx context.Context) (int, error) {
 	if err := r.ensureTable(ctx); err != nil {
 		return 0, err
 	}
+
+	unlock, err := r.lock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 
 	migrations, err := ParseMigrationDir(r.dir)
 	if err != nil {
@@ -254,6 +331,12 @@ func (r *Runner) Down(ctx context.Context) error {
 	if err := r.ensureTable(ctx); err != nil {
 		return err
 	}
+
+	unlock, err := r.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	migrations, err := ParseMigrationDir(r.dir)
 	if err != nil {
@@ -462,4 +545,29 @@ func (r *Runner) Lint(ctx context.Context) ([]LintResult, error) {
 	}
 
 	return issues, nil
+}
+
+// Pending returns the migrations present in the directory that have not yet been
+// applied to the database, in version order. It is the basis for `migrate check`:
+// generating a new migration while unapplied files exist compounds snapshot
+// drift, so callers should surface a clear error.
+func (r *Runner) Pending(ctx context.Context) ([]Migration, error) {
+	if err := r.ensureTable(ctx); err != nil {
+		return nil, err
+	}
+	migrations, err := ParseMigrationDir(r.dir)
+	if err != nil {
+		return nil, err
+	}
+	applied, err := r.appliedVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var pending []Migration
+	for _, m := range migrations {
+		if _, ok := applied[m.Version]; !ok {
+			pending = append(pending, m)
+		}
+	}
+	return pending, nil
 }

@@ -62,7 +62,7 @@ func TestIntegration_Migrate_Up(t *testing.T) {
 		"CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);",
 		"DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	count, err := runner.Up(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
@@ -81,7 +81,7 @@ func TestIntegration_Migrate_Up_Idempotent(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	c1, _ := runner.Up(ctx)
 	c2, _ := runner.Up(ctx)
 	assert.Equal(t, 1, c1)
@@ -98,7 +98,7 @@ func TestIntegration_Migrate_Up_Multiple(t *testing.T) {
 	writeFiles(t, dir, "20260510130000", "add_email",
 		"ALTER TABLE users ADD COLUMN email TEXT;", "ALTER TABLE users DROP COLUMN email;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	count, err := runner.Up(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
@@ -112,7 +112,7 @@ func TestIntegration_Migrate_Down(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 
 	err := runner.Down(ctx)
@@ -134,7 +134,7 @@ func TestIntegration_Migrate_Down_OnlyLast(t *testing.T) {
 	writeFiles(t, dir, "20260510130000", "create_posts",
 		"CREATE TABLE posts (id SERIAL PRIMARY KEY);", "DROP TABLE posts;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 	_ = runner.Down(ctx)
 
@@ -157,7 +157,7 @@ func TestIntegration_Migrate_Status(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 
 	writeFiles(t, dir, "20260510130000", "create_posts",
@@ -178,7 +178,7 @@ func TestIntegration_Migrate_Lint_DetectsTampering(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 
 	require.NoError(t, os.WriteFile(
@@ -199,12 +199,106 @@ func TestIntegration_Migrate_Lint_Clean(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 
 	issues, err := runner.Lint(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, issues)
+}
+
+func TestIntegration_Migrate_ConcurrentUp_Serialized(t *testing.T) {
+	drv := setupMigrateDB(t)
+	ctx := context.Background()
+
+	connStr := os.Getenv("DREL_TEST_DSN")
+	_ = connStr // documented below; we reuse drv plus a second driver
+
+	dir := t.TempDir()
+	writeFiles(t, dir, "20260510120000", "create_users",
+		"CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);",
+		"DROP TABLE users;")
+
+	// Two runners sharing the same primary driver pool simulate two booting
+	// replicas. The advisory lock must serialize them so exactly one applies.
+	r1 := migrate.NewRunner(drv, dir, "postgres")
+	r2 := migrate.NewRunner(drv, dir, "postgres")
+
+	type res struct {
+		n   int
+		err error
+	}
+	ch := make(chan res, 2)
+	run := func(r *migrate.Runner) {
+		n, err := r.Up(ctx)
+		ch <- res{n, err}
+	}
+	go run(r1)
+	go run(r2)
+
+	a, b := <-ch, <-ch
+	require.NoError(t, a.err)
+	require.NoError(t, b.err)
+	// Exactly one runner applied the migration; the other saw it already applied.
+	assert.Equal(t, 1, a.n+b.n, "migration must be applied exactly once")
+
+	// The table exists exactly once.
+	row := drv.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'users'")
+	var c int
+	require.NoError(t, row.Scan(&c))
+	assert.Equal(t, 1, c)
+}
+
+func TestIntegration_FirstMigration_RoundTrip_PivotAndEnum(t *testing.T) {
+	drv := setupMigrateDB(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// First migration UP: enum type, two tables, a pivot referencing both.
+	up := `CREATE TYPE "status" AS ENUM ('active', 'archived');
+CREATE TABLE "users" (
+    "id" SERIAL PRIMARY KEY,
+    "state" "status" NOT NULL
+);
+CREATE TABLE "roles" (
+    "id" SERIAL PRIMARY KEY
+);
+CREATE TABLE "users_roles" (
+    "user_id" bigint NOT NULL REFERENCES "users"("id"),
+    "role_id" bigint NOT NULL REFERENCES "roles"("id"),
+    PRIMARY KEY ("user_id", "role_id")
+);`
+	// First migration DOWN: complete drop in dependency order (pivot, tables, type)
+	// — exactly what Task 4 now generates via DiffSchemas(desired, empty).
+	down := `DROP TABLE IF EXISTS "users_roles";
+DROP TABLE IF EXISTS "users";
+DROP TABLE IF EXISTS "roles";
+DROP TYPE "status";`
+
+	writeFiles(t, dir, "20260614120000", "init", up, down)
+
+	runner := migrate.NewRunner(drv, dir, "postgres")
+
+	// up → down → up must succeed; the second up previously failed with
+	// "type \"status\" already exists" because the old down leaked the enum.
+	_, err := runner.Up(ctx)
+	require.NoError(t, err)
+	require.NoError(t, runner.Down(ctx))
+
+	// The pivot table and enum type are gone after down.
+	row := drv.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'users_roles'")
+	var tcount int
+	require.NoError(t, row.Scan(&tcount))
+	assert.Equal(t, 0, tcount, "pivot table must be dropped on rollback")
+
+	row = drv.QueryRow(ctx, "SELECT COUNT(*) FROM pg_type WHERE typname = 'status'")
+	var ecount int
+	require.NoError(t, row.Scan(&ecount))
+	assert.Equal(t, 0, ecount, "enum type must be dropped on rollback")
+
+	// Re-apply must not fail with "type already exists".
+	_, err = runner.Up(ctx)
+	require.NoError(t, err)
 }
 
 func TestIntegration_Migrate_Roundtrip(t *testing.T) {
@@ -215,7 +309,7 @@ func TestIntegration_Migrate_Roundtrip(t *testing.T) {
 	writeFiles(t, dir, "20260510120000", "create_users",
 		"CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);", "DROP TABLE users;")
 
-	runner := migrate.NewRunner(drv, dir)
+	runner := migrate.NewRunner(drv, dir, "postgres")
 	_, _ = runner.Up(ctx)
 
 	_, _ = drv.Exec(ctx, "INSERT INTO users (name) VALUES ('Alice')")

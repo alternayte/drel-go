@@ -80,7 +80,7 @@ func NewPostgres(t *testing.T, opts ...Option) *drel.Engine {
 		}
 		defer drv.Close()
 
-		runner := migrate.NewRunner(drv, cfg.migrationsDir)
+		runner := migrate.NewRunner(drv, cfg.migrationsDir, "postgres")
 		if _, err := runner.Up(ctx); err != nil {
 			t.Fatalf("pgtest.NewPostgres: migrations: %v", err)
 		}
