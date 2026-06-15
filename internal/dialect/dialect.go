@@ -42,5 +42,5 @@ type Dialect interface {
 	BuildBulkUpdate(table string, sets []ColumnValue, where *ast.WhereClause) Result
 	BuildBulkDelete(table string, where *ast.WhereClause) Result
 	BuildBulkSoftDelete(table string, where *ast.WhereClause) Result
-	BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) Result
+	BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string, doNothing bool) Result
 }

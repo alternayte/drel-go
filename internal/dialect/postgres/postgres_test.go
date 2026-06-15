@@ -832,3 +832,40 @@ func TestPostgres_BuildSelect_PartitionLimit_DefaultOrderByPK(t *testing.T) {
 	want := `SELECT "id", "author_id" FROM (SELECT "id", "author_id", ROW_NUMBER() OVER (PARTITION BY "author_id" ORDER BY "id") AS "_drel_rn" FROM "posts") AS "_drel_w" WHERE "_drel_rn" <= 5`
 	assert.Equal(t, want, result.SQL)
 }
+
+func TestPostgres_BuildBulkUpsert(t *testing.T) {
+	pg := New()
+
+	t.Run("do update", func(t *testing.T) {
+		r := pg.BuildBulkUpsert("users",
+			[]string{"id", "name", "email"},
+			[][]any{
+				{1, "Alice", "alice@example.com"},
+				{2, "Bob", "bob@example.com"},
+			},
+			[]string{"id"},
+			[]string{"name", "email"},
+			false,
+		)
+		assert.Equal(t,
+			`INSERT INTO "users" ("id", "name", "email") VALUES ($1, $2, $3), ($4, $5, $6) ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name", "email" = EXCLUDED."email"`,
+			r.SQL,
+		)
+		assert.Equal(t, []any{1, "Alice", "alice@example.com", 2, "Bob", "bob@example.com"}, r.Args)
+	})
+
+	t.Run("do nothing", func(t *testing.T) {
+		r := pg.BuildBulkUpsert("users",
+			[]string{"id", "name"},
+			[][]any{{1, "Alice"}},
+			[]string{"id"},
+			nil,
+			true,
+		)
+		assert.Equal(t,
+			`INSERT INTO "users" ("id", "name") VALUES ($1, $2) ON CONFLICT ("id") DO NOTHING`,
+			r.SQL,
+		)
+		assert.Equal(t, []any{1, "Alice"}, r.Args)
+	})
+}

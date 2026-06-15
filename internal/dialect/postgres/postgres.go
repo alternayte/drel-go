@@ -547,7 +547,7 @@ func (p *Postgres) BuildBulkSoftDelete(table string, where *ast.WhereClause) dia
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) dialect.Result {
+func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string, doNothing bool) dialect.Result {
 	result := p.BuildBulkInsert(table, columns, rows)
 
 	var b strings.Builder
@@ -558,6 +558,10 @@ func (p *Postgres) BuildBulkUpsert(table string, columns []string, rows [][]any,
 			b.WriteString(", ")
 		}
 		b.WriteString(quoteIdent(col))
+	}
+	if doNothing {
+		b.WriteString(") DO NOTHING")
+		return dialect.Result{SQL: b.String(), Args: result.Args}
 	}
 	b.WriteString(") DO UPDATE SET ")
 	for i, col := range updateCols {

@@ -243,7 +243,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 			}
 		}
 
-		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols)
+		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols, false)
 		start := time.Now()
 		affected, execErr := tx.Exec(ctx, result.SQL, result.Args...)
 		r.engine.notifyQueryHooks(ctx, result.SQL, result.Args, time.Since(start), execErr)

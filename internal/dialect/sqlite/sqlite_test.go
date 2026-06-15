@@ -745,20 +745,39 @@ func TestSQLite_BuildBulkSoftDelete(t *testing.T) {
 
 func TestSQLite_BuildBulkUpsert(t *testing.T) {
 	s := New()
-	r := s.BuildBulkUpsert("users",
-		[]string{"id", "name", "email"},
-		[][]any{
-			{1, "Alice", "alice@example.com"},
-			{2, "Bob", "bob@example.com"},
-		},
-		[]string{"id"},
-		[]string{"name", "email"},
-	)
-	assert.Equal(t,
-		`INSERT INTO "users" ("id", "name", "email") VALUES (?, ?, ?), (?, ?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name", "email" = EXCLUDED."email"`,
-		r.SQL,
-	)
-	assert.Equal(t, []any{1, "Alice", "alice@example.com", 2, "Bob", "bob@example.com"}, r.Args)
+
+	t.Run("do update", func(t *testing.T) {
+		r := s.BuildBulkUpsert("users",
+			[]string{"id", "name", "email"},
+			[][]any{
+				{1, "Alice", "alice@example.com"},
+				{2, "Bob", "bob@example.com"},
+			},
+			[]string{"id"},
+			[]string{"name", "email"},
+			false,
+		)
+		assert.Equal(t,
+			`INSERT INTO "users" ("id", "name", "email") VALUES (?, ?, ?), (?, ?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name", "email" = EXCLUDED."email"`,
+			r.SQL,
+		)
+		assert.Equal(t, []any{1, "Alice", "alice@example.com", 2, "Bob", "bob@example.com"}, r.Args)
+	})
+
+	t.Run("do nothing", func(t *testing.T) {
+		r := s.BuildBulkUpsert("users",
+			[]string{"id", "name"},
+			[][]any{{1, "Alice"}},
+			[]string{"id"},
+			nil,
+			true,
+		)
+		assert.Equal(t,
+			`INSERT INTO "users" ("id", "name") VALUES (?, ?) ON CONFLICT ("id") DO NOTHING`,
+			r.SQL,
+		)
+		assert.Equal(t, []any{1, "Alice"}, r.Args)
+	})
 }
 
 // ─── GroupBy / Having / Aggregates ───────────────────────────────────────────

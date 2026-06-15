@@ -521,7 +521,7 @@ func (s *SQLite) BuildBulkSoftDelete(table string, where *ast.WhereClause) diale
 	return dialect.Result{SQL: b.String(), Args: args}
 }
 
-func (s *SQLite) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string) dialect.Result {
+func (s *SQLite) BuildBulkUpsert(table string, columns []string, rows [][]any, conflictCols []string, updateCols []string, doNothing bool) dialect.Result {
 	result := s.BuildBulkInsert(table, columns, rows)
 
 	var b strings.Builder
@@ -532,6 +532,10 @@ func (s *SQLite) BuildBulkUpsert(table string, columns []string, rows [][]any, c
 			b.WriteString(", ")
 		}
 		b.WriteString(quoteIdent(col))
+	}
+	if doNothing {
+		b.WriteString(") DO NOTHING")
+		return dialect.Result{SQL: b.String(), Args: result.Args}
 	}
 	b.WriteString(") DO UPDATE SET ")
 	for i, col := range updateCols {
