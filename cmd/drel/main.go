@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
 
 	"github.com/alternayte/drel/internal/codegen"
 )
@@ -93,7 +96,10 @@ func runSeed(parsed parsedCmd) {
 		os.Exit(1)
 	}
 
-	cmd := exec.Command("go", "run", cfg.Seed)
+	ctx, stop := signalContext()
+	defer stop()
+
+	cmd := exec.CommandContext(ctx, "go", "run", cfg.Seed)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -102,6 +108,12 @@ func runSeed(parsed parsedCmd) {
 		fmt.Fprintf(os.Stderr, "drel seed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// signalContext returns a context cancelled on SIGINT/SIGTERM plus its stop fn.
+// Callers must defer stop() to release the signal handler.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func runGenerate(parsed parsedCmd) {

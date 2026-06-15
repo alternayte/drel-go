@@ -128,6 +128,27 @@ func TestParseArgs_Version(t *testing.T) {
 	assert.Equal(t, "version", pc.Command)
 }
 
+func TestSignalContext_CancellableAndStops(t *testing.T) {
+	ctx, stop := signalContext()
+	defer stop()
+
+	// Not cancelled before stop.
+	select {
+	case <-ctx.Done():
+		t.Fatal("signalContext returned an already-cancelled context")
+	default:
+	}
+
+	// stop() cancels the context (NotifyContext's stop releases resources and
+	// cancels the derived context).
+	stop()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("stop() did not cancel the signal context")
+	}
+}
+
 func TestHandlersConsumeParsedCmd(t *testing.T) {
 	// Compile-time proof that the rewritten handlers take parsedCmd. This fails
 	// to compile until Task 5 changes the signatures, which is the failing state.

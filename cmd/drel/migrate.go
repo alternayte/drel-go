@@ -199,7 +199,8 @@ func runMigrateNew(parsed parsedCmd) {
 func runMigrateUp(parsed parsedCmd) {
 	dsn := requireDSN()
 	mDir := resolveMigrationsDir(parsed.ConfigPath)
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
@@ -224,7 +225,8 @@ func runMigrateUp(parsed parsedCmd) {
 func runMigrateDown(parsed parsedCmd) {
 	dsn := requireDSN()
 	mDir := resolveMigrationsDir(parsed.ConfigPath)
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
@@ -244,7 +246,8 @@ func runMigrateDown(parsed parsedCmd) {
 func runMigrateStatus(parsed parsedCmd) {
 	dsn := requireDSN()
 	mDir := resolveMigrationsDir(parsed.ConfigPath)
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
@@ -285,7 +288,8 @@ func runMigrateStatus(parsed parsedCmd) {
 func runMigrateLint(parsed parsedCmd) {
 	dsn := requireDSN()
 	mDir := resolveMigrationsDir(parsed.ConfigPath)
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
@@ -313,7 +317,8 @@ func runMigrateLint(parsed parsedCmd) {
 func runMigrateCheck(parsed parsedCmd) {
 	dsn := requireDSN()
 	mDir := resolveMigrationsDir(parsed.ConfigPath)
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
