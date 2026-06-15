@@ -406,6 +406,25 @@ func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
 	assert.Contains(t, sql, `"tag_id" INTEGER NOT NULL REFERENCES "tags"("id")`)
 }
 
+func TestParseDBTag_TypeOverride(t *testing.T) {
+	col, opts := parseDBTag(`db:"data,type=jsonb"`)
+	assert.Equal(t, "data", col)
+	assert.Equal(t, "jsonb", opts.typeOverride)
+}
+
+func TestGenerateCreateTable_TypeOverride(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			// VOBaseType empty (struct-backed VO); explicit override wins.
+			{Name: "money", GoType: "models.Money", ColumnName: "money", LocalGoType: "Money", IsVO: true, TypeOverride: "numeric(12,2)"},
+		},
+	}
+	pg := GenerateCreateTable(m, nil, "postgres")
+	assert.Contains(t, pg, `"money" numeric(12,2) NOT NULL`)
+	assert.NotContains(t, pg, `"money" text`)
+}
+
 func TestGenerateCreateTable_VOBaseType(t *testing.T) {
 	m := ModelInfo{
 		Name: "Account", PKType: "int", TableName: "accounts",

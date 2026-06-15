@@ -164,6 +164,9 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 				sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
 			}
 		}
+		if f.TypeOverride != "" {
+			sqlType = f.TypeOverride
+		}
 		c.Type = sqlType
 
 		if f.IsEnum && dialect == "sqlite" && len(f.EnumValues) > 0 {

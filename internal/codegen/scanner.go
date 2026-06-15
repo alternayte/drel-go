@@ -195,15 +195,16 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 		}
 
 		fi := FieldInfo{
-			Name:       f.Name(),
-			GoType:     f.Type().String(),
-			ColumnName: dbCol,
-			IsExported: f.Exported(),
-			RelTag:     relTag,
-			Unique:     dbOpts.unique,
-			Indexed:    dbOpts.indexed,
-			IndexName:  dbOpts.indexName,
-			CheckExpr:  dbOpts.check,
+			Name:         f.Name(),
+			GoType:       f.Type().String(),
+			ColumnName:   dbCol,
+			IsExported:   f.Exported(),
+			RelTag:       relTag,
+			Unique:       dbOpts.unique,
+			Indexed:      dbOpts.indexed,
+			IndexName:    dbOpts.indexName,
+			CheckExpr:    dbOpts.check,
+			TypeOverride: dbOpts.typeOverride,
 		}
 
 		if relTag != "" {
@@ -294,10 +295,11 @@ func parseRelTagStructured(tag string) *RelationFieldInfo {
 
 // dbTagOpts holds the options parsed from a db struct tag after the column name.
 type dbTagOpts struct {
-	unique    bool
-	indexed   bool
-	indexName string
-	check     string
+	unique       bool
+	indexed      bool
+	indexName    string
+	check        string
+	typeOverride string
 }
 
 // parseDBTag splits a db struct tag into its column name and options. The first
@@ -330,6 +332,8 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 			opts.indexName = strings.TrimSpace(strings.TrimPrefix(p, "index="))
 		case strings.HasPrefix(p, "check="):
 			opts.check = strings.TrimSpace(strings.TrimPrefix(p, "check="))
+		case strings.HasPrefix(p, "type="):
+			opts.typeOverride = strings.TrimSpace(strings.TrimPrefix(p, "type="))
 		}
 	}
 	return col, opts
