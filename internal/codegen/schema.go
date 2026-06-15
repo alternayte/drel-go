@@ -326,11 +326,12 @@ func DiffSchemas(old, newSchema Schema, dialect string) (upSQL, downSQL string) 
 		down = append(down, fmt.Sprintf("DROP TABLE IF EXISTS %s;", quoteIdent(t.Name)))
 	}
 
-	// 3. Dropped tables (in old, not in new) — preserve old-schema order.
-	for _, t := range old.Tables {
-		if _, ok := newTables[t.Name]; ok {
-			continue
-		}
+	// 3. Dropped tables (in old, not in new) — emit drops in FK-safe order so
+	// that child/pivot tables (which hold REFERENCES to parents) are dropped
+	// before the parent tables they reference. Without this ordering, Postgres
+	// refuses to drop a parent table while its FK referents still exist.
+	droppedTables := fkSafeDropOrder(old.Tables, newTables)
+	for _, t := range droppedTables {
 		up = append(up, fmt.Sprintf("DROP TABLE IF EXISTS %s;", quoteIdent(t.Name)))
 		down = append(down, strings.TrimRight(createTableSQL(t, dialect), "\n"))
 		for _, idx := range t.Indexes {
@@ -572,6 +573,75 @@ func alterDefaultSQL(table, column, def string) string {
 		return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;", quoteIdent(table), quoteIdent(column))
 	}
 	return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;", quoteIdent(table), quoteIdent(column), def)
+}
+
+// fkSafeDropOrder returns the subset of tables (those NOT in keepTables)
+// sorted for safe DROP execution: a table that holds a REFERENCES FK to another
+// table in the same drop set is emitted first, before the table it references.
+// This prevents Postgres "cannot drop table because other objects depend on it"
+// errors when rolling back the first migration.
+//
+// Algorithm: iterative Kahn-style topo-sort on the "is referenced by" relation.
+// A table T is ready to DROP when no other yet-to-be-dropped table holds a
+// Column.Ref pointing to T (i.e. nobody FKs into T any more).
+func fkSafeDropOrder(tables []Table, keepTables map[string]Table) []Table {
+	// Collect only the tables being dropped.
+	var toSort []Table
+	for _, t := range tables {
+		if _, keep := keepTables[t.Name]; !keep {
+			toSort = append(toSort, t)
+		}
+	}
+	if len(toSort) == 0 {
+		return nil
+	}
+
+	emitted := map[string]bool{}
+	ordered := make([]Table, 0, len(toSort))
+
+	for len(ordered) < len(toSort) {
+		progress := false
+		for _, t := range toSort {
+			if emitted[t.Name] {
+				continue
+			}
+			// T is safe to drop when no other not-yet-dropped table in the set
+			// holds a Column.Ref pointing to T.
+			referencedByPending := false
+			for _, other := range toSort {
+				if emitted[other.Name] || other.Name == t.Name {
+					continue
+				}
+				for _, c := range other.Columns {
+					if c.Ref == t.Name {
+						referencedByPending = true
+						break
+					}
+				}
+				if referencedByPending {
+					break
+				}
+			}
+			if !referencedByPending {
+				emitted[t.Name] = true
+				ordered = append(ordered, t)
+				progress = true
+			}
+		}
+		if !progress {
+			// Cycle or self-referential FKs; emit remaining in original order
+			// to avoid an infinite loop.
+			for _, t := range toSort {
+				if !emitted[t.Name] {
+					ordered = append(ordered, t)
+					emitted[t.Name] = true
+				}
+			}
+			break
+		}
+	}
+
+	return ordered
 }
 
 func indexEnums(enums []EnumDef) map[string]EnumDef {

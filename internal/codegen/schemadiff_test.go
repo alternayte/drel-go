@@ -566,8 +566,15 @@ func TestDiffSchemas_DropToEmpty_CoversPivotsAndEnums(t *testing.T) {
 	// All three tables must appear in the drop output.
 	pivotIdx := strings.Index(up, `DROP TABLE IF EXISTS "users_roles";`)
 	usersIdx := strings.Index(up, `DROP TABLE IF EXISTS "users";`)
-	require.Greater(t, pivotIdx, -1)
-	require.Greater(t, usersIdx, -1)
+	rolesIdx := strings.Index(up, `DROP TABLE IF EXISTS "roles";`)
+	require.Greater(t, pivotIdx, -1, "pivot drop must be present")
+	require.Greater(t, usersIdx, -1, "users drop must be present")
+	require.Greater(t, rolesIdx, -1, "roles drop must be present")
+
+	// Pivot must drop BEFORE the parent tables it FK-references.
+	// Violating this order fails on Postgres: "cannot drop table because other objects depend on it".
+	assert.Less(t, pivotIdx, usersIdx, "pivot must drop before users (FK dependency)")
+	assert.Less(t, pivotIdx, rolesIdx, "pivot must drop before roles (FK dependency)")
 
 	// Enum DROP TYPE comes after the tables that use it (at the end of the output).
 	enumIdx := strings.Index(up, `DROP TYPE "status";`)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alternayte/drel/internal/codegen"
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
 	"github.com/alternayte/drel/internal/migrate"
 	"github.com/stretchr/testify/assert"
@@ -254,33 +255,52 @@ func TestIntegration_FirstMigration_RoundTrip_PivotAndEnum(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	// First migration UP: enum type, two tables, a pivot referencing both.
-	up := `CREATE TYPE "status" AS ENUM ('active', 'archived');
-CREATE TABLE "users" (
-    "id" SERIAL PRIMARY KEY,
-    "state" "status" NOT NULL
-);
-CREATE TABLE "roles" (
-    "id" SERIAL PRIMARY KEY
-);
-CREATE TABLE "users_roles" (
-    "user_id" bigint NOT NULL REFERENCES "users"("id"),
-    "role_id" bigint NOT NULL REFERENCES "roles"("id"),
-    PRIMARY KEY ("user_id", "role_id")
-);`
-	// First migration DOWN: complete drop in dependency order (pivot, tables, type)
-	// — exactly what Task 4 now generates via DiffSchemas(desired, empty).
-	down := `DROP TABLE IF EXISTS "users_roles";
-DROP TABLE IF EXISTS "users";
-DROP TABLE IF EXISTS "roles";
-DROP TYPE "status";`
+	// Describe the desired schema using the same Schema struct that the CLI
+	// would produce, then generate the UP/DOWN via DiffSchemas — the same
+	// code path the CLI uses. This ensures the test exercises the real
+	// generated SQL, not a hand-crafted stand-in that could diverge from the
+	// actual code path and silently mask ordering bugs.
+	desired := codegen.Schema{
+		Enums: []codegen.EnumDef{{Name: "status", Values: []string{"active", "archived"}}},
+		Tables: []codegen.Table{
+			{
+				Name: "users",
+				Columns: []codegen.Column{
+					{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+					{Name: "state", Type: `"status"`, NotNull: true},
+				},
+			},
+			{
+				Name: "roles",
+				Columns: []codegen.Column{
+					{Name: "id", Type: "SERIAL PRIMARY KEY", NotNull: true, PK: true},
+				},
+			},
+			{
+				Name: "users_roles",
+				Columns: []codegen.Column{
+					{Name: "user_id", Type: "bigint", NotNull: true, Ref: "users"},
+					{Name: "role_id", Type: "bigint", NotNull: true, Ref: "roles"},
+				},
+				PrimaryKey: []string{"user_id", "role_id"},
+			},
+		},
+	}
+
+	// The CLI generates a first migration via DiffSchemas(empty, desired):
+	//   up   = CREATE TYPE / CREATE TABLE ...  (apply the schema)
+	//   down = DROP TABLE / DROP TYPE ...      (undo — written to .down.sql)
+	// We use the same call here so the test exercises the real generated SQL.
+	up, down := codegen.DiffSchemas(codegen.Schema{}, desired, "postgres")
+	require.NotEmpty(t, up, "DiffSchemas must produce UP SQL for non-empty desired schema")
+	require.NotEmpty(t, down, "DiffSchemas must produce DOWN SQL for non-empty desired schema")
 
 	writeFiles(t, dir, "20260614120000", "init", up, down)
 
 	runner := migrate.NewRunner(drv, dir, "postgres")
 
-	// up → down → up must succeed; the second up previously failed with
-	// "type \"status\" already exists" because the old down leaked the enum.
+	// up → down → up must succeed. The generated down SQL must drop the pivot
+	// before its parent tables (FK ordering); Postgres rejects the DROP otherwise.
 	_, err := runner.Up(ctx)
 	require.NoError(t, err)
 	require.NoError(t, runner.Down(ctx))
