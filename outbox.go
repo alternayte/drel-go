@@ -3,6 +3,7 @@ package drel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 )
@@ -27,7 +28,10 @@ type OutboxOption func(*outboxConfig)
 
 // WithOutboxMapper customizes how domain events are mapped to outbox messages.
 // Return ok=false to skip an event. The default maps every event to a message
-// whose Type is the event's Go type name and whose Payload is the event itself.
+// whose Type is the event's package-qualified Go type name (PkgPath + "." +
+// Name, e.g. "github.com/acme/orders.OrderPlaced") and whose Payload is the
+// event itself. The qualified name avoids cross-package collisions in the
+// feature-slice layout where two packages may each define an "OrderPlaced".
 func WithOutboxMapper(fn func(event any) (OutboxMessage, bool)) OutboxOption {
 	return func(c *outboxConfig) { c.mapper = fn }
 }
@@ -48,6 +52,9 @@ func (e *Engine) UseOutbox(table string, opts ...OutboxOption) {
 			if !ok {
 				continue
 			}
+			if msg.Type == "" {
+				return fmt.Errorf("drel: outbox: %w", ErrOutboxAnonymousEvent)
+			}
 			payload, err := json.Marshal(msg.Payload)
 			if err != nil {
 				return fmt.Errorf("drel: outbox marshal %s: %w", msg.Type, err)
@@ -63,19 +70,40 @@ func (e *Engine) UseOutbox(table string, opts ...OutboxOption) {
 }
 
 func defaultOutboxMapper(ev any) (OutboxMessage, bool) {
-	return OutboxMessage{Type: eventTypeName(ev), Payload: ev}, true
+	name, err := eventTypeName(ev)
+	if err != nil {
+		// Surface as a message whose Type is empty so UseOutbox can detect and
+		// fail loudly; the mapper signature cannot return an error directly.
+		return OutboxMessage{Type: "", Payload: ev}, true
+	}
+	return OutboxMessage{Type: name, Payload: ev}, true
 }
 
-// eventTypeName returns the unqualified Go type name of an event value.
-func eventTypeName(v any) string {
+// ErrOutboxAnonymousEvent is returned by the default outbox mapping path when an
+// event value has no resolvable type name (nil, or an anonymous type). Such
+// events would otherwise be written with an empty type, which a relay cannot
+// route. Provide a WithOutboxMapper to map anonymous events explicitly.
+var ErrOutboxAnonymousEvent = errors.New("drel: outbox event has no qualified type name (nil or anonymous type)")
+
+// eventTypeName returns the package-qualified Go type name of an event value
+// (PkgPath + "." + Name), unwrapping a pointer. It returns ErrOutboxAnonymousEvent
+// for nil or anonymous types (which have an empty Name).
+func eventTypeName(v any) (string, error) {
 	t := reflect.TypeOf(v)
 	if t == nil {
-		return ""
+		return "", ErrOutboxAnonymousEvent
 	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	return t.Name()
+	if t.Name() == "" {
+		return "", ErrOutboxAnonymousEvent
+	}
+	if pkg := t.PkgPath(); pkg != "" {
+		return pkg + "." + t.Name(), nil
+	}
+	// Builtin/unnamed-package types (rare for events) fall back to bare name.
+	return t.Name(), nil
 }
 
 // OutboxSchema returns CREATE TABLE (and a partial index) DDL for an outbox
