@@ -212,6 +212,9 @@ func EmitModelFile(m ModelInfo) string {
 	// --- Column references ---
 	emitColumnRefs(&b, m, varPlural, aliases)
 
+	// --- Generated enum validators (IsValid / Values) ---
+	emitEnumValidators(&b, m)
+
 	// --- Multi-column VO value helpers ---
 	emitMultiValHelpers(&b, m, lower, aliases)
 
@@ -310,6 +313,43 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 	b.WriteString("\tCreatedAt: drel.NewCol[time.Time](\"created_at\"),\n")
 	b.WriteString("\tUpdatedAt: drel.NewCol[time.Time](\"updated_at\"),\n")
 	b.WriteString("}\n\n")
+}
+
+// emitEnumValidators emits, for each distinct enum type used by the model, a
+// `func (r <Enum>) IsValid() bool` and a `func <Enum>Values() []<Enum>` helper.
+// String-enum values are quoted; integer-enum values are bare numeric literals.
+func emitEnumValidators(b *strings.Builder, m ModelInfo) {
+	seen := map[string]bool{}
+	for _, f := range columnFields(m.Fields) {
+		if !f.IsEnum || len(f.EnumValues) == 0 {
+			continue
+		}
+		typeName := f.LocalGoType
+		if seen[typeName] {
+			continue
+		}
+		seen[typeName] = true
+
+		lits := make([]string, len(f.EnumValues))
+		for i, v := range f.EnumValues {
+			if f.EnumIsInt {
+				lits[i] = fmt.Sprintf("%s(%s)", typeName, v)
+			} else {
+				lits[i] = fmt.Sprintf("%s(%q)", typeName, v)
+			}
+		}
+
+		// Values()
+		b.WriteString(fmt.Sprintf("func %sValues() []%s {\n", typeName, typeName))
+		b.WriteString(fmt.Sprintf("\treturn []%s{%s}\n", typeName, strings.Join(lits, ", ")))
+		b.WriteString("}\n\n")
+
+		// IsValid()
+		b.WriteString(fmt.Sprintf("func (r %s) IsValid() bool {\n", typeName))
+		b.WriteString(fmt.Sprintf("\tfor _, v := range %sValues() {\n", typeName))
+		b.WriteString("\t\tif r == v {\n\t\t\treturn true\n\t\t}\n")
+		b.WriteString("\t}\n\treturn false\n}\n\n")
+	}
 }
 
 // allColumns returns the full ordered list of column names for this model.
