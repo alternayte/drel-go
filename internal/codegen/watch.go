@@ -99,6 +99,19 @@ func GenerateWatch(ctx context.Context, configPath string, pollInterval time.Dur
 		pollInterval = 500 * time.Millisecond
 	}
 
+	// Resolve watch dirs and skip set cheaply (no go/packages.Load) so we can
+	// capture the baseline signature BEFORE the initial Generate. Any changes
+	// made while Generate runs are thus visible on the first poll tick.
+	skip, dirs, err := quickWatchDirs(configPath)
+	if err != nil {
+		return err
+	}
+
+	last, err := dirsSignature(dirs, skip)
+	if err != nil {
+		return err
+	}
+
 	// Initial generation. A failure here is reported but does not abort the
 	// watch loop — the developer can fix the source and the next poll recovers.
 	if err := Generate(configPath); err != nil {
@@ -107,16 +120,15 @@ func GenerateWatch(ctx context.Context, configPath string, pollInterval time.Dur
 		fmt.Println("drel watch: generated; watching for changes (Ctrl+C to stop)")
 	}
 
-	// The DB output file's basename must be skipped (it lives under one of the
-	// watched dirs only if output.db points there, but skip it defensively).
-	skip, dirs, err := watchSkipAndDirs(configPath)
+	// Recompute signature after initial regen to exclude any files that were
+	// freshly written by Generate itself (not generated files, but new source
+	// files, etc.). This avoids a spurious first-tick regen in edge cases.
+	skip, dirs, err = quickWatchDirs(configPath)
 	if err != nil {
 		return err
 	}
-
-	last, err := dirsSignature(dirs, skip)
-	if err != nil {
-		return err
+	if sig, err := dirsSignature(dirs, skip); err == nil {
+		last = sig
 	}
 
 	ticker := time.NewTicker(pollInterval)
@@ -127,9 +139,9 @@ func GenerateWatch(ctx context.Context, configPath string, pollInterval time.Dur
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			// Re-resolve dirs each tick so newly-added package dirs are picked
-			// up; cheap relative to the regen cost.
-			skip, dirs, err = watchSkipAndDirs(configPath)
+			// Re-resolve dirs each tick so newly-added packages in drel.yaml
+			// are picked up; cheap (no go/packages.Load).
+			skip, dirs, err = quickWatchDirs(configPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "drel watch: %v\n", err)
 				continue
@@ -157,8 +169,44 @@ func GenerateWatch(ctx context.Context, configPath string, pollInterval time.Dur
 	}
 }
 
+// quickWatchDirs resolves the DB-output basename to skip and the filesystem
+// directories corresponding to the config's package patterns, without invoking
+// go/packages.Load (cheap, suitable for the poll tick). It resolves each pattern
+// relative to the module root, mirroring how Generate resolves them.
+func quickWatchDirs(configPath string) (skip map[string]bool, dirs []string, err error) {
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	skip = map[string]bool{filepath.Base(cfg.Output.DB): true}
+
+	cfgDir := filepath.Dir(configPath)
+	if !filepath.IsAbs(cfgDir) {
+		abs, absErr := filepath.Abs(cfgDir)
+		if absErr != nil {
+			return nil, nil, fmt.Errorf("codegen: resolve config dir: %w", absErr)
+		}
+		cfgDir = abs
+	}
+	moduleRoot := ResolveModuleRoot(cfgDir)
+
+	seen := make(map[string]bool)
+	for _, pat := range cfg.Packages {
+		// Strip the leading ./ if present; filepath.Join handles it correctly.
+		d := filepath.Join(moduleRoot, pat)
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	return skip, dirs, nil
+}
+
 // watchSkipAndDirs resolves the DB-output basename to skip and the directories
-// to watch for a config.
+// to watch for a config by running a full ScanPackages. Used by watchDirs (which
+// is tested in isolation) but NOT by the hot poll loop in GenerateWatch.
 func watchSkipAndDirs(configPath string) (skip map[string]bool, dirs []string, err error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
