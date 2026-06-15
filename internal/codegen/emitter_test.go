@@ -551,6 +551,36 @@ func TestEmitModelFile_UUIDPK_AppAssigned(t *testing.T) {
 	}
 }
 
+func TestEmitModelFile_VODiffUsesEqual(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PkgName: "models", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "email", GoType: "testmod/models.Email", ColumnName: "email", LocalGoType: "Email", IsVO: true, IsComparable: true},
+			{Name: "tags", GoType: "testmod/models.Tags", ColumnName: "tags", LocalGoType: "Tags", IsVO: true, HasEqual: true, IsComparable: false},
+		},
+	}
+	out := EmitModelFile(m)
+	// Comparable VO with no Equal keeps !=.
+	assert.Contains(t, out, "p.email != s.email")
+	// VO with Equal uses the method, negated.
+	assert.Contains(t, out, "!p.tags.Equal(s.tags)")
+	assert.NotContains(t, out, "p.tags != s.tags")
+}
+
+func TestEmitModelFileChecked_NonComparableVONoEqualErrors(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PkgName: "models", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "tags", GoType: "testmod/models.Tags", ColumnName: "tags", LocalGoType: "Tags", IsVO: true, HasEqual: false, IsComparable: false},
+		},
+	}
+	_, err := EmitModelFileChecked(m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Account")
+	assert.Contains(t, err.Error(), "tags")
+	assert.Contains(t, err.Error(), "Equal")
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {

@@ -188,6 +188,11 @@ func columnFields(fields []FieldInfo) []FieldInfo {
 // model uses unsupported features. Multi-column value objects are fully
 // supported (see emitMultiValHelpers / expanded scan/diff/DDL).
 func EmitModelFileChecked(m ModelInfo) (string, error) {
+	for _, f := range m.Fields {
+		if f.IsVO && !f.HasEqual && !f.IsComparable {
+			return "", fmt.Errorf("drel: model %q field %q is a value object whose type is not comparable (it contains a slice, map, or func) and has no Equal(T) bool method; add an Equal method so change-tracking can diff it", m.Name, f.Name)
+		}
+	}
 	return EmitModelFile(m), nil
 }
 
@@ -436,7 +441,11 @@ func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
 			b.WriteString("\t}\n")
 			continue
 		}
-		b.WriteString(fmt.Sprintf("\tif p.%s != s.%s {\n", f.Name, f.Name))
+		cond := fmt.Sprintf("p.%s != s.%s", f.Name, f.Name)
+		if f.IsVO && f.HasEqual {
+			cond = fmt.Sprintf("!p.%s.Equal(s.%s)", f.Name, f.Name)
+		}
+		b.WriteString(fmt.Sprintf("\tif %s {\n", cond))
 		b.WriteString(fmt.Sprintf("\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: p.%s})\n", f.ColumnName, f.Name))
 		b.WriteString("\t}\n")
 	}
