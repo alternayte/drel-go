@@ -138,6 +138,13 @@ func bulkInsertColumns(ctx context.Context, base *ModelMetaBase, entity any) ([]
 
 // BulkInsert inserts multiple entities in batches, bypassing change tracking.
 // Returns the total number of rows affected.
+//
+// IMPORTANT: BulkInsert is a fast path that opens its own transaction and does
+// NOT go through the change tracker. Domain events recorded on the entities
+// (RecordEvent) are NOT collected, NOT written to the outbox, and NOT
+// dispatched to before/after-commit hooks. Use SaveChanges (Engine.Transaction
+// or a UnitOfWork) when you need event dispatch, or BulkInsertWithEvents to
+// persist events through the outbox path inside the bulk transaction.
 func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
 	if len(entities) == 0 {
 		return 0, nil
@@ -210,6 +217,11 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 // BulkUpsert inserts or updates multiple entities based on conflict resolution.
 // It bypasses change tracking and executes directly against the database.
 // Returns the total number of rows affected.
+//
+// IMPORTANT: like BulkInsert, BulkUpsert bypasses the change tracker. Domain
+// events recorded on the entities (RecordEvent) are NOT collected, written to
+// the outbox, or dispatched. Use SaveChanges when you need events.
+
 // ErrBulkDeleteRequiresFilter is returned when BulkDelete is called without any WHERE predicates or filters.
 var ErrBulkDeleteRequiresFilter = fmt.Errorf("drel: BulkDelete requires at least one Where predicate to prevent accidental full-table deletes")
 
