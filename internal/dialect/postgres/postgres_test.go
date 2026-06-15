@@ -528,6 +528,82 @@ func TestPostgres_BuildSelect(t *testing.T) {
 				Args: nil,
 			},
 		},
+		{
+			name: "where between (two sequential params)",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				Where: &ast.WhereClause{
+					Comparison: &ast.ComparisonNode{
+						Column: "age",
+						Op:     ast.OpBetween,
+						Values: []any{18, 65},
+					},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" WHERE "age" BETWEEN $1 AND $2`,
+				Args: []any{18, 65},
+			},
+		},
+		{
+			name: "where between after another param (index offset)",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				Where: &ast.WhereClause{
+					LogicalOp: ast.LogicalAnd,
+					Children: []ast.WhereClause{
+						{Comparison: &ast.ComparisonNode{Column: "role", Op: ast.OpEq, Value: "admin"}},
+						{Comparison: &ast.ComparisonNode{Column: "age", Op: ast.OpBetween, Values: []any{18, 65}}},
+					},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" WHERE ("role" = $1 AND "age" BETWEEN $2 AND $3)`,
+				Args: []any{"admin", 18, 65},
+			},
+		},
+		{
+			name: "where not in (multi placeholder)",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				Where: &ast.WhereClause{
+					Comparison: &ast.ComparisonNode{
+						Column: "role",
+						Op:     ast.OpNotIn,
+						Values: []any{"banned", "spam", "bot"},
+					},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" WHERE "role" NOT IN ($1, $2, $3)`,
+				Args: []any{"banned", "spam", "bot"},
+			},
+		},
+		{
+			name: "where ilike",
+			node: ast.SelectNode{
+				Table:   "users",
+				Columns: []string{"id", "name"},
+				Type:    ast.QuerySelect,
+				Where: &ast.WhereClause{
+					Comparison: &ast.ComparisonNode{
+						Column: "name",
+						Op:     ast.OpILike,
+						Value:  "j%",
+					},
+				},
+			},
+			expected: dialect.Result{
+				SQL:  `SELECT "id", "name" FROM "users" WHERE "name" ILIKE $1`,
+				Args: []any{"j%"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
