@@ -555,3 +555,30 @@ func TestGenerateCreateTable_SQLite_IntEnum(t *testing.T) {
 	assert.Contains(t, sql, `"priority" INTEGER NOT NULL CHECK("priority" IN (0, 1, 2))`)
 	assert.NotContains(t, sql, "TEXT")
 }
+
+func TestBuildTable_StringEnumDefault_Quoted_Postgres(t *testing.T) {
+	m := ModelInfo{Name: "Account", PKType: "int", TableName: "accounts", Fields: []FieldInfo{
+		{Name: "role", GoType: "accounts.Role", ColumnName: "role", LocalGoType: "Role",
+			IsEnum: true, EnumBaseType: "string", EnumValues: []string{"admin", "user"}, Default: "user"},
+	}}
+	sql := GenerateCreateTable(m, nil, "postgres")
+	assert.Contains(t, sql, `DEFAULT 'user'`)
+}
+
+func TestBuildTable_IntEnumDefault_Unquoted(t *testing.T) {
+	m := ModelInfo{Name: "Ticket", PKType: "int", TableName: "tickets", Fields: []FieldInfo{
+		{Name: "priority", GoType: "tickets.Priority", ColumnName: "priority", LocalGoType: "Priority",
+			IsEnum: true, EnumIsInt: true, EnumBaseType: "int", EnumValues: []string{"0", "1", "2"}, Default: "0"},
+	}}
+	sql := GenerateCreateTable(m, nil, "postgres")
+	assert.Contains(t, sql, `DEFAULT 0`)
+	assert.NotContains(t, sql, `DEFAULT '0'`)
+}
+
+func TestBuildTable_StringColumnDefault_Quoted(t *testing.T) {
+	m := ModelInfo{Name: "User", PKType: "int", TableName: "users", Fields: []FieldInfo{
+		{Name: "tier", GoType: "string", ColumnName: "tier", Default: "free"},
+	}}
+	sql := GenerateCreateTable(m, nil, "postgres")
+	assert.Contains(t, sql, `DEFAULT 'free'`)
+}

@@ -195,6 +195,10 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 			c.Check = f.CheckExpr
 		}
 
+		if f.Default != "" {
+			c.Default = enumDefaultLiteral(f)
+		}
+
 		if fks != nil {
 			if target, ok := fks[f.ColumnName]; ok {
 				c.Ref = target
@@ -339,6 +343,27 @@ func buildPivotTables(models []ModelInfo, dialect string) []Table {
 		}
 	}
 	return pivots
+}
+
+// enumDefaultLiteral renders a column's parsed default for DDL. String-typed
+// columns and string enums are single-quoted; integer enums and numeric/SQL
+// expression defaults are emitted verbatim.
+func enumDefaultLiteral(f FieldInfo) string {
+	quote := false
+	if f.IsEnum {
+		quote = !f.EnumIsInt
+	} else {
+		// Quote when the underlying Go type is a string.
+		base := f.GoType
+		if strings.HasPrefix(base, "*") {
+			base = base[1:]
+		}
+		quote = base == "string"
+	}
+	if quote {
+		return fmt.Sprintf("'%s'", strings.ReplaceAll(f.Default, "'", "''"))
+	}
+	return f.Default
 }
 
 // enumValueList renders enum values as a comma-separated list. When quoted is
