@@ -951,3 +951,28 @@ func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
 func TestSQLite_ImplementsDialect(t *testing.T) {
 	var _ dialect.Dialect = New()
 }
+
+func TestSQLite_BuildSelect_PartitionLimit(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:   "posts",
+		Columns: []string{"id", "author_id", "title"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "author_id",
+				Op:     ast.OpIn,
+				Values: []any{1, 2},
+			},
+		},
+		PartitionLimit: &ast.PartitionLimit{
+			PartitionBy: "author_id",
+			OrderBy:     []ast.OrderByExpr{{Column: "created_at", Direction: ast.Desc}},
+			Limit:       3,
+		},
+	}
+	result := d.BuildSelect(node)
+	want := `SELECT "id", "author_id", "title" FROM (SELECT "id", "author_id", "title", ROW_NUMBER() OVER (PARTITION BY "author_id" ORDER BY "created_at" DESC) AS "_drel_rn" FROM "posts" WHERE "author_id" IN (?, ?)) AS "_drel_w" WHERE "_drel_rn" <= 3`
+	assert.Equal(t, want, result.SQL)
+	assert.Equal(t, []any{1, 2}, result.Args)
+}

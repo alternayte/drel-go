@@ -90,15 +90,27 @@ type AggregateExpr struct {
 	Alias  string
 }
 
+// PartitionLimit requests a per-partition row cap rendered with a window
+// function (ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)). It is used by
+// the relationship loader to apply Include Limit(n) per parent rather than
+// across the whole batch. When set, the emitter wraps the base SELECT and
+// keeps only rows whose row number is <= Limit.
+type PartitionLimit struct {
+	PartitionBy string        // foreign-key column to partition by
+	OrderBy     []OrderByExpr // ordering within each partition (defaults to PK at the call site)
+	Limit       int           // rows kept per partition
+}
+
 type SelectNode struct {
-	Table      string
-	Columns    []string
-	Where      *WhereClause
-	OrderBy    []OrderByExpr
-	Limit      *int
-	Offset     *int
-	Type       QueryType
-	GroupBy    []string
-	Having     *WhereClause
-	Aggregates []AggregateExpr
+	Table          string
+	Columns        []string
+	Where          *WhereClause
+	OrderBy        []OrderByExpr
+	Limit          *int
+	Offset         *int
+	Type           QueryType
+	GroupBy        []string
+	Having         *WhereClause
+	Aggregates     []AggregateExpr
+	PartitionLimit *PartitionLimit
 }

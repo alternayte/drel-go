@@ -790,3 +790,45 @@ func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
 	r := p.BuildSelect(node)
 	assert.Contains(t, r.SQL, "ERROR")
 }
+
+func TestPostgres_BuildSelect_PartitionLimit(t *testing.T) {
+	pg := New()
+	node := ast.SelectNode{
+		Table:   "posts",
+		Columns: []string{"id", "author_id", "title"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "author_id",
+				Op:     ast.OpIn,
+				Values: []any{1, 2},
+			},
+		},
+		PartitionLimit: &ast.PartitionLimit{
+			PartitionBy: "author_id",
+			OrderBy:     []ast.OrderByExpr{{Column: "created_at", Direction: ast.Desc}},
+			Limit:       3,
+		},
+	}
+	result := pg.BuildSelect(node)
+	want := `SELECT "id", "author_id", "title" FROM (SELECT "id", "author_id", "title", ROW_NUMBER() OVER (PARTITION BY "author_id" ORDER BY "created_at" DESC) AS "_drel_rn" FROM "posts" WHERE "author_id" IN ($1, $2)) AS "_drel_w" WHERE "_drel_rn" <= 3`
+	assert.Equal(t, want, result.SQL)
+	assert.Equal(t, []any{1, 2}, result.Args)
+}
+
+func TestPostgres_BuildSelect_PartitionLimit_DefaultOrderByPK(t *testing.T) {
+	pg := New()
+	node := ast.SelectNode{
+		Table:   "posts",
+		Columns: []string{"id", "author_id"},
+		Type:    ast.QuerySelect,
+		PartitionLimit: &ast.PartitionLimit{
+			PartitionBy: "author_id",
+			OrderBy:     []ast.OrderByExpr{{Column: "id", Direction: ast.Asc}},
+			Limit:       5,
+		},
+	}
+	result := pg.BuildSelect(node)
+	want := `SELECT "id", "author_id" FROM (SELECT "id", "author_id", ROW_NUMBER() OVER (PARTITION BY "author_id" ORDER BY "id") AS "_drel_rn" FROM "posts") AS "_drel_w" WHERE "_drel_rn" <= 5`
+	assert.Equal(t, want, result.SQL)
+}

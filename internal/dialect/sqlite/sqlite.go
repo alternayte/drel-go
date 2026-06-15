@@ -68,6 +68,16 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 				b.WriteString(quoteIdent(agg.Alias))
 			}
 		}
+		if node.PartitionLimit != nil {
+			b.WriteString(", ROW_NUMBER() OVER (PARTITION BY ")
+			b.WriteString(quoteIdent(node.PartitionLimit.PartitionBy))
+			if len(node.PartitionLimit.OrderBy) > 0 {
+				b.WriteString(" ORDER BY ")
+				writeOrderBy(&b, node.PartitionLimit.OrderBy)
+			}
+			b.WriteString(") AS ")
+			b.WriteString(quoteIdent("_drel_rn"))
+		}
 		b.WriteString(" FROM ")
 		b.WriteString(quoteIdent(node.Table))
 	}
@@ -108,23 +118,7 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 
 	if len(node.OrderBy) > 0 {
 		b.WriteString(" ORDER BY ")
-		for i, ob := range node.OrderBy {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(quoteIdent(ob.Column))
-			if ob.Direction == ast.Desc {
-				b.WriteString(" DESC")
-			}
-			// SQLite supports NULLS FIRST/LAST since 3.30 (2019); libSQL/Turso
-			// ship newer. Required for null-aware keyset pagination parity.
-			switch ob.Nulls {
-			case ast.NullsFirst:
-				b.WriteString(" NULLS FIRST")
-			case ast.NullsLast:
-				b.WriteString(" NULLS LAST")
-			}
-		}
+		writeOrderBy(&b, node.OrderBy)
 	}
 
 	if node.Limit != nil {
@@ -135,7 +129,41 @@ func (s *SQLite) BuildSelect(node ast.SelectNode) dialect.Result {
 		b.WriteString(fmt.Sprintf(" OFFSET %d", *node.Offset))
 	}
 
+	if node.PartitionLimit != nil {
+		inner := b.String()
+		wrapped := "SELECT "
+		for i, col := range node.Columns {
+			if i > 0 {
+				wrapped += ", "
+			}
+			wrapped += quoteIdent(col)
+		}
+		wrapped += " FROM (" + inner + ") AS " + quoteIdent("_drel_w") +
+			" WHERE " + quoteIdent("_drel_rn") + fmt.Sprintf(" <= %d", node.PartitionLimit.Limit)
+		return dialect.Result{SQL: wrapped, Args: args}
+	}
+
 	return dialect.Result{SQL: b.String(), Args: args}
+}
+
+func writeOrderBy(b *strings.Builder, orderBy []ast.OrderByExpr) {
+	for i, ob := range orderBy {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(quoteIdent(ob.Column))
+		if ob.Direction == ast.Desc {
+			b.WriteString(" DESC")
+		}
+		// SQLite supports NULLS FIRST/LAST since 3.30 (2019); libSQL/Turso
+		// ship newer. Required for null-aware keyset pagination parity.
+		switch ob.Nulls {
+		case ast.NullsFirst:
+			b.WriteString(" NULLS FIRST")
+		case ast.NullsLast:
+			b.WriteString(" NULLS LAST")
+		}
+	}
 }
 
 // writeWhere writes a WHERE clause for SQLite.
