@@ -31,10 +31,13 @@ func TestNewPostgres_WithSeed(t *testing.T) {
 		t.Skip("skipping: requires Docker")
 	}
 
-	engine := pgtest.NewPostgres(t, pgtest.WithSeed(func(e *drel.Engine) {
+	engine := pgtest.NewPostgres(t, pgtest.WithSeed(func(e *drel.Engine) error {
 		ctx := context.Background()
-		e.Exec(ctx, "CREATE TABLE test (id SERIAL PRIMARY KEY, name TEXT)")
-		e.Exec(ctx, "INSERT INTO test (name) VALUES ($1)", "seeded")
+		if _, err := e.Exec(ctx, "CREATE TABLE test (id SERIAL PRIMARY KEY, name TEXT)"); err != nil {
+			return err
+		}
+		_, err := e.Exec(ctx, "INSERT INTO test (name) VALUES ($1)", "seeded")
+		return err
 	}))
 
 	ctx := context.Background()

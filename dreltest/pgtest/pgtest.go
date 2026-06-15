@@ -2,7 +2,6 @@ package pgtest
 
 import (
 	"context"
-	"testing"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -15,7 +14,7 @@ import (
 
 type config struct {
 	migrationsDir string
-	seedFn        func(*drel.Engine)
+	seedFn        func(*drel.Engine) error
 }
 
 // Option configures NewPostgres.
@@ -27,14 +26,23 @@ func WithMigrations(dir string) Option {
 }
 
 // WithSeed runs a seed function against the engine after the container starts
-// (and after any migrations if WithMigrations is also provided).
-func WithSeed(fn func(*drel.Engine)) Option {
+// (and after any migrations if WithMigrations is also provided). A non-nil
+// error fails the test.
+func WithSeed(fn func(*drel.Engine) error) Option {
 	return func(c *config) { c.seedFn = fn }
+}
+
+// testingTB is the subset of *testing.T NewPostgres uses; it lets the
+// seed-failure path be asserted with a fake T in tests. *testing.T satisfies it.
+type testingTB interface {
+	Helper()
+	Cleanup(func())
+	Fatalf(format string, args ...any)
 }
 
 // NewPostgres starts a Postgres container and returns a connected drel Engine.
 // The container is torn down when the test completes via t.Cleanup.
-func NewPostgres(t *testing.T, opts ...Option) *drel.Engine {
+func NewPostgres(t testingTB, opts ...Option) *drel.Engine {
 	t.Helper()
 	cfg := &config{}
 	for _, opt := range opts {
@@ -87,7 +95,9 @@ func NewPostgres(t *testing.T, opts ...Option) *drel.Engine {
 	}
 
 	if cfg.seedFn != nil {
-		cfg.seedFn(engine)
+		if err := cfg.seedFn(engine); err != nil {
+			t.Fatalf("pgtest.NewPostgres: seed: %v", err)
+		}
 	}
 
 	return engine
