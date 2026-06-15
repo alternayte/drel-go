@@ -4,6 +4,7 @@ package drel_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/alternayte/drel"
@@ -145,4 +146,66 @@ func TestIntegration_BulkDelete_SoftDeleteModel(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, products, 1)
 	assert.Equal(t, "B", products[0].Name())
+}
+
+func TestIntegration_BulkUpdate_NoWhere_Guarded(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	ctx := context.Background()
+
+	_, err := repo.OrderBy(testmodels.Products.Price.Asc()).
+		BulkUpdate(ctx, drel.Set(testmodels.Products.Price, 999))
+	require.True(t, errors.Is(err, drel.ErrBulkUpdateRequiresFilter))
+
+	changed, err := repo.Where(testmodels.Products.Price.Eq(999)).Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, changed)
+}
+
+func TestIntegration_BulkUpdate_AllRows_OptsOut(t *testing.T) {
+	engine := setupTestDB(t)
+	seedProducts(t, engine)
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+	ctx := context.Background()
+
+	n, err := repo.AllRows().BulkUpdate(ctx, drel.Set(testmodels.Products.Price, 999))
+	require.NoError(t, err)
+	assert.Equal(t, 5, n)
+}
+
+func TestIntegration_BulkDelete_SoftDelete_NoWhere_Guarded(t *testing.T) {
+	engine := setupSoftDeleteTestDB(t)
+	ctx := context.Background()
+	_, err := engine.Exec(ctx, "INSERT INTO sd_products (name, price) VALUES ('A', 100), ('B', 200)")
+	require.NoError(t, err)
+	repo := drel.NewRepository(engine, testmodels.SoftDeleteProductMeta)
+
+	_, err = repo.OrderBy(testmodels.SoftDeleteProducts.Name.Asc()).BulkDelete(ctx)
+	require.True(t, errors.Is(err, drel.ErrBulkDeleteRequiresFilter))
+
+	live, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, live, "soft-delete auto-filter must not satisfy the guard")
+}
+
+func TestIntegration_BulkInsert_ErrorRollsBack_ReturnsZero(t *testing.T) {
+	engine := setupTestDB(t)
+	ctx := context.Background()
+	// products has a UNIQUE constraint on name added below to force a conflict.
+	_, err := engine.Exec(ctx, "ALTER TABLE products ADD CONSTRAINT products_name_uniq UNIQUE (name)")
+	require.NoError(t, err)
+	repo := drel.NewRepository(engine, testmodels.ProductMeta)
+
+	products := []*testmodels.Product{
+		{Name: "dup", Price: 1, InStock: true},
+		{Name: "dup", Price: 2, InStock: true},
+	}
+	n, err := repo.BulkInsert(ctx, products)
+	require.Error(t, err)
+	assert.Equal(t, 0, n)
+
+	cnt, err := repo.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cnt, "transaction must have rolled back fully")
 }
