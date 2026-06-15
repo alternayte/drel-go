@@ -10,6 +10,24 @@ func isMultiColumnMapper(t types.Type) bool {
 	return hasMethod(t, "DrelColumns") && hasMethod(t, "DrelValues") && hasMethod(t, "DrelScanMulti")
 }
 
+// hasDrelColumnTypes reports whether a multi-column VO exposes the optional
+// DrelColumnTypes() []string hook for explicit sub-column SQL types.
+func hasDrelColumnTypes(t types.Type) bool {
+	return hasMethod(t, "DrelColumnTypes")
+}
+
+// defaultMultiColTypes returns one "text" entry per sub-column name. The
+// optional DrelColumnTypes() hook is detected via hasDrelColumnTypes; W2-G1
+// defaults every sub-column to text, leaving explicit per-column type overrides
+// to the db-tag type= work (W2-G6/G9).
+func defaultMultiColTypes(names []string) []string {
+	out := make([]string, len(names))
+	for i := range out {
+		out[i] = "text"
+	}
+	return out
+}
+
 func hasMethod(t types.Type, name string) bool {
 	mset := types.NewMethodSet(t)
 	if mset.Lookup(nil, name) != nil {

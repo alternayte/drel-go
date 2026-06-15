@@ -50,6 +50,21 @@ func TestScanner_MultiColVO(t *testing.T) {
 	assert.Equal(t, "Money", balanceField.LocalGoType)
 }
 
+func TestScanner_MultiColTypesDefaultText(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Money struct {\n\tamount   int\n\tcurrency string\n}\n\nfunc (m Money) DrelColumns() []string        { return []string{\"amount\", \"currency\"} }\nfunc (m Money) DrelValues() ([]any, error)   { return []any{m.amount, m.currency}, nil }\nfunc (m *Money) DrelScanMulti(v []any) error { return nil }\n\ntype Product struct {\n\tdrel.Model[int]\n\tname    string " + "`db:\"name\"`" + "\n\tbalance Money  " + "`db:\"balance_amount,balance_currency\"`" + "\n}\n",
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	balanceField := models[0].Fields[1]
+	require.True(t, balanceField.IsMultiColVO)
+	assert.Equal(t, []string{"balance_amount", "balance_currency"}, balanceField.MultiColNames)
+	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
+}
+
 func TestScanner_PrimitiveFieldNotVO(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
 		"models/model.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Item struct {\n\tdrel.Model[int]\n\tname  string " + "`db:\"name\"`" + "\n\tcount int    " + "`db:\"count\"`" + "\n}\n",
