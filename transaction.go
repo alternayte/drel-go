@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alternayte/drel/internal/dberr"
 	"github.com/alternayte/drel/internal/driver"
 )
 
@@ -119,7 +120,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 
 	if err := dbTx.Commit(ctx); err != nil {
 		tx.tracker.resetFlushed()
-		return fmt.Errorf("drel: commit: %w", err)
+		return fmt.Errorf("drel: commit: %w", dberr.Classify(err))
 	}
 	tx.tracker.PostCommit()
 	clearPendingEvents(tx.tracker)

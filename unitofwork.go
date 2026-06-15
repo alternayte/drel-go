@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dberr"
 )
 
 // UnitOfWork is a change-tracking work session in the Entity Framework
@@ -88,7 +89,7 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 
 	if err := dbTx.Commit(ctx); err != nil {
 		u.tracker.resetFlushed()
-		return fmt.Errorf("drel: commit: %w", err)
+		return fmt.Errorf("drel: commit: %w", dberr.Classify(err))
 	}
 	committed = true
 	u.tracker.PostCommit()
