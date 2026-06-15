@@ -36,6 +36,8 @@ type FieldInfo struct {
 	IsPointer      bool   // whether the field is a pointer type
 	IsEnum         bool
 	EnumValues     []string
+	EnumIsInt      bool   // enum's underlying basic kind is integer (not string)
+	EnumBaseType   string // Go base type of the enum, e.g. "string", "int", "int64"
 	Unique         bool   // db tag option: unique index on this column
 	Indexed        bool   // db tag option: index on this column
 	IndexName      string // explicit index name (db:"...,index=name"); fields sharing a name form a composite index

@@ -340,3 +340,81 @@ type Also struct {
 	require.NoError(t, err)
 	require.Len(t, models, 2)
 }
+
+func TestScanner_StringEnum_PreservesDeclarationOrder(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Status string
+
+const (
+	StatusNew      Status = "new"
+	StatusPending  Status = "pending"
+	StatusApproved Status = "approved"
+	StatusZebra    Status = "zebra"
+)
+
+type Order struct {
+	drel.Model[int]
+	status Status ` + "`db:\"status\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	var f *FieldInfo
+	for i := range models[0].Fields {
+		if models[0].Fields[i].ColumnName == "status" {
+			f = &models[0].Fields[i]
+		}
+	}
+	require.NotNil(t, f)
+	assert.True(t, f.IsEnum)
+	assert.False(t, f.EnumIsInt)
+	assert.Equal(t, "string", f.EnumBaseType)
+	// Declaration order preserved, NOT alphabetized ("approved" would sort first).
+	assert.Equal(t, []string{"new", "pending", "approved", "zebra"}, f.EnumValues)
+}
+
+func TestScanner_IntEnum_KindAndOrder(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Priority int
+
+const (
+	PriorityLow    Priority = 0
+	PriorityMedium Priority = 1
+	PriorityHigh   Priority = 2
+)
+
+type Ticket struct {
+	drel.Model[int]
+	priority Priority ` + "`db:\"priority\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{"./models"}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	var f *FieldInfo
+	for i := range models[0].Fields {
+		if models[0].Fields[i].ColumnName == "priority" {
+			f = &models[0].Fields[i]
+		}
+	}
+	require.NotNil(t, f)
+	assert.True(t, f.IsEnum)
+	assert.True(t, f.EnumIsInt)
+	assert.Equal(t, "int", f.EnumBaseType)
+	assert.Equal(t, []string{"0", "1", "2"}, f.EnumValues)
+}

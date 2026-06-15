@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"go/constant"
+	"go/token"
 	"go/types"
 	"path"
 	"path/filepath"
@@ -256,10 +257,12 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 					}
 				}
 				if !isPrimitiveType(goTypeStr) && !fi.IsVO && !fi.IsMultiColVO {
-					enumValues := findEnumValues(f.Type())
+					enumValues, enumIsInt, enumBase := findEnumValues(f.Type())
 					if len(enumValues) > 0 {
 						fi.IsEnum = true
 						fi.EnumValues = enumValues
+						fi.EnumIsInt = enumIsInt
+						fi.EnumBaseType = enumBase
 					}
 				}
 			}
@@ -371,29 +374,36 @@ func parseRelTag(rawTag string) string {
 	return st.Get("rel")
 }
 
-func findEnumValues(t types.Type) []string {
+// findEnumValues returns the enum's declared values (in source declaration
+// order), whether the underlying kind is integer, and the Go base type string.
+// A non-enum type returns (nil, false, "").
+func findEnumValues(t types.Type) (values []string, isInt bool, baseType string) {
 	if ptr, ok := t.(*types.Pointer); ok {
 		t = ptr.Elem()
 	}
 	named, ok := t.(*types.Named)
 	if !ok {
-		return nil
+		return nil, false, ""
 	}
 	basic, ok := named.Underlying().(*types.Basic)
 	if !ok {
-		return nil
+		return nil, false, ""
 	}
 	if basic.Kind() != types.String && !isIntegerBasicKind(basic.Kind()) {
-		return nil
+		return nil, false, ""
 	}
 
 	typePkg := named.Obj().Pkg()
 	if typePkg == nil {
-		return nil
+		return nil, false, ""
 	}
 
+	type enumConst struct {
+		val string
+		pos token.Pos
+	}
 	scope := typePkg.Scope()
-	var values []string
+	var consts []enumConst
 	for _, name := range scope.Names() {
 		obj := scope.Lookup(name)
 		c, ok := obj.(*types.Const)
@@ -407,10 +417,17 @@ func findEnumValues(t types.Type) []string {
 		if basic.Kind() == types.String {
 			val = constant.StringVal(c.Val())
 		}
-		values = append(values, val)
+		consts = append(consts, enumConst{val: val, pos: c.Pos()})
 	}
-	sort.Strings(values)
-	return values
+	// Preserve source declaration order (scope.Names() is non-deterministic).
+	sort.Slice(consts, func(i, j int) bool { return consts[i].pos < consts[j].pos })
+	for _, c := range consts {
+		values = append(values, c.val)
+	}
+
+	isInt = isIntegerBasicKind(basic.Kind())
+	baseType = basic.String()
+	return values, isInt, baseType
 }
 
 // voBaseType returns the underlying basic Go type name of a single-column VO
