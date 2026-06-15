@@ -265,6 +265,37 @@ func TestEmitModelFile_WithSingleColVO(t *testing.T) {
 	assert.Contains(t, output, "p.email != s.email") // diff
 }
 
+func TestEmitModelFile_MultiColVOColumnRefs(t *testing.T) {
+	m := ModelInfo{
+		Name:      "Account",
+		PkgName:   "models",
+		PKType:    "int",
+		TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{
+				Name:          "balance",
+				GoType:        "testmod/models.Money",
+				ColumnName:    "balance_amount",
+				LocalGoType:   "Money",
+				IsMultiColVO:  true,
+				MultiColNames: []string{"balance_amount", "balance_currency"},
+				MultiColTypes: []string{"text", "text"},
+			},
+		},
+	}
+
+	out := EmitModelFile(m)
+
+	// One typed column field per sub-column, named <Field><SubColExport>.
+	assert.Contains(t, out, "BalanceAmount drel.Column[any]")
+	assert.Contains(t, out, "BalanceCurrency drel.Column[any]")
+	assert.Contains(t, out, `BalanceAmount: drel.NewCol[any]("balance_amount")`)
+	assert.Contains(t, out, `BalanceCurrency: drel.NewCol[any]("balance_currency")`)
+	// The VO field itself must NOT produce a drel.Column[Money] ref.
+	assert.NotContains(t, out, "drel.Column[Money]")
+}
+
 func TestEmitModelFile_MultiColVOReturnsError(t *testing.T) {
 	m := ModelInfo{
 		Name:      "Product",

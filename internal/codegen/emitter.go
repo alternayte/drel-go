@@ -8,6 +8,21 @@ import (
 	"unicode"
 )
 
+// subColExport derives the exported struct-field name for a multi-col VO
+// sub-column, e.g. ("balance", "balance_amount") -> "BalanceAmount".
+// Underscores delimit words that are individually title-cased.
+func subColExport(colName string) string {
+	parts := strings.Split(colName, "_")
+	var b strings.Builder
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		b.WriteString(exportName(p))
+	}
+	return b.String()
+}
+
 // exportName capitalises the first letter of a name.
 func exportName(name string) string {
 	if name == "" {
@@ -242,6 +257,12 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 	pkDisplay := resolvePKDisplay(m, aliases)
 	b.WriteString(fmt.Sprintf("\tID %s\n", columnTypeName(pkDisplay)))
 	for _, f := range colFields {
+		if f.IsMultiColVO {
+			for _, sub := range f.MultiColNames {
+				b.WriteString(fmt.Sprintf("\t%s drel.Column[any]\n", subColExport(sub)))
+			}
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\t%s %s\n", exportName(f.Name), columnTypeName(fieldDisplayType(f, aliases))))
 	}
 	if m.HasSoftDelete {
@@ -261,6 +282,12 @@ func emitColumnRefs(b *strings.Builder, m ModelInfo, varPlural string, aliases m
 	// Struct literal values
 	b.WriteString(fmt.Sprintf("\tID: %s,\n", columnConstructor(pkDisplay, "id")))
 	for _, f := range colFields {
+		if f.IsMultiColVO {
+			for _, sub := range f.MultiColNames {
+				b.WriteString(fmt.Sprintf("\t%s: drel.NewCol[any](%q),\n", subColExport(sub), sub))
+			}
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\t%s: %s,\n", exportName(f.Name), columnConstructor(fieldDisplayType(f, aliases), f.ColumnName)))
 	}
 	if m.HasSoftDelete {
