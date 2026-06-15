@@ -140,11 +140,17 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 		var changes []FieldChange
 		if te.forceUpdate {
 			// Entity was attached as Modified: no snapshot to diff against, so
-			// UPDATE every user-settable column.
+			// UPDATE every user-settable column — but never the audit columns.
+			// created_by is immutable on update; updated_by is appended once
+			// below from AuditSetUpdate. Including them here would clobber
+			// created_by and emit a duplicate updated_by assignment.
 			cols, vals := te.meta.InsertColumns(te.entity)
-			changes = make([]FieldChange, len(cols))
+			changes = make([]FieldChange, 0, len(cols))
 			for i, c := range cols {
-				changes[i] = FieldChange{Column: c, Value: vals[i]}
+				if c == "created_by" || c == "updated_by" {
+					continue
+				}
+				changes = append(changes, FieldChange{Column: c, Value: vals[i]})
 			}
 		} else {
 			changes = te.meta.Diff(te.entity, te.snapshot)
