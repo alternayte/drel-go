@@ -448,6 +448,9 @@ func (e *Engine) ApplyMigrations(ctx context.Context, dir string) (int, error) {
 	return migrate.NewRunner(e.drv, dir, e.DialectName()).Up(ctx)
 }
 
+// includeDialect exposes the dialect for the include reader interface.
+func (e *Engine) includeDialect() dialect.Dialect { return e.dia }
+
 // startSpan begins a tracing span for a query if a tracer is configured.
 // It returns the (possibly augmented) context and a no-op-safe end function.
 func (e *Engine) startSpan(ctx context.Context, name string) (context.Context, func(err error)) {

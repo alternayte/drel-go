@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/alternayte/drel/internal/ast"
+	"github.com/alternayte/drel/internal/dialect"
 )
 
 // RelationType describes the kind of relationship between two models.
@@ -188,9 +189,10 @@ func (q *IncludableQuery[T]) loadInto(ctx context.Context, entities []*T) error 
 		parents[i] = e
 	}
 	exec := &includeExecutor{
-		engine:     q.repo.engine,
+		reader:     q.repo.engine,
 		parentMeta: ToMetaBase(&q.repo.meta),
 		primary:    q.builder.primary,
+		tracker:    q.builder.tracker,
 	}
 	return exec.loadRelations(ctx, parents, q.includes)
 }
@@ -233,11 +235,30 @@ func (q *IncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
 	return entities, nil
 }
 
-// includeExecutor runs split queries to load related entities.
+// includeReader abstracts the connection a split include query runs on: the
+// engine (replica/primary routing) or an active transaction connection.
+type includeReader interface {
+	queryRouted(ctx context.Context, primary bool, sql string, args ...any) (Rows, error)
+	includeDialect() dialect.Dialect
+}
+
+// txIncludeReader runs include split queries on a transaction connection.
+type txIncludeReader struct{ tx *Tx }
+
+func (r txIncludeReader) queryRouted(ctx context.Context, _ bool, sql string, args ...any) (Rows, error) {
+	return r.tx.queryInternal(ctx, sql, args...)
+}
+
+func (r txIncludeReader) includeDialect() dialect.Dialect { return r.tx.engine.dialect() }
+
+// includeExecutor runs split queries to load related entities. When tracker is
+// non-nil, each loaded child is snapshotted and tracked so mutations to it are
+// flushed by SaveChanges (UnitOfWork read-your-writes semantics).
 type includeExecutor struct {
-	engine     *Engine
+	reader     includeReader
 	parentMeta *ModelMetaBase
-	primary    bool // route sub-queries to the primary (forced by .Primary() or a UoW)
+	primary    bool           // force primary reads (UoW read-your-writes / in-tx)
+	tracker    *changeTracker // nil ⇒ children are not tracked (read-only)
 }
 
 func (ie *includeExecutor) loadRelations(ctx context.Context, parents []any, includes []IncludeSpec) error {
@@ -270,9 +291,10 @@ func (ie *includeExecutor) loadRelation(ctx context.Context, parents []any, inc 
 	// load the next level via split queries on the related model's metadata.
 	if len(inc.then) > 0 && len(related) > 0 {
 		childExec := &includeExecutor{
-			engine:     ie.engine,
+			reader:     ie.reader,
 			parentMeta: inc.rel.RelatedMeta,
 			primary:    ie.primary,
+			tracker:    ie.tracker,
 		}
 		if err := childExec.loadRelations(ctx, related, inc.then); err != nil {
 			return err
@@ -474,8 +496,8 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 			}
 		}
 
-		result := ie.engine.dialect().BuildSelect(node)
-		rows, err := ie.engine.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
+		result := ie.reader.includeDialect().BuildSelect(node)
+		rows, err := ie.reader.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
 		if err != nil {
 			return nil, err
 		}
@@ -485,6 +507,9 @@ func (ie *includeExecutor) queryByColumn(ctx context.Context, meta *ModelMetaBas
 			if err != nil {
 				rows.Close()
 				return nil, err
+			}
+			if ie.tracker != nil && meta.Snapshot != nil {
+				ie.tracker.Track(item, meta.Snapshot(item), meta)
 			}
 			allItems = append(allItems, item)
 		}
@@ -537,8 +562,8 @@ func (ie *includeExecutor) loadManyToMany(ctx context.Context, parents []any, in
 			Type: ast.QuerySelect,
 		}
 
-		result := ie.engine.dialect().BuildSelect(node)
-		rows, err := ie.engine.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
+		result := ie.reader.includeDialect().BuildSelect(node)
+		rows, err := ie.reader.queryRouted(ctx, ie.primary, result.SQL, result.Args...)
 		if err != nil {
 			return nil, err
 		}

@@ -67,7 +67,7 @@ func TestInclude_RoutesToReplica_WhenNotPrimary(t *testing.T) {
 
 	parent := &routingParent{ID: 1}
 	exec := &includeExecutor{
-		engine:     e,
+		reader:     e,
 		parentMeta: routingParentMeta(),
 		primary:    false,
 	}
@@ -87,7 +87,7 @@ func TestInclude_RoutesToPrimary_WhenPrimaryForced(t *testing.T) {
 
 	parent := &routingParent{ID: 1}
 	exec := &includeExecutor{
-		engine:     e,
+		reader:     e,
 		parentMeta: routingParentMeta(),
 		primary:    true,
 	}
