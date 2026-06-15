@@ -63,7 +63,7 @@ func (u *UnitOfWork) SaveChanges(ctx context.Context) (retErr error) {
 	}
 	allEvents := append(tx.heldEvents, events...)
 
-	for _, hook := range u.engine.beforeCommitHooks {
+	for _, hook := range u.engine.snapshotBeforeCommitHooks() {
 		if err := hook(ctx, tx, allEvents); err != nil {
 			u.tracker.resetFlushed()
 			return err

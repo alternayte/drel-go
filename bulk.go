@@ -236,7 +236,7 @@ func (r *Repository[T]) bulkInsert(ctx context.Context, entities []*T, withEvent
 		events = collectBulkEvents(entities)
 		if len(events) > 0 {
 			tx := &Tx{engine: r.engine, dbTx: dbTx, tracker: newChangeTracker()}
-			for _, hook := range r.engine.beforeCommitHooks {
+			for _, hook := range r.engine.snapshotBeforeCommitHooks() {
 				if err := hook(ctx, tx, events); err != nil {
 					return total, fmt.Errorf("drel: bulk insert before-commit hook: %w", err)
 				}

@@ -28,6 +28,7 @@ const replicaCooldown = 5 * time.Second
 type Engine struct {
 	drv               driver.Driver
 	dia               dialect.Dialect
+	hookMu            sync.RWMutex
 	beforeCommitHooks []BeforeCommitHook
 	afterCommitHooks  []AfterCommitHook
 	eventSinks        []func(ctx context.Context, tx *Tx, events []any) error
@@ -573,11 +574,15 @@ func (e *Engine) queryOn(ctx context.Context, d driver.Driver, sql string, args 
 }
 
 func (e *Engine) OnBeforeCommit(hook BeforeCommitHook) {
+	e.hookMu.Lock()
 	e.beforeCommitHooks = append(e.beforeCommitHooks, hook)
+	e.hookMu.Unlock()
 }
 
 func (e *Engine) OnAfterCommit(hook AfterCommitHook) {
+	e.hookMu.Lock()
 	e.afterCommitHooks = append(e.afterCommitHooks, hook)
+	e.hookMu.Unlock()
 }
 
 // WithAfterCommitErrorSink registers a callback that receives errors and
@@ -598,11 +603,12 @@ func WithAfterCommitErrorSink(fn func(ctx context.Context, err error)) Option {
 // after-commit error sink (WithAfterCommitErrorSink) when set. After-commit
 // failures cannot roll back — durable side-effects belong in the outbox.
 func (e *Engine) dispatchAfterCommit(ctx context.Context, events []any) {
-	if len(e.afterCommitHooks) == 0 {
+	hooks := e.snapshotAfterCommitHooks()
+	if len(hooks) == 0 {
 		return
 	}
 	dctx := context.WithoutCancel(ctx)
-	for _, hook := range e.afterCommitHooks {
+	for _, hook := range hooks {
 		e.runAfterCommitHook(dctx, hook, events)
 	}
 }

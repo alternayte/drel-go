@@ -183,6 +183,33 @@ func TestObs_Tracer_BulkInsert(t *testing.T) {
 	assert.Equal(t, len(tr.started), tr.ended, "every started span should end")
 }
 
+func TestObs_HookRegistration_Race(t *testing.T) {
+	engine := newObsEngine(t)
+	repo := drel.NewRepository(engine, sqliteItemMeta)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	// Registrar goroutine: register hooks while queries run.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			engine.OnQuery(func(context.Context, drel.QueryEvent) {})
+		}
+	}()
+	// Reader goroutines: run queries that range over the hook slice.
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				_, _ = repo.All(ctx)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestObs_N1Detector(t *testing.T) {
 	logger, buf := bufLogger()
 	engine := newObsEngine(t, drel.WithDevMode(), drel.WithLogger(logger))

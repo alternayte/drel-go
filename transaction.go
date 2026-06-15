@@ -108,7 +108,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 	}
 	allEvents := append(tx.heldEvents, events...)
 
-	for _, hook := range e.beforeCommitHooks {
+	for _, hook := range e.snapshotBeforeCommitHooks() {
 		if err := hook(ctx, tx, allEvents); err != nil {
 			tx.tracker.resetFlushed()
 			return err
