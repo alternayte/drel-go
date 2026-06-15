@@ -74,6 +74,58 @@ func TestScanner_MultiColTypesDefaultText(t *testing.T) {
 	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
 }
 
+func TestScanner_SingleColVO_Comparable(t *testing.T) {
+	dir := setupTestModule(t, map[string]string{
+		"models/model.go": `package models
+
+import (
+	"database/sql/driver"
+	"fmt"
+
+	"github.com/alternayte/drel"
+)
+
+// Email is comparable (string-backed struct).
+type Email struct{ address string }
+
+func (e Email) Value() (driver.Value, error) { return e.address, nil }
+func (e *Email) Scan(src any) error {
+	s, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("expected string")
+	}
+	e.address = s
+	return nil
+}
+
+// Tags holds a slice — NOT comparable with !=.
+type Tags struct{ items []string }
+
+func (tg Tags) Value() (driver.Value, error) { return "", nil }
+func (tg *Tags) Scan(src any) error          { return nil }
+
+type Account struct {
+	drel.Model[int]
+	email Email ` + "`db:\"email\"`" + `
+	tags  Tags  ` + "`db:\"tags\"`" + `
+}
+`,
+	})
+
+	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+
+	fields := models[0].Fields
+	require.Len(t, fields, 2)
+
+	assert.True(t, fields[0].IsVO)
+	assert.True(t, fields[0].IsComparable, "string-backed VO is comparable")
+
+	assert.True(t, fields[1].IsVO)
+	assert.False(t, fields[1].IsComparable, "slice-backed VO is not comparable")
+}
+
 func TestScanner_SingleColVO_HasEqual(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
 		"models/model.go": `package models

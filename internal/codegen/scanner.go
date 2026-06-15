@@ -230,6 +230,7 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 					fi.IsVO = true
 					fi.VOBaseType = voBaseType(f.Type())
 					fi.HasEqual = hasMethod(f.Type(), "Equal")
+					fi.IsComparable = types.Comparable(voUnderlyingNamed(f.Type()))
 				}
 				if isMultiColumnMapper(f.Type()) {
 					fi.IsMultiColVO = true
@@ -448,6 +449,16 @@ func voBaseType(t types.Type) string {
 		}
 	}
 	return ""
+}
+
+// voUnderlyingNamed unwraps a pointer field type to its named value type so
+// comparability is assessed on the VO value (the form stored in the snapshot),
+// not on a pointer (which is always comparable).
+func voUnderlyingNamed(t types.Type) types.Type {
+	if ptr, ok := t.(*types.Pointer); ok {
+		return ptr.Elem()
+	}
+	return t
 }
 
 func isIntegerBasicKind(k types.BasicKind) bool {
