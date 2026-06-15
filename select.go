@@ -85,6 +85,13 @@ func Max(col ColumnRef) AggExpr { return AggExpr{fn: ast.AggMax, column: col.nam
 // CountCol creates a COUNT aggregate expression for a specific column.
 func CountCol(col ColumnRef) AggExpr { return AggExpr{fn: ast.AggCount, column: col.name} }
 
+// CountStar creates a COUNT(*) aggregate expression that counts all rows in the
+// group (or the whole result set). Unlike CountCol it counts NULL rows too.
+func CountStar() AggExpr { return AggExpr{fn: ast.AggCount, column: ""} }
+
+// Count is an alias for CountStar reading naturally as Count().
+func Count() AggExpr { return AggExpr{fn: ast.AggCount, column: ""} }
+
 // Aggregate executes a single aggregate function and returns the scalar result.
 func Aggregate[R any, T any](ctx context.Context, q *QueryBuilder[T], agg AggExpr) (R, error) {
 	var zero R

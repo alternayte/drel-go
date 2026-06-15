@@ -898,3 +898,28 @@ func TestBuildSelectDistinct(t *testing.T) {
 	assert.Equal(t, `SELECT DISTINCT "city" FROM "users"`, result.SQL)
 	assert.Nil(t, result.Args)
 }
+
+func TestBuildSelectCountStar(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:      "orders",
+		Aggregates: []ast.AggregateExpr{{Func: ast.AggCount, Column: "", Alias: "cnt"}},
+		Type:       ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t, `SELECT COUNT(*) AS "cnt" FROM "orders"`, result.SQL)
+	assert.Nil(t, result.Args)
+}
+
+func TestBuildSelectCountStarInGroupBy(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:      "orders",
+		Columns:    []string{"status"},
+		GroupBy:    []string{"status"},
+		Aggregates: []ast.AggregateExpr{{Func: ast.AggCount, Column: "", Alias: "cnt"}},
+		Type:       ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t, `SELECT "status", COUNT(*) AS "cnt" FROM "orders" GROUP BY "status"`, result.SQL)
+}

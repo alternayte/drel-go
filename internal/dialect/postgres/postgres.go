@@ -79,7 +79,11 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 			}
 			b.WriteString(aggFuncSQL(agg.Func))
 			b.WriteString("(")
-			b.WriteString(quoteIdent(agg.Column))
+			if agg.Func == ast.AggCount && agg.Column == "" {
+				b.WriteString("*")
+			} else {
+				b.WriteString(quoteIdent(agg.Column))
+			}
 			b.WriteString(")")
 			if agg.Alias != "" {
 				b.WriteString(" AS ")

@@ -362,6 +362,38 @@ func TestGroupBy_UnknownColumn_EmptyResultStillFailsLoudly(t *testing.T) {
 	assert.ErrorIs(t, err, drel.ErrUnknownProjectionColumn)
 }
 
+func TestAggregate_CountStar(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.Where(drel.NewStringCol("category").Eq("electronics"))
+	count, err := drel.Aggregate[int](ctx, qb, drel.CountStar())
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
+type categoryCountDTO struct {
+	Category string `db:"category"`
+	Cnt      int    `db:"cnt"`
+}
+
+func TestGroupBy_CountStar(t *testing.T) {
+	_, repo := setupSelectEngine(t)
+	ctx := context.Background()
+
+	qb := repo.OrderBy(drel.NewStringCol("category").Asc())
+	results, err := drel.GroupBy[categoryCountDTO](ctx, qb,
+		[]drel.GroupSpec{drel.Group(drel.ColRef("category"))},
+		[]drel.AliasedAgg{drel.As("cnt", drel.CountStar())},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "accessories", results[0].Category)
+	assert.Equal(t, 2, results[0].Cnt)
+	assert.Equal(t, "electronics", results[1].Category)
+	assert.Equal(t, 2, results[1].Cnt)
+}
+
 type categoryOnlyDTO struct {
 	Category string `db:"category"`
 }
