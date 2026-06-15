@@ -5,34 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/alternayte/drel/internal/codegen"
 	"github.com/alternayte/drel/internal/driver"
-	"github.com/alternayte/drel/internal/driver/pgxdriver"
-	"github.com/alternayte/drel/internal/driver/sqlitedriver"
+	"github.com/alternayte/drel/internal/dsn"
 	"github.com/alternayte/drel/internal/migrate"
 )
 
-// openMigrateDriver opens a database driver for migration commands, choosing the
-// implementation from the configured dialect (falling back to DSN inspection).
-func openMigrateDriver(ctx context.Context, configPath, dsn string) (driver.Driver, error) {
-	dialect := ""
-	if cfg, err := codegen.LoadConfig(configPath); err == nil {
-		dialect = cfg.Dialect
-	}
-	if dialect == "" {
-		if strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite://") ||
-			dsn == ":memory:" || strings.HasSuffix(dsn, ".db") {
-			dialect = "sqlite"
-		} else {
-			dialect = "postgres"
+// resolveAuthToken reads the Turso/libSQL auth token from the --auth-token flag
+// (highest precedence) or the TURSO_AUTH_TOKEN environment variable.
+func resolveAuthToken(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--auth-token" && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
-	if dialect == "sqlite" {
-		return sqlitedriver.New(dsn)
-	}
-	return pgxdriver.New(ctx, dsn)
+	return os.Getenv("TURSO_AUTH_TOKEN")
+}
+
+// openMigrateDriver opens a database driver for migration commands. The dialect
+// is taken from drel.yaml when present, otherwise inferred from the DSN. LibSQL/
+// Turso DSNs (libsql://, wss://, https://, ...) open the libsql driver, with the
+// auth token injected from --auth-token / TURSO_AUTH_TOKEN.
+func openMigrateDriver(ctx context.Context, configPath, dataSource string) (driver.Driver, error) {
+	authToken := resolveAuthToken(os.Args)
+	return dsn.OpenDriver(ctx, dataSource, authToken)
 }
 
 func runMigrate() {
@@ -52,6 +49,8 @@ func runMigrate() {
 		runMigrateStatus()
 	case "lint":
 		runMigrateLint()
+	case "check":
+		runMigrateCheck()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown migrate command: %s\n", os.Args[2])
 		printMigrateUsage()
@@ -68,6 +67,11 @@ func printMigrateUsage() {
 	fmt.Fprintln(os.Stderr, "  down          Rollback the last applied migration")
 	fmt.Fprintln(os.Stderr, "  status        Show migration status")
 	fmt.Fprintln(os.Stderr, "  lint          Validate migration file checksums")
+	fmt.Fprintln(os.Stderr, "  check         Fail if there are unapplied migrations (drift guard)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --config <path>      Path to drel.yaml (default ./drel.yaml)")
+	fmt.Fprintln(os.Stderr, "  --auth-token <tok>   LibSQL/Turso auth token (or TURSO_AUTH_TOKEN env)")
 }
 
 func cfgPath() string {
@@ -96,12 +100,26 @@ func resolveMigrationsDir(configPath string) string {
 }
 
 func requireDSN() string {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
+	dataSource := os.Getenv("DATABASE_URL")
+	if dataSource == "" {
 		fmt.Fprintln(os.Stderr, "drel migrate: DATABASE_URL environment variable is required")
 		os.Exit(1)
 	}
-	return dsn
+	return dataSource
+}
+
+// runnerDialect resolves the dialect string for the Runner: config dialect when
+// set, else DSN inference.
+func runnerDialect(configPath, dataSource string) string {
+	if cfg, err := codegen.LoadConfig(configPath); err == nil && cfg.Dialect != "" {
+		// drel.yaml uses "sqlite" for libsql; re-detect so libsql is distinguished
+		// for lock selection.
+		if d := dsn.DetectDialect(dataSource); d == "libsql" {
+			return "libsql"
+		}
+		return cfg.Dialect
+	}
+	return dsn.DetectDialect(dataSource)
 }
 
 func runMigrateNew() {
@@ -155,9 +173,14 @@ func runMigrateNew() {
 			fmt.Println("drel: initialized schema snapshot from current models (no migration generated); re-run after changing models")
 			return
 		}
-		// First migration: emit the full schema.
+		// First migration: emit the full schema as up. The down is the complete
+		// reverse — drop every table (pivots included, in dependency order) and
+		// every enum type — derived by diffing the desired schema against an empty
+		// one so pivots and enum types are covered (GenerateDropSchema drops only
+		// model tables, leaking pivots and enums on rollback).
 		upSQL = codegen.GenerateSchema(models, dialect)
-		downSQL = codegen.GenerateDropSchema(models)
+		dropUp, _ := codegen.DiffSchemas(desired, codegen.Schema{}, dialect)
+		downSQL = dropUp
 	} else {
 		// Incremental migration: structured diff of snapshot against desired schema.
 		upSQL, downSQL = codegen.DiffSchemas(old, desired, dialect)
@@ -165,6 +188,10 @@ func runMigrateNew() {
 			fmt.Println("drel: no schema changes detected")
 			return
 		}
+	}
+
+	if len(existing) > 0 {
+		fmt.Fprintln(os.Stderr, "drel: tip: run `drel migrate check` to confirm all prior migrations are applied before deploying")
 	}
 
 	version, err := migrate.WriteMigration(mDir, name, upSQL, downSQL)
@@ -183,18 +210,18 @@ func runMigrateNew() {
 }
 
 func runMigrateUp() {
-	dsn := requireDSN()
+	dataSource := requireDSN()
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir)
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
 	count, err := runner.Up(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
@@ -208,18 +235,18 @@ func runMigrateUp() {
 }
 
 func runMigrateDown() {
-	dsn := requireDSN()
+	dataSource := requireDSN()
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir)
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
 	if err := runner.Down(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
@@ -228,18 +255,18 @@ func runMigrateDown() {
 }
 
 func runMigrateStatus() {
-	dsn := requireDSN()
+	dataSource := requireDSN()
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir)
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
 	statuses, err := runner.Status(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
@@ -269,18 +296,18 @@ func runMigrateStatus() {
 }
 
 func runMigrateLint() {
-	dsn := requireDSN()
+	dataSource := requireDSN()
 	mDir := resolveMigrationsDir(cfgPath())
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dsn)
+	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir)
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
 	issues, err := runner.Lint(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
@@ -292,6 +319,35 @@ func runMigrateLint() {
 	}
 	for _, issue := range issues {
 		fmt.Fprintf(os.Stderr, "  MODIFIED  %s_%s (checksum mismatch)\n", issue.Version, issue.Name)
+	}
+	os.Exit(1)
+}
+
+func runMigrateCheck() {
+	dataSource := requireDSN()
+	mDir := resolveMigrationsDir(cfgPath())
+	ctx := context.Background()
+
+	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate check: %v\n", err)
+		os.Exit(1)
+	}
+	defer drv.Close()
+
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	pending, err := runner.Pending(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel migrate check: %v\n", err)
+		os.Exit(1)
+	}
+	if len(pending) == 0 {
+		fmt.Println("drel: no drift — all migrations are applied")
+		return
+	}
+	fmt.Fprintf(os.Stderr, "drel: %d unapplied migration(s); run `drel migrate up` before generating new migrations to avoid snapshot drift:\n", len(pending))
+	for _, m := range pending {
+		fmt.Fprintf(os.Stderr, "  [ ] %s_%s\n", m.Version, m.Name)
 	}
 	os.Exit(1)
 }
