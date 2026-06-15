@@ -193,7 +193,39 @@ func EmitModelFileChecked(m ModelInfo) (string, error) {
 			return "", fmt.Errorf("drel: model %q field %q implements sql.Scanner + driver.Valuer (single-column value object) but its type is not comparable (contains a slice, map, or func) and has no Equal(T) bool method; add an Equal method so change-tracking can diff it", m.Name, f.Name)
 		}
 	}
+	// Every db-mapped scalar field is compared with != in the generated diff
+	// function, so its Go type must be comparable. Reject anything that is not a
+	// primitive, time.Time, a single-column VO, or an enum before emitting code
+	// that would only fail at the user's subsequent `go build`.
+	for _, f := range m.Fields {
+		if f.ColumnName == "" || f.IsVO || f.IsEnum || f.IsMultiColVO {
+			continue
+		}
+		if !isComparableForDiff(f) {
+			return "", fmt.Errorf("drel: model %q field %q has unsupported type %q for code generation; implement drel.ColumnMapper or remove the db tag", m.Name, f.Name, f.GoType)
+		}
+	}
 	return EmitModelFile(m), nil
+}
+
+// isComparableForDiff reports whether a db-mapped field's Go type can be safely
+// compared with != in the generated diff function. Primitives and time.Time are
+// comparable; VOs and enums are handled by their own == support and are filtered
+// out by the caller before reaching here.
+func isComparableForDiff(f FieldInfo) bool {
+	if isPrimitiveType(f.GoType) {
+		return true
+	}
+	// time.Time is comparable and is the one non-primitive framework type the
+	// scanner supports directly (matching extractFields' supported set).
+	switch f.GoType {
+	case "time.Time", "*time.Time":
+		return true
+	}
+	if f.LocalGoType == "time.Time" || f.LocalGoType == "*time.Time" {
+		return true
+	}
+	return false
 }
 
 // EmitModelFile generates the complete per-model _drel.go file content.

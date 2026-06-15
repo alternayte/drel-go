@@ -648,6 +648,43 @@ func TestEmitModelFileChecked_RejectTextNamesRealContract(t *testing.T) {
 	assert.Contains(t, err.Error(), "Equal")
 }
 
+func TestEmitModelFileChecked_UnsupportedType(t *testing.T) {
+	// A []string db field is not comparable; emitDiff would emit `p.tags != s.tags`
+	// which does not compile. The checker must reject it before emitting.
+	m := ModelInfo{
+		Name: "Post", PkgName: "models", PkgPath: "testmod/models",
+		PKType: "int", TableName: "posts",
+		Fields: []FieldInfo{
+			{Name: "tags", GoType: "[]string", ColumnName: "tags", LocalGoType: "[]string"},
+		},
+	}
+
+	_, err := EmitModelFileChecked(m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `model "Post"`)
+	assert.Contains(t, err.Error(), `field "tags"`)
+	assert.Contains(t, err.Error(), "[]string")
+	assert.Contains(t, err.Error(), "drel.ColumnMapper")
+}
+
+func TestEmitModelFileChecked_SupportedTypesPass(t *testing.T) {
+	// Primitive, time.Time, single-column VO, and enum fields must all pass.
+	m := ModelInfo{
+		Name: "User", PkgName: "models", PkgPath: "testmod/models",
+		PKType: "int", TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "name", GoType: "string", ColumnName: "name", LocalGoType: "string"},
+			{Name: "createdAt", GoType: "time.Time", ColumnName: "joined_at", LocalGoType: "time.Time", TypePkgPath: "time"},
+			// Email is a struct-based VO that is comparable (IsComparable: true).
+			{Name: "email", GoType: "testmod/models.Email", ColumnName: "email", LocalGoType: "Email", IsVO: true, IsComparable: true},
+			{Name: "role", GoType: "testmod/models.Role", ColumnName: "role", LocalGoType: "Role", IsEnum: true},
+		},
+	}
+
+	_, err := EmitModelFileChecked(m)
+	require.NoError(t, err)
+}
+
 // extractLine returns the first line in s that contains substr.
 func extractLine(s, substr string) string {
 	for _, line := range strings.Split(s, "\n") {
