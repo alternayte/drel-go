@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alternayte/drel/internal/dberr"
+	dialectsqlite "github.com/alternayte/drel/internal/dialect/sqlite"
 	"github.com/alternayte/drel/internal/driver"
 )
 
@@ -63,5 +64,55 @@ func TestSaveChanges_CommitErrorClassified(t *testing.T) {
 	err := uow.SaveChanges(context.Background())
 	if !errors.Is(err, dberr.ErrSerializationFailure) {
 		t.Fatalf("SaveChanges commit error must classify as ErrSerializationFailure, got %v", err)
+	}
+}
+
+// minimalMeta returns the smallest ModelMeta[commitModel] that BulkInsert and
+// BulkUpsert can use: no audit, no versioning, no app-assigned key — just a
+// table name and an InsertColumns func. The commitErrTx.Exec returns (0, nil)
+// so the commit call is always reached.
+type commitModel struct{ Name string }
+
+func minimalMeta() ModelMeta[commitModel] {
+	return ModelMeta[commitModel]{
+		Table:    "t",
+		PKColumn: "id",
+		InsertColumns: func(p *commitModel) ([]string, []any) {
+			return []string{"name"}, []any{p.Name}
+		},
+	}
+}
+
+func commitErrEngine(commitErr error) *Engine {
+	return &Engine{
+		drv: &commitErrDriver{commitErr: commitErr},
+		dia: dialectsqlite.New(),
+	}
+}
+
+func TestBulkInsert_CommitErrorClassified(t *testing.T) {
+	// A libSQL-style busy returned at COMMIT must classify as
+	// ErrSerializationFailure — identical to the Transaction/SaveChanges paths.
+	e := commitErrEngine(errors.New("database is locked"))
+	repo := NewRepository(e, minimalMeta())
+	_, err := repo.BulkInsert(context.Background(), []*commitModel{{Name: "x"}})
+	if !errors.Is(err, dberr.ErrSerializationFailure) {
+		t.Fatalf("BulkInsert commit error must classify as ErrSerializationFailure, got %v", err)
+	}
+}
+
+func TestBulkUpsert_CommitErrorClassified(t *testing.T) {
+	// Same coverage for BulkUpsert: commit-time serialization failure must match
+	// ErrSerializationFailure via errors.Is.
+	e := commitErrEngine(errors.New("database is locked"))
+	repo := NewRepository(e, minimalMeta())
+	idCol := NewStringCol("id")
+	nameCol := NewStringCol("name")
+	_, err := repo.BulkUpsert(context.Background(), []*commitModel{{Name: "x"}},
+		ConflictColumns(idCol),
+		UpdateOnConflict(nameCol),
+	)
+	if !errors.Is(err, dberr.ErrSerializationFailure) {
+		t.Fatalf("BulkUpsert commit error must classify as ErrSerializationFailure, got %v", err)
 	}
 }

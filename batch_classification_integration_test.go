@@ -12,12 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIntegration_Batch_PipelineClassifiesQueryError batches a query against a
-// non-existent column to confirm the pipeline path returns the driver error via
-// Execute (i.e. is no longer swallowed) on real Postgres. Constraint-sentinel
-// classification of the pipeline is unit-tested in batch_classification_test.go
-// with a fake *pgconn.PgError; this integration test pins the real-driver
-// "error is surfaced, not dropped" behaviour.
+// TestIntegration_Batch_PipelineClassifiesQueryError verifies two things on the
+// real pgx driver: (1) a successful pipeline round-trip returns the correct
+// typed results via Execute, and (2) a real unique-violation surfaced through
+// engine.Exec classifies as ErrUniqueViolation. Classification of pipeline
+// Query/SendBatch errors is unit-tested in batch_classification_test.go with a
+// fake *pgconn.PgError; this integration test pins the "error is surfaced and
+// classified, not dropped" behaviour on the real driver.
 func TestIntegration_Batch_PipelineClassifiesQueryError(t *testing.T) {
 	engine := setupTestDB(t)
 	seedProducts(t, engine)
@@ -31,7 +32,7 @@ func TestIntegration_Batch_PipelineClassifiesQueryError(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 5)
 
-	// Now drive a real unique violation through engine.Exec to confirm the
+	// Drive a real unique violation through engine.Exec to confirm the
 	// classification contract holds on the real pgx driver end-to-end.
 	_, err = engine.Exec(ctx, `CREATE TABLE u (id SERIAL PRIMARY KEY, k TEXT UNIQUE)`)
 	require.NoError(t, err)

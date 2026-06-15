@@ -201,7 +201,7 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("drel: bulk insert commit: %w", err)
+		return 0, fmt.Errorf("drel: bulk insert commit: %w", dberr.Classify(err))
 	}
 
 	return total, nil
@@ -276,7 +276,7 @@ func (r *Repository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...U
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("drel: bulk upsert commit: %w", err)
+		return 0, fmt.Errorf("drel: bulk upsert commit: %w", dberr.Classify(err))
 	}
 
 	return total, nil
