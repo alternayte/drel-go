@@ -444,6 +444,36 @@ func TestGenerateCreateTable_VOBaseType(t *testing.T) {
 	assert.NotContains(t, lite, `"balance" TEXT`)
 }
 
+// TestGenerateCreateTable_NullableVO verifies that a single-column VO with
+// HasIsZero=true produces a nullable column (no NOT NULL constraint) in the
+// generated DDL. The VO's Value() returns nil for the zero value, so the
+// column must accept SQL NULL.
+func TestGenerateCreateTable_NullableVO(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			// email: HasIsZero=true -> nullable (zero email -> NULL)
+			{Name: "email", GoType: "models.Email", ColumnName: "email", LocalGoType: "Email",
+				IsVO: true, VOBaseType: "string", HasIsZero: true, IsComparable: true},
+			// balance: no HasIsZero -> NOT NULL
+			{Name: "balance", GoType: "models.Cents", ColumnName: "balance", LocalGoType: "Cents",
+				IsVO: true, VOBaseType: "int64", IsComparable: true},
+		},
+	}
+
+	pg := GenerateCreateTable(m, nil, "postgres")
+	// email is nullable: must NOT have NOT NULL.
+	assert.Contains(t, pg, `"email" text`)
+	assert.NotContains(t, pg, `"email" text NOT NULL`)
+	// balance is NOT NULL.
+	assert.Contains(t, pg, `"balance" bigint NOT NULL`)
+
+	lite := GenerateCreateTable(m, nil, "sqlite")
+	assert.Contains(t, lite, `"email" TEXT`)
+	assert.NotContains(t, lite, `"email" TEXT NOT NULL`)
+	assert.Contains(t, lite, `"balance" INTEGER NOT NULL`)
+}
+
 func TestCreateTable_UUIDPK_NoAutoGen(t *testing.T) {
 	m := ModelInfo{
 		Name: "Account", PKType: "uuid.UUID", PKTypePkg: "github.com/google/uuid",

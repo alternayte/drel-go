@@ -150,7 +150,11 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 			continue
 		}
 
-		c := Column{Name: f.ColumnName, NotNull: !strings.HasPrefix(f.GoType, "*")}
+		// A single-column VO with an IsZero method opts in to the zero<->NULL bridge:
+		// its Value() returns nil for the zero value, so the column must be nullable.
+		// Otherwise, use the standard pointer-prefix heuristic.
+		notNull := !strings.HasPrefix(f.GoType, "*") && !(f.IsVO && f.HasIsZero)
+		c := Column{Name: f.ColumnName, NotNull: notNull}
 		sqlType := GoTypeToSQL(f.GoType, dialect)
 		if f.IsVO && f.VOBaseType != "" {
 			// Single-column VOs store the VO's underlying primitive, not a struct;

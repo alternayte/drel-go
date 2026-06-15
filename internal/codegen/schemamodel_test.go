@@ -2,6 +2,48 @@ package codegen
 
 import "testing"
 
+// TestBuildTable_NullableVOHasIsZero verifies that a single-column VO whose type
+// defines IsZero() bool produces a nullable column in the generated DDL.
+// HasIsZero means Value() returns nil for the zero value; the column must
+// accept NULL or every zero-VO insert will violate NOT NULL.
+func TestBuildTable_NullableVOHasIsZero(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", TableName: "accounts", PKType: "int",
+		Fields: []FieldInfo{
+			// email has IsZero -> nullable (zero email -> Value()=nil -> SQL NULL)
+			{Name: "email", GoType: "models.Email", ColumnName: "email", LocalGoType: "Email",
+				IsVO: true, VOBaseType: "string", HasIsZero: true, IsComparable: true},
+			// balance has no IsZero -> NOT NULL
+			{Name: "balance", GoType: "models.Cents", ColumnName: "balance", LocalGoType: "Cents",
+				IsVO: true, VOBaseType: "int64", IsComparable: true},
+		},
+	}
+
+	pg := buildTable(m, nil, "postgres")
+
+	var emailCol, balanceCol *Column
+	for i := range pg.Columns {
+		switch pg.Columns[i].Name {
+		case "email":
+			emailCol = &pg.Columns[i]
+		case "balance":
+			balanceCol = &pg.Columns[i]
+		}
+	}
+	if emailCol == nil {
+		t.Fatal("email column missing from table")
+	}
+	if balanceCol == nil {
+		t.Fatal("balance column missing from table")
+	}
+	if emailCol.NotNull {
+		t.Errorf("email (HasIsZero=true) should be nullable (NotNull=false), got NotNull=true")
+	}
+	if !balanceCol.NotNull {
+		t.Errorf("balance (HasIsZero=false) should be NOT NULL (NotNull=true), got NotNull=false")
+	}
+}
+
 func TestBuildTable_MultiColVOColumns(t *testing.T) {
 	m := ModelInfo{
 		Name:      "Account",
