@@ -331,6 +331,38 @@ func TestBuildSchema_IndexesFromTags(t *testing.T) {
 	assert.Equal(t, "score >= 0", score.Check)
 }
 
+func TestBuildSchema_DefaultAndTypeOverride(t *testing.T) {
+	m := ModelInfo{
+		Name: "User", PKType: "int", TableName: "users",
+		Fields: []FieldInfo{
+			{Name: "role", GoType: "string", ColumnName: "role", Default: "user"},
+			{Name: "age", GoType: "int", ColumnName: "age", Default: "0"},
+			{Name: "meta", GoType: "string", ColumnName: "meta", TypeOverride: "jsonb"},
+			{Name: "ts", GoType: "time.Time", ColumnName: "ts", Default: "now()"},
+		},
+	}
+	cols := func(s Schema) map[string]Column {
+		out := map[string]Column{}
+		for _, c := range s.Tables[0].Columns {
+			out[c.Name] = c
+		}
+		return out
+	}
+
+	pg := cols(BuildSchema([]ModelInfo{m}, "postgres"))
+	// String default is single-quoted; numeric default is bare; SQL-call default is bare.
+	assert.Equal(t, "'user'", pg["role"].Default)
+	assert.Equal(t, "0", pg["age"].Default)
+	assert.Equal(t, "now()", pg["ts"].Default)
+	// type= override replaces the inferred type.
+	assert.Equal(t, "jsonb", pg["meta"].Type)
+
+	sl := cols(BuildSchema([]ModelInfo{m}, "sqlite"))
+	assert.Equal(t, "'user'", sl["role"].Default)
+	assert.Equal(t, "0", sl["age"].Default)
+	assert.Equal(t, "jsonb", sl["meta"].Type)
+}
+
 func TestDiffSchemas_GrowStringEnum_Postgres(t *testing.T) {
 	old := Schema{
 		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user"}, BaseType: "string"}},
