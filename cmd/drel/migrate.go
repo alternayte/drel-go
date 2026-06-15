@@ -67,7 +67,9 @@ func printMigrateUsage() {
 	fmt.Fprintln(os.Stderr, "  down          Rollback the last applied migration")
 	fmt.Fprintln(os.Stderr, "  status        Show migration status")
 	fmt.Fprintln(os.Stderr, "  lint          Validate migration file checksums")
-	fmt.Fprintln(os.Stderr, "  check         Fail if there are unapplied migrations (drift guard)")
+	fmt.Fprintln(os.Stderr, "  check         Fail if migration files are not yet applied to the DB")
+	fmt.Fprintln(os.Stderr, "                NOTE: compares file list vs drel_migrations table only;")
+	fmt.Fprintln(os.Stderr, "                does not detect out-of-band schema changes (manual ALTERs).")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --config <path>      Path to drel.yaml (default ./drel.yaml)")
@@ -342,7 +344,11 @@ func runMigrateCheck() {
 		os.Exit(1)
 	}
 	if len(pending) == 0 {
-		fmt.Println("drel: no drift — all migrations are applied")
+		// NOTE: "no unapplied files" is not the same as "no schema drift" —
+		// manual out-of-band ALTERs are not detected here. Use `migrate lint`
+		// to catch checksum tampering; live schema comparison requires an
+		// external introspection tool.
+		fmt.Println("drel: no unapplied migrations")
 		return
 	}
 	fmt.Fprintf(os.Stderr, "drel: %d unapplied migration(s); run `drel migrate up` before generating new migrations to avoid snapshot drift:\n", len(pending))
