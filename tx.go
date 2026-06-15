@@ -240,6 +240,17 @@ func (r *TxRepository[T]) Detach(entity *T) {
 	r.tx.tracker.Detach(entity)
 }
 
+// Include begins a tracked query that eagerly loads the given relationships
+// within the transaction. Root reads and all split sub-queries run on the
+// transaction connection, observing the transaction's own uncommitted writes.
+func (r *TxRepository[T]) Include(rels ...IncludeSpec) *TxIncludableQuery[T] {
+	return &TxIncludableQuery[T]{
+		repo:     r,
+		builder:  newTxQueryBuilder(r.tx, &r.meta, r.base),
+		includes: rels,
+	}
+}
+
 // AsNoTracking returns a query builder whose results are not tracked, for
 // read-only queries within the transaction.
 func (r *TxRepository[T]) AsNoTracking() *TxQueryBuilder[T] {

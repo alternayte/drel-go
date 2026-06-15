@@ -235,6 +235,97 @@ func (q *IncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
 	return entities, nil
 }
 
+// TxIncludableQuery eagerly loads relationships within an explicit transaction.
+// Root reads and all split sub-queries run on the transaction connection, and
+// loaded children are tracked by the transaction's change tracker (unless the
+// root builder is AsNoTracking) so their edits are flushed on commit.
+type TxIncludableQuery[T any] struct {
+	repo     *TxRepository[T]
+	builder  *TxQueryBuilder[T]
+	includes []IncludeSpec
+}
+
+// Where adds a filter predicate to the root query.
+func (q *TxIncludableQuery[T]) Where(pred Predicate) *TxIncludableQuery[T] {
+	return &TxIncludableQuery[T]{repo: q.repo, builder: q.builder.Where(pred), includes: q.includes}
+}
+
+// OrderBy sets the ordering for the root query.
+func (q *TxIncludableQuery[T]) OrderBy(exprs ...OrderExpr) *TxIncludableQuery[T] {
+	return &TxIncludableQuery[T]{repo: q.repo, builder: q.builder.OrderBy(exprs...), includes: q.includes}
+}
+
+// Limit restricts the number of root records returned.
+func (q *TxIncludableQuery[T]) Limit(n int) *TxIncludableQuery[T] {
+	return &TxIncludableQuery[T]{repo: q.repo, builder: q.builder.Limit(n), includes: q.includes}
+}
+
+// Include adds more relationships to eagerly load.
+func (q *TxIncludableQuery[T]) Include(rels ...IncludeSpec) *TxIncludableQuery[T] {
+	return &TxIncludableQuery[T]{
+		repo:     q.repo,
+		builder:  q.builder,
+		includes: append(append([]IncludeSpec(nil), q.includes...), rels...),
+	}
+}
+
+func (q *TxIncludableQuery[T]) loadInto(ctx context.Context, entities []*T) error {
+	if len(entities) == 0 {
+		return nil
+	}
+	parents := make([]any, len(entities))
+	for i, e := range entities {
+		parents[i] = e
+	}
+	var tracker *changeTracker
+	if !q.builder.noTrack {
+		tracker = q.builder.tx.tracker
+	}
+	exec := &includeExecutor{
+		reader:     txIncludeReader{tx: q.builder.tx},
+		parentMeta: ToMetaBase(&q.repo.meta),
+		primary:    true, // a single tx connection: no replica routing
+		tracker:    tracker,
+	}
+	return exec.loadRelations(ctx, parents, q.includes)
+}
+
+// Find looks up a single record by primary key and loads included relationships.
+func (q *TxIncludableQuery[T]) Find(ctx context.Context, id any) (*T, error) {
+	entity, err := q.builder.Where(newComparison(q.repo.meta.PKColumn, ast.OpEq, id)).First(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.loadInto(ctx, []*T{entity}); err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+
+// First returns the first matching record and loads included relationships.
+func (q *TxIncludableQuery[T]) First(ctx context.Context) (*T, error) {
+	entity, err := q.builder.First(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.loadInto(ctx, []*T{entity}); err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+
+// All returns all matching records and loads included relationships.
+func (q *TxIncludableQuery[T]) All(ctx context.Context) ([]*T, error) {
+	entities, err := q.builder.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.loadInto(ctx, entities); err != nil {
+		return nil, err
+	}
+	return entities, nil
+}
+
 // includeReader abstracts the connection a split include query runs on: the
 // engine (replica/primary routing) or an active transaction connection.
 type includeReader interface {
