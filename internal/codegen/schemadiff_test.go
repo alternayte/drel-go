@@ -363,6 +363,34 @@ func TestBuildSchema_DefaultAndTypeOverride(t *testing.T) {
 	assert.Equal(t, "jsonb", sl["meta"].Type)
 }
 
+func TestDiffSchemas_DefaultAddDrop(t *testing.T) {
+	noDefault := ModelInfo{
+		Name: "User", PKType: "int", TableName: "users",
+		Fields: []FieldInfo{{Name: "role", GoType: "string", ColumnName: "role"}},
+	}
+	withDefault := ModelInfo{
+		Name: "User", PKType: "int", TableName: "users",
+		Fields: []FieldInfo{{Name: "role", GoType: "string", ColumnName: "role", Default: "user"}},
+	}
+
+	// Postgres: adding a default emits SET DEFAULT; the down emits DROP DEFAULT.
+	up, down := DiffSchemas(
+		BuildSchema([]ModelInfo{noDefault}, "postgres"),
+		BuildSchema([]ModelInfo{withDefault}, "postgres"),
+		"postgres",
+	)
+	assert.Contains(t, up, `ALTER TABLE "users" ALTER COLUMN "role" SET DEFAULT 'user';`)
+	assert.Contains(t, down, `ALTER TABLE "users" ALTER COLUMN "role" DROP DEFAULT;`)
+
+	// SQLite cannot ALTER DEFAULT; it surfaces a WARNING rather than silently skipping.
+	upLite, _ := DiffSchemas(
+		BuildSchema([]ModelInfo{noDefault}, "sqlite"),
+		BuildSchema([]ModelInfo{withDefault}, "sqlite"),
+		"sqlite",
+	)
+	assert.Contains(t, upLite, "WARNING: SQLite cannot ALTER COLUMN DEFAULT")
+}
+
 func TestDiffSchemas_GrowStringEnum_Postgres(t *testing.T) {
 	old := Schema{
 		Enums: []EnumDef{{Name: "role", Values: []string{"admin", "user"}, BaseType: "string"}},
