@@ -240,6 +240,108 @@ func (r *TxRepository[T]) Detach(entity *T) {
 	r.tx.tracker.Detach(entity)
 }
 
+// BulkInsert inserts multiple entities in batches on the transaction connection,
+// bypassing change tracking. The inserts participate in the surrounding
+// transaction and roll back with it on failure.
+func (r *TxRepository[T]) BulkInsert(ctx context.Context, entities []*T) (int, error) {
+	if len(entities) == 0 {
+		return 0, nil
+	}
+	base := ToMetaBase(&r.meta)
+	d := r.tx.engine.dialect()
+
+	firstCols, _, err := bulkInsertColumns(ctx, base, entities[0])
+	if err != nil {
+		return 0, err
+	}
+	batchSize := safeBatchSize(len(firstCols))
+
+	total := 0
+	for i := 0; i < len(entities); i += batchSize {
+		end := i + batchSize
+		if end > len(entities) {
+			end = len(entities)
+		}
+		batch := entities[i:end]
+
+		var columns []string
+		var rows [][]any
+		for _, entity := range batch {
+			cols, vals, prepErr := bulkInsertColumns(ctx, base, entity)
+			if prepErr != nil {
+				return 0, prepErr
+			}
+			if appErr := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); appErr != nil {
+				return 0, appErr
+			}
+		}
+
+		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
+		affected, execErr := r.tx.execInternal(ctx, result.SQL, result.Args...)
+		if execErr != nil {
+			return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, execErr)
+		}
+		total += int(affected)
+	}
+	return total, nil
+}
+
+// BulkUpsert inserts or updates multiple entities on the transaction connection,
+// participating in the surrounding transaction.
+func (r *TxRepository[T]) BulkUpsert(ctx context.Context, entities []*T, opts ...UpsertOption) (int, error) {
+	if len(entities) == 0 {
+		return 0, nil
+	}
+	cfg := &upsertConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if len(cfg.conflictCols) == 0 {
+		return 0, fmt.Errorf("drel: bulk upsert %s: ConflictColumns is required", r.meta.Table)
+	}
+	if len(cfg.updateCols) == 0 && !cfg.doNothing {
+		return 0, fmt.Errorf("drel: bulk upsert %s: UpdateOnConflict is required (or use DoNothing)", r.meta.Table)
+	}
+
+	base := ToMetaBase(&r.meta)
+	d := r.tx.engine.dialect()
+
+	firstCols, _, err := bulkInsertColumns(ctx, base, entities[0])
+	if err != nil {
+		return 0, err
+	}
+	batchSize := safeBatchSize(len(firstCols))
+
+	total := 0
+	for i := 0; i < len(entities); i += batchSize {
+		end := i + batchSize
+		if end > len(entities) {
+			end = len(entities)
+		}
+		batch := entities[i:end]
+
+		var columns []string
+		var rows [][]any
+		for _, entity := range batch {
+			cols, vals, prepErr := bulkInsertColumns(ctx, base, entity)
+			if prepErr != nil {
+				return 0, prepErr
+			}
+			if appErr := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); appErr != nil {
+				return 0, appErr
+			}
+		}
+
+		result := d.BuildBulkUpsert(r.meta.Table, columns, rows, cfg.conflictCols, cfg.updateCols, cfg.doNothing)
+		affected, execErr := r.tx.execInternal(ctx, result.SQL, result.Args...)
+		if execErr != nil {
+			return 0, fmt.Errorf("drel: bulk upsert %s: %w", r.meta.Table, execErr)
+		}
+		total += int(affected)
+	}
+	return total, nil
+}
+
 // Include begins a tracked query that eagerly loads the given relationships
 // within the transaction. Root reads and all split sub-queries run on the
 // transaction connection, observing the transaction's own uncommitted writes.
