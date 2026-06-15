@@ -211,7 +211,8 @@ func EmitModelFileChecked(m ModelInfo) (string, error) {
 // isComparableForDiff reports whether a db-mapped field's Go type can be safely
 // compared with != in the generated diff function. Primitives and time.Time are
 // comparable; VOs and enums are handled by their own == support and are filtered
-// out by the caller before reaching here.
+// out by the caller before reaching here. Named types over a comparable basic
+// kind (e.g. type Priority int) with no enum consts are also accepted.
 func isComparableForDiff(f FieldInfo) bool {
 	if isPrimitiveType(f.GoType) {
 		return true
@@ -223,6 +224,11 @@ func isComparableForDiff(f FieldInfo) bool {
 		return true
 	}
 	if f.LocalGoType == "time.Time" || f.LocalGoType == "*time.Time" {
+		return true
+	}
+	// Named types whose underlying kind is a comparable basic type (e.g.
+	// type Priority int) are comparable with != and generate valid diff code.
+	if f.IsNamedPrimitive {
 		return true
 	}
 	return false

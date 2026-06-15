@@ -34,10 +34,11 @@ type FieldInfo struct {
 	LocalGoType    string // type name without package qualifier, for same-package generated code
 	TypePkgPath    string // import path of the field type's package (empty for primitives/same-package)
 	IsPointer      bool   // whether the field is a pointer type
-	IsEnum         bool
-	EnumValues     []string
-	EnumIsInt      bool   // enum's underlying basic kind is integer (not string)
-	EnumBaseType   string // Go base type of the enum, e.g. "string", "int", "int64"
+	IsEnum            bool
+	EnumValues        []string
+	EnumIsInt         bool   // enum's underlying basic kind is integer (not string)
+	EnumBaseType      string // Go base type of the enum, e.g. "string", "int", "int64"
+	IsNamedPrimitive  bool   // named type over a comparable basic kind with no enum consts (e.g. type Priority int)
 	Unique         bool   // db tag option: unique index on this column
 	Indexed        bool   // db tag option: index on this column
 	IndexName      string // explicit index name (db:"...,index=name"); fields sharing a name form a composite index

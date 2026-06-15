@@ -39,12 +39,15 @@ func ResolveModuleRoot(startDir string) string {
 }
 
 // Generate runs the full code generation pipeline atomically: it loads config,
-// cleans stale generated files (so the subsequent scan is unobstructed), scans
-// packages, validates the model set, emits and gofmts every output file in
-// memory, and only then writes anything to disk (write-to-temp + rename). A
+// scans packages, validates the model set, emits and gofmts every output file
+// in memory, and only then writes anything to disk (write-to-temp + rename). A
 // failure at any step before the write phase leaves the working tree untouched.
-// After writing, stale generated *_drel.go files that no longer back a scanned
-// model are removed.
+//
+// Stale generated *_drel.go files that would obstruct the package scan
+// (because they reference deleted model types) are removed before scanning, but
+// their contents are saved so they can be restored if any later step fails.
+// After a successful write, truly stale files that no longer back any scanned
+// model are permanently removed.
 func Generate(configPath string) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -61,18 +64,31 @@ func Generate(configPath string) error {
 		cfgDir = abs
 	}
 
-	// Pre-scan stale cleanup: remove *_drel.go files from the package directories
-	// before scanning so that stale generated files (referencing deleted types) do
-	// not cause package load errors. We need only the file-list mode of
-	// packages.Load to discover directories without type-checking.
-	if err := removeStaleInDirs(cfg.Packages, cfgDir); err != nil {
+	// Pre-scan stale removal: delete *_drel.go files from the package directories
+	// so that stale generated code (referencing deleted types) does not cause
+	// package-load errors in the subsequent ScanPackages call.
+	// We save the contents first so they can be restored if any later step fails.
+	saved, err := removeStaleInDirsWithBackup(cfg.Packages, cfgDir)
+	if err != nil {
 		return err
 	}
+
+	// restoreOnFailure puts back any pre-scan-removed file if we return an error.
+	// It is a no-op after a successful run (succeeded is set to true below).
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		for path, content := range saved {
+			_ = atomicWrite(path, content)
+		}
+	}()
 
 	// Patterns in drel.yaml (e.g. ./models) are resolved relative to the
 	// directory that contains the config file. go/packages.Load discovers the
 	// module root on its own from the working directory, so cfgDir is the
-	// correct base — NOT ResolveModuleRoot(cfgDir), which would resolve
+	// correct base -- NOT ResolveModuleRoot(cfgDir), which would resolve
 	// ./models relative to the repo root when the config lives in a subdir.
 	models, err := ScanPackages(cfg.Packages, cfgDir)
 	if err != nil {
@@ -120,6 +136,8 @@ func Generate(configPath string) error {
 	files = append(files, emitted{path: dbPath, content: dbContent})
 
 	// --- Write phase: every file emitted and formatted successfully. ---
+	// Signal success so the deferred restore does not put back stale files.
+	succeeded = true
 	for _, f := range files {
 		if err := atomicWrite(f.path, f.content); err != nil {
 			return fmt.Errorf("codegen: write %s: %w", f.path, err)
@@ -127,6 +145,9 @@ func Generate(configPath string) error {
 	}
 
 	// --- Remove stale generated *_drel.go files no longer backing a model. ---
+	// Files removed before the scan that are now superseded by a freshly
+	// written file (same path) are already gone; the rest stay gone because
+	// the scan confirmed no model backs them.
 	if err := removeStaleModelFiles(models, intended); err != nil {
 		return err
 	}
@@ -176,11 +197,12 @@ func atomicWrite(path, content string) error {
 	return nil
 }
 
-// removeStaleInDirs removes drel-generated *_drel.go files from the directories
-// of the configured package patterns before scanning. This prevents stale
-// generated files (that reference deleted model types) from causing package load
-// errors in the subsequent ScanPackages call.
-func removeStaleInDirs(patterns []string, dir string) error {
+// removeStaleInDirsWithBackup removes drel-generated *_drel.go files from the
+// directories of the configured package patterns before scanning, and returns a
+// map of path -> original content for every file that was removed. The caller
+// can restore these files on failure to preserve atomicity.
+func removeStaleInDirsWithBackup(patterns []string, dir string) (map[string]string, error) {
+	saved := make(map[string]string)
 	cfg := &packages.Config{
 		Mode: packages.NeedFiles,
 		Dir:  dir,
@@ -188,7 +210,7 @@ func removeStaleInDirs(patterns []string, dir string) error {
 	pkgs, err := packages.Load(cfg, patterns...)
 	if err != nil {
 		// If we can't load even file lists, proceed; the main scan will report the error.
-		return nil
+		return saved, nil
 	}
 	for _, pkg := range pkgs {
 		if len(pkg.GoFiles) == 0 {
@@ -211,12 +233,14 @@ func removeStaleInDirs(patterns []string, dir string) error {
 			if !strings.HasPrefix(string(data), generatedHeader) {
 				continue // hand-written file
 			}
+			// Save content before removing so we can restore on failure.
+			saved[path] = string(data)
 			if err := os.Remove(path); err != nil {
-				return fmt.Errorf("codegen: remove stale %s: %w", path, err)
+				return saved, fmt.Errorf("codegen: remove stale %s: %w", path, err)
 			}
 		}
 	}
-	return nil
+	return saved, nil
 }
 
 // removeStaleModelFiles deletes drel-generated *_drel.go files in the scanned

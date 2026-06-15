@@ -297,6 +297,11 @@ func extractFields(st *types.Struct, ownerPkgPath string) ([]FieldInfo, error) {
 						fi.EnumValues = enumValues
 						fi.EnumIsInt = enumIsInt
 						fi.EnumBaseType = enumBase
+					} else if enumBase != "" {
+						// Named type over a comparable basic kind (e.g. type Priority int)
+						// but with no declared const values -- not an enum, but still
+						// comparable and safe to use with != in generated diff code.
+						fi.IsNamedPrimitive = true
 					}
 				}
 			}

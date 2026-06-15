@@ -620,3 +620,155 @@ output:
 	vetOut, err := vet.CombinedOutput()
 	require.NoError(t, err, "go vet failed: %s", string(vetOut))
 }
+
+// TestGenerate_AtomicOnRegenWithValidationError proves that regenerating over an
+// existing good tree does NOT destroy previously-generated files when the
+// pipeline fails (validation error). The pre-existing *_drel.go must survive.
+func TestGenerate_AtomicOnRegenWithValidationError(t *testing.T) {
+	// Start with a valid tree: one model with a column.
+	dir := setupGenerateModule(t, map[string]string{
+		"models/user.go": `package models
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	// First generation must succeed, producing user_drel.go.
+	require.NoError(t, Generate("drel.yaml"))
+	userFile := filepath.Join(dir, "models", "user_drel.go")
+	require.FileExists(t, userFile)
+
+	// Now introduce a column-less model in the same package (validation error).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models", "org.go"), []byte(`package models
+
+import "github.com/alternayte/drel"
+
+type Org struct {
+	drel.Model[int]
+}
+`), 0644))
+
+	// Regen must fail.
+	err = Generate("drel.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no db-mapped columns")
+
+	// The pre-existing user_drel.go must NOT have been deleted.
+	assert.FileExists(t, userFile, "pre-existing user_drel.go must survive a failed regen")
+}
+
+// TestGenerate_AtomicOnRegenWithEmitError proves atomicity when the error
+// occurs during the emit phase (not validation) in a regen over an existing tree.
+func TestGenerate_AtomicOnRegenWithEmitError(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/user.go": `package models
+
+import "github.com/alternayte/drel"
+
+type User struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	// First generation must succeed.
+	require.NoError(t, Generate("drel.yaml"))
+	userFile := filepath.Join(dir, "models", "user_drel.go")
+	require.FileExists(t, userFile)
+
+	// Add a model with an unsupported type (slice) — triggers an emit error.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models", "bad.go"), []byte(`package models
+
+import "github.com/alternayte/drel"
+
+type Bad struct {
+	drel.Model[int]
+	tags []string `+"`db:\"tags\"`"+`
+}
+`), 0644))
+
+	err = Generate("drel.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tags")
+
+	// user_drel.go must NOT have been deleted by the failed regen.
+	assert.FileExists(t, userFile, "pre-existing user_drel.go must survive a failed regen")
+}
+
+// TestGenerate_NamedPrimitiveField proves that a named type whose underlying
+// kind is a comparable basic type (e.g. type Priority int with no enum consts)
+// is accepted and emits valid code. Regression guard for the isComparableForDiff
+// over-rejection of valid comparable named primitives.
+func TestGenerate_NamedPrimitiveField(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/types.go": `package models
+
+// Priority is a named int type with no enum const values — NOT an enum, just
+// a comparable named primitive. It must be accepted by codegen.
+type Priority int
+`,
+		"models/task.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Task struct {
+	drel.Model[int]
+	title    string   ` + "`db:\"title\"`" + `
+	priority Priority ` + "`db:\"priority\"`" + `
+}
+`,
+		"drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	origDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	require.NoError(t, os.Chdir(dir))
+
+	err = Generate("drel.yaml")
+	require.NoError(t, err, "named primitive type with no enum consts must be accepted")
+
+	modelFile := filepath.Join(dir, "models", "task_drel.go")
+	assert.FileExists(t, modelFile)
+
+	// Generated code must compile and vet clean.
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	tidyOut, err := tidy.CombinedOutput()
+	require.NoError(t, err, "go mod tidy failed: %s", string(tidyOut))
+
+	build := exec.Command("go", "build", "./...")
+	build.Dir = dir
+	buildOut, err := build.CombinedOutput()
+	require.NoError(t, err, "go build failed: %s", string(buildOut))
+}
