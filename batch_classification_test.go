@@ -54,7 +54,7 @@ func TestBatch_PipelineQueryErrorClassified(t *testing.T) {
 	e := &Engine{drv: &pipelineDriver{queryErr: uniqueViolation()}}
 	b := e.NewBatch()
 	// Queue one item; its SQL/args are irrelevant — the fake fails at Query().
-	b.add("SELECT 1", nil, false, func(rows Rows) error { return nil })
+	b.add("SELECT 1", nil, false, func(rows Rows) error { return nil }, func(error) {})
 	err := b.Execute(context.Background())
 	if !errors.Is(err, dberr.ErrUniqueViolation) {
 		t.Fatalf("pipeline Query error must classify as ErrUniqueViolation, got %v", err)
@@ -69,7 +69,7 @@ func TestBatch_PipelineQueryErrorClassified(t *testing.T) {
 func TestBatch_PipelineSendBatchErrorClassified(t *testing.T) {
 	e := &Engine{drv: &pipelineDriver{sendErr: uniqueViolation()}}
 	b := e.NewBatch()
-	b.add("SELECT 1", nil, false, func(rows Rows) error { return nil })
+	b.add("SELECT 1", nil, false, func(rows Rows) error { return nil }, func(error) {})
 	err := b.Execute(context.Background())
 	if !errors.Is(err, dberr.ErrUniqueViolation) {
 		t.Fatalf("SendBatch error must classify as ErrUniqueViolation, got %v", err)
