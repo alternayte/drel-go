@@ -406,6 +406,25 @@ func TestGenerateSchema_SQLite_ManyToMany(t *testing.T) {
 	assert.Contains(t, sql, `"tag_id" INTEGER NOT NULL REFERENCES "tags"("id")`)
 }
 
+func TestGenerateCreateTable_VOBaseType(t *testing.T) {
+	m := ModelInfo{
+		Name: "Account", PKType: "int", TableName: "accounts",
+		Fields: []FieldInfo{
+			{Name: "email", GoType: "models.Email", ColumnName: "email", LocalGoType: "Email", IsVO: true, VOBaseType: "string"},
+			{Name: "balance", GoType: "models.Cents", ColumnName: "balance", LocalGoType: "Cents", IsVO: true, VOBaseType: "int64"},
+		},
+	}
+
+	pg := GenerateCreateTable(m, nil, "postgres")
+	assert.Contains(t, pg, `"email" text NOT NULL`)
+	assert.Contains(t, pg, `"balance" bigint NOT NULL`)
+	assert.NotContains(t, pg, `"balance" text`)
+
+	lite := GenerateCreateTable(m, nil, "sqlite")
+	assert.Contains(t, lite, `"balance" INTEGER NOT NULL`)
+	assert.NotContains(t, lite, `"balance" TEXT`)
+}
+
 func TestCreateTable_UUIDPK_NoAutoGen(t *testing.T) {
 	m := ModelInfo{
 		Name: "Account", PKType: "uuid.UUID", PKTypePkg: "github.com/google/uuid",

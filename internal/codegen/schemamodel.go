@@ -152,6 +152,11 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 
 		c := Column{Name: f.ColumnName, NotNull: !strings.HasPrefix(f.GoType, "*")}
 		sqlType := GoTypeToSQL(f.GoType, dialect)
+		if f.IsVO && f.VOBaseType != "" {
+			// Single-column VOs store the VO's underlying primitive, not a struct;
+			// resolve the column type from that primitive instead of defaulting to text.
+			sqlType = GoTypeToSQL(f.VOBaseType, dialect)
+		}
 		if f.IsEnum {
 			if dialect == "sqlite" {
 				sqlType = "TEXT"
