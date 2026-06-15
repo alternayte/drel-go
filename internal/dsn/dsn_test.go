@@ -42,6 +42,11 @@ func TestApplyAuthToken(t *testing.T) {
 		dsn.ApplyAuthToken("libsql://db.turso.io?authToken=a", "b"))
 }
 
+func TestDetectDialect_LibpqKeyValueStaysPostgres(t *testing.T) {
+	// A bare libpq key=value DSN must not be misread as sqlite/libsql.
+	assert.Equal(t, "postgres", dsn.DetectDialect("host=localhost port=5432 dbname=app"))
+}
+
 func TestOpenDriver_SQLite(t *testing.T) {
 	drv, err := dsn.OpenDriver(context.Background(), ":memory:", "")
 	require.NoError(t, err)

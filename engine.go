@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/alternayte/drel/internal/driver"
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
 	"github.com/alternayte/drel/internal/driver/sqlitedriver"
+	"github.com/alternayte/drel/internal/dsn"
 )
 
 // replicaCooldown is how long a read replica is skipped after a failed read
@@ -69,27 +69,10 @@ type engineConfig struct {
 	poolConfig driver.PoolConfig
 }
 
-// detectDialect inspects the DSN and returns "sqlite" or "postgres".
-// Patterns recognised as SQLite: "file:" prefix, "sqlite://" prefix,
-// ":memory:", or a path ending with ".db".
-// Everything else (including "postgres://" and "postgresql://") maps to "postgres".
-func detectDialect(dsn string) string {
-	if strings.HasPrefix(dsn, "libsql://") ||
-		strings.HasPrefix(dsn, "wss://") ||
-		strings.HasPrefix(dsn, "ws://") ||
-		strings.HasPrefix(dsn, "http://") ||
-		strings.HasPrefix(dsn, "https://") {
-		// libSQL/Turso DSNs. http(s) covers a local sqld and Turso's HTTP
-		// endpoint; a SQL database is never addressed over http otherwise.
-		return "libsql"
-	}
-	if strings.HasPrefix(dsn, "file:") ||
-		strings.HasPrefix(dsn, "sqlite://") ||
-		dsn == ":memory:" ||
-		strings.HasSuffix(dsn, ".db") {
-		return "sqlite"
-	}
-	return "postgres"
+// detectDialect inspects the DSN and returns "libsql", "sqlite", or "postgres".
+// Delegates to internal/dsn so the engine and CLI cannot drift apart.
+func detectDialect(d string) string {
+	return dsn.DetectDialect(d)
 }
 
 // NewEngine creates a new Engine connected to the given DSN.
@@ -243,15 +226,9 @@ func WithAuthToken(token string) Option {
 
 // applyAuthToken appends an authToken query parameter to a libSQL DSN if a token
 // is provided and the DSN does not already carry one.
-func applyAuthToken(dsn, token string) string {
-	if token == "" || strings.Contains(dsn, "authToken=") {
-		return dsn
-	}
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	return dsn + sep + "authToken=" + token
+// Delegates to internal/dsn so the engine and CLI cannot drift apart.
+func applyAuthToken(d, token string) string {
+	return dsn.ApplyAuthToken(d, token)
 }
 
 // WithReadReplica registers a read replica. Read queries issued through
