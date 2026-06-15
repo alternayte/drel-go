@@ -21,6 +21,35 @@ func TestDetectDialect_LibSQL(t *testing.T) {
 	}
 }
 
+func TestDetectDialect_SQLiteFilePaths(t *testing.T) {
+	cases := map[string]string{
+		// extension-based SQLite detection
+		"app.sqlite":           "sqlite",
+		"data.sqlite3":         "sqlite",
+		"/var/lib/app.sqlite":  "sqlite",
+		"./db/app.sqlite3":     "sqlite",
+		"app.db":               "sqlite", // existing behavior preserved
+		"file:app.sqlite":      "sqlite",
+		// bare path (no scheme, looks like a file) -> SQLite
+		"./var/app":            "sqlite",
+		"../data/store":        "sqlite",
+		"data/app.bin":         "sqlite",
+		"/absolute/path/store": "sqlite",
+		// Postgres shapes preserved
+		"postgres://localhost/x":    "postgres",
+		"postgresql://localhost/":   "postgres",
+		"localhost:5432":            "postgres",
+		"db.internal:5432":          "postgres",
+		"user@dbhost":               "postgres",
+		"host=localhost dbname=app": "postgres",
+	}
+	for dsn, want := range cases {
+		if got := detectDialect(dsn); got != want {
+			t.Errorf("detectDialect(%q) = %q, want %q", dsn, got, want)
+		}
+	}
+}
+
 func TestApplyAuthToken(t *testing.T) {
 	if got := applyAuthToken("libsql://db.turso.io", "tok"); got != "libsql://db.turso.io?authToken=tok" {
 		t.Errorf("got %q", got)
