@@ -24,6 +24,13 @@ func (m *Model[K]) ScanPtrs() (*K, *time.Time, *time.Time) {
 // keys) and by application code that supplies its own keys.
 func (m *Model[K]) SetID(id K) { m.id = id }
 
+// RecordEvent stages a domain event on the entity. Recorded events are
+// dispatched (to after-commit handlers and any outbox) when the entity is
+// persisted by SaveChanges — i.e. when it is inserted, updated, or deleted in
+// that unit of work. Recording an event on an entity that is otherwise
+// unchanged (no field mutation, not added or removed) does not, on its own,
+// cause a flush, so its events are not dispatched until the entity is also
+// mutated. Record events alongside the mutation that produced them.
 func (m *Model[K]) RecordEvent(event any) {
 	m.events = append(m.events, event)
 }
