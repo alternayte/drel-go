@@ -38,7 +38,7 @@ var testMeta = &ModelMetaBase{
 		return changes
 	},
 	PKValue: func(entity any) any {
-		return 1
+		return entity.(*testEntity).Age
 	},
 	InsertColumns: func(entity any) ([]string, []any) {
 		e := entity.(*testEntity)
@@ -167,6 +167,89 @@ func TestTracker_DiffMultipleFieldChanges(t *testing.T) {
 	snap := testSnapshot{Name: "Carol Original", Age: 35}
 	changes := testMeta.Diff(e, snap)
 	assert.Len(t, changes, 2)
+}
+
+// pkEntity is a tracker-test model with a real, per-instance primary key so the
+// identity map can key distinct rows distinctly.
+type pkEntity struct {
+	ID   int
+	Name string
+}
+
+type pkSnapshot struct {
+	Name string
+}
+
+var pkMeta = &ModelMetaBase{
+	Table:    "pk_entities",
+	Columns:  []string{"id", "name"},
+	PKColumn: "id",
+	Snapshot: func(entity any) any {
+		e := entity.(*pkEntity)
+		return pkSnapshot{Name: e.Name}
+	},
+	Diff: func(entity any, snapshot any) []FieldChange {
+		e := entity.(*pkEntity)
+		s := snapshot.(pkSnapshot)
+		var changes []FieldChange
+		if e.Name != s.Name {
+			changes = append(changes, FieldChange{Column: "name", Value: e.Name})
+		}
+		return changes
+	},
+	PKValue: func(entity any) any { return entity.(*pkEntity).ID },
+}
+
+func TestTracker_TrackReturnsCanonicalForSamePK(t *testing.T) {
+	ct := newChangeTracker()
+	first := &pkEntity{ID: 7, Name: "Alice"}
+	second := &pkEntity{ID: 7, Name: "Alice"} // same row, second materialization
+
+	gotFirst := ct.Track(first, pkMeta.Snapshot(first), pkMeta)
+	gotSecond := ct.Track(second, pkMeta.Snapshot(second), pkMeta)
+
+	// Same (table, pk) => the first instance is canonical; the second is discarded.
+	assert.Same(t, first, gotFirst)
+	assert.Same(t, first, gotSecond, "second Track of the same PK must return the first pointer")
+	assert.NotSame(t, second, gotSecond, "the freshly scanned duplicate must be discarded")
+	assert.Len(t, ct.entities, 1, "only one tracked entity for one row")
+}
+
+func TestTracker_TrackDistinctPKsTrackedSeparately(t *testing.T) {
+	ct := newChangeTracker()
+	a := &pkEntity{ID: 1, Name: "A"}
+	b := &pkEntity{ID: 2, Name: "B"}
+
+	gotA := ct.Track(a, pkMeta.Snapshot(a), pkMeta)
+	gotB := ct.Track(b, pkMeta.Snapshot(b), pkMeta)
+
+	assert.Same(t, a, gotA)
+	assert.Same(t, b, gotB)
+	assert.Len(t, ct.entities, 2)
+}
+
+func TestTracker_TrackZeroPKNotCollapsed(t *testing.T) {
+	ct := newChangeTracker()
+	a := &pkEntity{ID: 0, Name: "unsaved A"}
+	b := &pkEntity{ID: 0, Name: "unsaved B"}
+
+	gotA := ct.Track(a, pkMeta.Snapshot(a), pkMeta)
+	gotB := ct.Track(b, pkMeta.Snapshot(b), pkMeta)
+
+	// Zero PK is pointer-tracked only; two distinct unsaved rows never collapse.
+	assert.Same(t, a, gotA)
+	assert.Same(t, b, gotB)
+	assert.Len(t, ct.entities, 2)
+}
+
+func TestTracker_TrackSamePointerTwiceReturnsCanonical(t *testing.T) {
+	ct := newChangeTracker()
+	e := &pkEntity{ID: 3, Name: "Grace"}
+	got1 := ct.Track(e, pkMeta.Snapshot(e), pkMeta)
+	got2 := ct.Track(e, pkMeta.Snapshot(e), pkMeta)
+	assert.Same(t, e, got1)
+	assert.Same(t, e, got2)
+	assert.Len(t, ct.entities, 1)
 }
 
 func TestMarkAdded_StampsAppAssignedKey(t *testing.T) {

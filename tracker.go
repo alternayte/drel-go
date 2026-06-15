@@ -3,6 +3,7 @@ package drel
 import (
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 // EntityState describes a tracked entity's lifecycle state within a Tx.
@@ -62,20 +63,53 @@ type trackedEntity struct {
 	flushed     bool // SQL emitted this flush; skip on re-flush, finalized by PostCommit
 }
 
+// identityKey identifies a tracked row by table and primary-key value. PKValue
+// returns comparable values for every supported PK type (signed int, string,
+// uuid.UUID), so identityKey is a valid map key.
+type identityKey struct {
+	table string
+	pk    any
+}
+
 type changeTracker struct {
 	entities []*trackedEntity
-	index    map[any]*trackedEntity
+	index    map[any]*trackedEntity         // by entity pointer
+	byPK     map[identityKey]*trackedEntity // by (table, primary key)
 }
 
 func newChangeTracker() *changeTracker {
 	return &changeTracker{
 		index: make(map[any]*trackedEntity),
+		byPK:  make(map[identityKey]*trackedEntity),
 	}
 }
 
-func (ct *changeTracker) Track(entity any, snapshot any, meta *ModelMetaBase) {
-	if _, exists := ct.index[entity]; exists {
-		return
+// Track begins tracking a freshly materialized entity and returns the canonical
+// tracked instance for its row. When an entity with the same (table, primary
+// key) is already tracked, the freshly scanned entity is discarded and the
+// existing pointer is returned, so two loads of one row collapse to a single
+// tracked instance (an EF-Core-style identity map scoped to this tracker). An
+// entity whose PK is zero (e.g. a not-yet-inserted row) is pointer-tracked only,
+// never PK-indexed, so distinct unsaved entities never collapse.
+func (ct *changeTracker) Track(entity any, snapshot any, meta *ModelMetaBase) any {
+	if te, exists := ct.index[entity]; exists {
+		return te.entity
+	}
+	if key, ok := ct.pkKey(entity, meta); ok {
+		if te, exists := ct.byPK[key]; exists {
+			return te.entity
+		}
+		te := &trackedEntity{
+			entity:   entity,
+			state:    StateUnchanged,
+			snapshot: snapshot,
+			meta:     meta,
+			loaded:   true,
+		}
+		ct.entities = append(ct.entities, te)
+		ct.index[entity] = te
+		ct.byPK[key] = te
+		return entity
 	}
 	te := &trackedEntity{
 		entity:   entity,
@@ -86,6 +120,43 @@ func (ct *changeTracker) Track(entity any, snapshot any, meta *ModelMetaBase) {
 	}
 	ct.entities = append(ct.entities, te)
 	ct.index[entity] = te
+	return entity
+}
+
+// pkKey returns the identity-map key for entity, and false when the entity has
+// no usable PK (nil PKValue func, nil PK value, or a zero PK). Callers must not
+// PK-index entities for which this returns false.
+func (ct *changeTracker) pkKey(entity any, meta *ModelMetaBase) (identityKey, bool) {
+	if meta == nil || meta.PKValue == nil {
+		return identityKey{}, false
+	}
+	pk := meta.PKValue(entity)
+	if pk == nil || isZeroPK(pk) {
+		return identityKey{}, false
+	}
+	return identityKey{table: meta.Table, pk: pk}, true
+}
+
+// isZeroPK reports whether pk is the zero value for its PK type. Covers the
+// supported PK types directly; falls back to reflect for any other comparable
+// key (e.g. uuid.UUID, which is a [16]byte array).
+func isZeroPK(pk any) bool {
+	switch v := pk.(type) {
+	case int:
+		return v == 0
+	case int8:
+		return v == 0
+	case int16:
+		return v == 0
+	case int32:
+		return v == 0
+	case int64:
+		return v == 0
+	case string:
+		return v == ""
+	default:
+		return reflect.ValueOf(pk).IsZero()
+	}
 }
 
 func (ct *changeTracker) MarkAdded(entity any, meta *ModelMetaBase) {
