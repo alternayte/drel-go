@@ -532,6 +532,44 @@ func WithAfterCommitErrorSink(fn func(ctx context.Context, err error)) Option {
 	return func(cfg *engineConfig) { cfg.afterCommitSink = fn }
 }
 
+// dispatchAfterCommit runs every registered after-commit hook with a context
+// detached from cancellation (so a cancelled request ctx does not silently drop
+// already-committed side-effects) while preserving its values. Each hook is run
+// under recover so one panicking or slow handler does not abort the rest or
+// crash the caller; recovered panics are reported to the configured
+// after-commit error sink (WithAfterCommitErrorSink) when set. After-commit
+// failures cannot roll back — durable side-effects belong in the outbox.
+func (e *Engine) dispatchAfterCommit(ctx context.Context, events []any) {
+	if len(e.afterCommitHooks) == 0 {
+		return
+	}
+	dctx := context.WithoutCancel(ctx)
+	for _, hook := range e.afterCommitHooks {
+		e.runAfterCommitHook(dctx, hook, events)
+	}
+}
+
+// runAfterCommitHook invokes a single after-commit hook under recover, routing
+// any panic to the error sink.
+func (e *Engine) runAfterCommitHook(ctx context.Context, hook AfterCommitHook, events []any) {
+	defer func() {
+		if p := recover(); p != nil {
+			e.reportAfterCommit(ctx, fmt.Errorf("drel: after-commit hook panicked: %v", p))
+		}
+	}()
+	hook(ctx, events)
+}
+
+// reportAfterCommit forwards an after-commit failure to the configured sink, if
+// any. The sink is itself recovered so a faulty sink cannot crash the caller.
+func (e *Engine) reportAfterCommit(ctx context.Context, err error) {
+	if e.afterCommitSink == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	e.afterCommitSink(ctx, err)
+}
+
 // addEventSink registers a function that receives all committed events (including
 // those from entities staged by before-commit hooks) after the hook-flush step.
 // This is the registration point used by UseOutbox.

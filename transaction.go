@@ -126,9 +126,7 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 	tx.tracker.PostCommit()
 	clearPendingEvents(tx.tracker)
 
-	for _, hook := range e.afterCommitHooks {
-		hook(ctx, allEvents)
-	}
+	e.dispatchAfterCommit(ctx, allEvents)
 
 	return nil
 }
