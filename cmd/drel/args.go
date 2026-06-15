@@ -16,6 +16,7 @@ type parsedCmd struct {
 	Subcommand string   // for "migrate": "new"|"up"|"down"|"status"|"lint"|"check"; else ""
 	ConfigPath string   // resolved value of --config / -c (default "drel.yaml")
 	AuthToken  string   // --auth-token (migrate subcommands only; falls back to TURSO_AUTH_TOKEN env)
+	Watch      bool     // --watch / -w (generate only): run in watch mode
 	Positional []string // remaining non-flag args (e.g. the migration name)
 }
 
@@ -65,14 +66,17 @@ func parseArgs(argv []string) (parsedCmd, error) {
 	case "generate":
 		var cfg string
 		var tok string
+		var watch bool
 		fs := commandFlags(cmd, false, &cfg, &tok)
+		fs.BoolVar(&watch, "watch", false, "watch for source changes and regenerate")
+		fs.BoolVar(&watch, "w", false, "watch for source changes and regenerate (shorthand)")
 		if err := fs.Parse(argv[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return parsedCmd{Command: "help"}, nil
 			}
 			return parsedCmd{}, fmt.Errorf("%s: %w", cmd, err)
 		}
-		return parsedCmd{Command: cmd, ConfigPath: cfg, Positional: fs.Args()}, nil
+		return parsedCmd{Command: cmd, ConfigPath: cfg, Watch: watch, Positional: fs.Args()}, nil
 
 	case "migrate":
 		if len(argv) < 2 {

@@ -49,7 +49,7 @@ func fprintUsage(w interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  init        Scaffold a drel.yaml configuration file")
-	fmt.Fprintln(w, "  generate    Generate code from model definitions")
+	fmt.Fprintln(w, "  generate    Generate code from model definitions (--watch for inner loop)")
 	fmt.Fprintln(w, "  migrate     Manage database migrations")
 	fmt.Fprintln(w, "  seed        Run seed functions against the database")
 	fmt.Fprintln(w, "  version     Print version")
@@ -125,7 +125,32 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
+// parseGenerateFlags parses the args after "generate" into a config path and a
+// watch flag, supporting both `--config x`/`--config=x` and `-w`/`--watch`.
+// It delegates to parseArgs so flag semantics are consistent with the rest of
+// the CLI; it exists as a thin shim so the flag contract can be unit-tested
+// without exec-ing the binary.
+func parseGenerateFlags(argv []string) (configPath string, watch bool) {
+	full := append([]string{"generate"}, argv...)
+	parsed, err := parseArgs(full)
+	if err != nil {
+		return "drel.yaml", false
+	}
+	return parsed.ConfigPath, parsed.Watch
+}
+
 func runGenerate(parsed parsedCmd) {
+	if parsed.Watch {
+		ctx, stop := signalContext()
+		defer stop()
+		if err := codegen.GenerateWatch(ctx, parsed.ConfigPath, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "drel generate: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("drel: watch stopped")
+		return
+	}
+
 	if err := codegen.Generate(parsed.ConfigPath); err != nil {
 		fmt.Fprintf(os.Stderr, "drel generate: %v\n", err)
 		os.Exit(1)
