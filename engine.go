@@ -17,6 +17,7 @@ import (
 	"github.com/alternayte/drel/internal/driver/pgxdriver"
 	"github.com/alternayte/drel/internal/driver/sqlitedriver"
 	"github.com/alternayte/drel/internal/dsn"
+	"github.com/alternayte/drel/internal/migrate"
 )
 
 // replicaCooldown is how long a read replica is skipped after a failed read
@@ -435,6 +436,16 @@ func (e *Engine) dialect() dialect.Dialect {
 // libSQL/Turso reuse the SQLite dialect, so they also report "sqlite".
 func (e *Engine) DialectName() string {
 	return e.dia.Name()
+}
+
+// ApplyMigrations runs all pending up-migrations from dir against the engine's
+// own connection pool, returning the number applied. It reuses the standard
+// migration runner (tracking table + checksums), so it is safe to call against
+// an in-memory SQLite engine — the migrations land in the same database the
+// engine queries. The migration files must be written for the engine's dialect
+// (see Engine.DialectName); this is the caller's responsibility.
+func (e *Engine) ApplyMigrations(ctx context.Context, dir string) (int, error) {
+	return migrate.NewRunner(e.drv, dir, e.DialectName()).Up(ctx)
 }
 
 // startSpan begins a tracing span for a query if a tracer is configured.
