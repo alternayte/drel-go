@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alternayte/drel/internal/dberr"
+	"github.com/alternayte/drel/internal/driver"
 )
 
 // SetClause pairs a column name with a value for use in bulk updates and upserts.
@@ -176,6 +177,17 @@ func (r *Repository[T]) BulkInsert(ctx context.Context, entities []*T) (int, err
 			if err := appendUniformRow(r.meta.Table, &columns, &rows, cols, vals); err != nil {
 				return 0, err
 			}
+		}
+
+		if copier, ok := tx.(driver.TxBulkCopier); ok {
+			start := time.Now()
+			affected, copyErr := copier.CopyFrom(ctx, r.meta.Table, columns, rows)
+			r.engine.notifyQueryHooks(ctx, "COPY "+r.meta.Table, nil, time.Since(start), copyErr)
+			if copyErr != nil {
+				return 0, fmt.Errorf("drel: bulk insert %s: %w", r.meta.Table, dberr.Classify(copyErr))
+			}
+			total += int(affected)
+			continue
 		}
 
 		result := d.BuildBulkInsert(r.meta.Table, columns, rows)
