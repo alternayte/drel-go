@@ -5,6 +5,96 @@ All notable changes to this project are documented here. The format is based on
 to [Semantic Versioning](https://semver.org/). While the major version is `0`,
 minor versions may contain breaking changes.
 
+## [0.5.0] - 2026-06-15
+
+Production-readiness release. A broad pass over correctness, feature
+completeness, hardening, and developer experience that closes the gap between
+drel's documented feature set and a production-grade ORM. Since the major
+version is `0`, this minor includes correctness fixes that change behavior.
+
+### Added
+
+#### Value objects & column types
+- **Multi-column value objects** via `drel.MultiColumnMapper`
+  (`DrelColumns`/`DrelValues`/`DrelScanMulti`) — e.g. `Money` → `amount` +
+  `currency` — mapped end-to-end through codegen, including change-tracking diffs.
+- **Single-column value objects** via the `sql.Scanner` / `driver.Valuer`
+  contract, with the SQL column type inferred from the underlying primitive.
+- **Range operators** (`GT`/`GTE`/`LT`/`LTE`/`Between`, `Before`/`After`) on
+  `time.Time`, `uuid.UUID`, and value-object columns via generated `TimeColumn`
+  / `ComparableColumn`.
+- **JSON & array columns:** slice, map, and struct fields map to `jsonb`
+  (Postgres) / `TEXT` (SQLite) through `drel.JSON[T]`, with structural
+  change-detection in diffs; native Postgres arrays via a `type=` tag override.
+- `WhereIf` / `True` conditional filters; empty `In`/`NotIn`/`And`/`Or` now emit
+  valid SQL instead of an invalid `IN ()`; non-panicking `RawErr`.
+
+#### Bulk, transactions & concurrency
+- **Postgres `COPY` fast-path** for `BulkInsert` (`pgx.CopyFrom`) with a
+  parameterized fallback; `ON CONFLICT DO NOTHING`.
+- **Full-table guards:** an unfiltered `BulkUpdate`/`BulkDelete` errors unless
+  you opt in with `AllRows()`. App-assigned keys, audit, and version columns are
+  honored in bulk paths.
+- **Advisory locks:** `Tx.AdvisoryLock` / `TryAdvisoryLock` (Postgres; SQLite no-op).
+- **Automatic retry:** `Engine.TransactionWithRetry` + `WithRetry(RetryConfig)`,
+  classifying serialization failures (including at COMMIT), pipeline errors, and
+  `SQLITE_BUSY`.
+- **Read-only transactions** (`WithReadOnly`) and full `Tx`/`UnitOfWork` parity
+  for `Select`/`Aggregate`/`GroupBy`/`Include`/`Bulk*`/`Batch` — all run on the
+  transaction's own connection.
+
+#### Operations & observability
+- `Engine.Ping`, `HealthCheck`, and `Stats`; a per-query timeout
+  (`WithQueryTimeout`); a PgBouncer-compatible simple-exec mode.
+- Tracing spans on transaction, bulk, and pipeline paths; a structured batch
+  error model (`ErrBatchPartial`, per-item errors, both `errors.Is` targets
+  reachable through the chain); concurrency-safe hook registration; bounded
+  dev-mode N+1 detection with a timeout-guarded EXPLAIN probe.
+- `DISTINCT`, `COUNT(DISTINCT)`, `COUNT(*)`, and JOINs in projections.
+- Backward cursor pagination (`Before` / `PreviousCursor` / `HasPrev`).
+
+#### CLI & tooling
+- `drel generate --watch` and `//go:generate drel generate` support.
+- Atomic code generation (temp + rename, stale-file cleanup) that fails loudly
+  on duplicate model names, unresolved relations, or unsupported field types;
+  dialect validation and `--config=value` parsing.
+- `dreltest` / `pgtest`: error-returning `WithSeed`, `CreateSchema`,
+  `WithMigrations`, and dialect guards.
+
+### Changed
+- Projections (`Select`/`GroupBy`) now bind result columns to DTO fields by
+  `db`-tag **name**, not struct-declaration order; an unknown projected column
+  fails loudly with `ErrUnknownProjectionColumn`. (`RawQuery` keeps struct-order
+  binding, now documented.)
+- The change tracker is finalized only **after** a successful commit, so a
+  failed-then-retried `SaveChanges` is safe.
+- The transactional outbox is now a post-flush event sink, so events recorded on
+  entities created inside before-commit hooks reach both the outbox and
+  after-commit handlers.
+
+### Fixed
+- **Projection value corruption** — out-of-order `Select`/`GroupBy` columns
+  silently swapped values into the wrong DTO fields.
+- **Keyset pagination** — `Page` ignored `Skip`; a nullable `ORDER BY` key
+  dropped rows; a zero/negative page size panicked. Now correct, with
+  `NULLS FIRST/LAST` and null-aware keysets.
+- **Delete after a mid-transaction `SaveChanges`** no longer silently skips the
+  (soft or hard) delete.
+- **Identity map** is keyed by `(table, PK)` — one tracked instance per row, no
+  silent lost updates.
+- Versioned-on-delete; Attach-on-Audit duplicate column; uint primary-key schema.
+- `Include(...).Limit(n)` is applied per-parent (window function); many-to-many
+  UUID keys and per-relation `OrderBy` are preserved.
+- Migration robustness: drift `verify`, a migration lock, first-`down`
+  pivot/enum ordering, FK `ON DELETE`/`ON UPDATE`, SQLite `RETURNING`, and a
+  libSQL `ws://` `time.Time` corruption guard.
+- Detached-context rollback, savepoint-release safety, and outbox after-commit
+  panic recovery.
+- A data race in query/commit hook registration
+  (`OnQuery`/`OnBeforeCommit`/`OnAfterCommit`).
+- `db:` tag parsing: comma-safe `check=`, working `default=`, and fail-loud on
+  unknown tag options.
+
 ## [0.4.0] - 2026-06-04
 
 Application-assigned primary keys.
@@ -144,6 +234,7 @@ Initial release: Postgres (pgx) core, code generation (model scanning, query
 builders, scan/snapshot/diff), basic CRUD, snapshot-based change tracking,
 implicit transactions, and the type-safe query builder.
 
+[0.5.0]: https://github.com/alternayte/drel-go/releases/tag/v0.5.0
 [0.4.0]: https://github.com/alternayte/drel-go/releases/tag/v0.4.0
 [0.3.2]: https://github.com/alternayte/drel-go/releases/tag/v0.3.2
 [0.3.1]: https://github.com/alternayte/drel-go/releases/tag/v0.3.1

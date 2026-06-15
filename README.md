@@ -84,9 +84,24 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
 - **Snapshot-based change tracking** -- only modified columns appear in
   UPDATE statements.
 - **Type-safe query builder** -- compile-time checked column predicates
-  and ordering (`Eq`, `In`, `Between`, `ILike`, `Raw`).
-- **Transactions** -- explicit transaction API with configurable isolation
-  levels and automatic flush on commit.
+  and ordering (`Eq`, `In`, `Between`, `ILike`, `Raw`), range operators
+  (`GT`/`GTE`/`LT`/`LTE`, plus `Before`/`After`) on `time.Time`, `uuid.UUID`,
+  and value-object columns, conditional `WhereIf`, and valid SQL for empty
+  `In`/`And`/`Or` (no `IN ()` corruption).
+- **Value objects** -- single-column VOs via the `sql.Scanner` /
+  `driver.Valuer` contract (the SQL column type is inferred from the
+  underlying primitive), and multi-column VOs via `drel.MultiColumnMapper`
+  (e.g. `Money` → `amount` + `currency`), both mapped end-to-end through
+  codegen including change-tracking diffs.
+- **JSON & array columns** -- slice, map, and struct fields map to `jsonb`
+  (Postgres) / `TEXT` (SQLite) through `drel.JSON[T]`, with structural
+  change-detection in diffs; native Postgres arrays via a `type=` tag override.
+- **Transactions** -- explicit transaction API with configurable isolation,
+  read-only transactions (`WithReadOnly`), advisory locks
+  (`Tx.AdvisoryLock` / `TryAdvisoryLock`; a SQLite no-op), automatic retry on
+  serialization failures (`TransactionWithRetry` / `WithRetry`), and automatic
+  flush on commit. Projections, includes, bulk operations, and batching all run
+  on the transaction's own connection inside an explicit `Tx` or `UnitOfWork`.
 - **Soft delete, versioning, audit** -- embed `drel.SoftDelete`,
   `drel.Versioned`, or `drel.Audit` for automatic column management.
 - **Primary keys** -- integer auto-increment by default, or application-assigned
@@ -98,7 +113,10 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
   cross-package support. Filter-aware includes respect soft-delete on
   related models, with `Unscoped()` opt-out.
 - **Bulk operations** -- `BulkInsert`, `BulkUpdate`, `BulkDelete`,
-  `BulkUpsert` with batching and safety guards.
+  `BulkUpsert` with batching, a Postgres `COPY` fast-path, `ON CONFLICT DO
+  NOTHING`, and full-table guards (an unfiltered `BulkUpdate`/`BulkDelete`
+  errors unless you opt in with `AllRows()`). App-assigned keys, audit, and
+  version columns are honored in bulk paths.
 - **Domain events & outbox** -- record events on entities, dispatch them
   after commit, and optionally persist them to a transactional outbox table
   via `Engine.UseOutbox`.
@@ -122,7 +140,13 @@ err = database.Transaction(ctx, func(tx *drel.Tx) error {
 - **Observability** -- structured `slog` query logging, slow-query and
   dev-mode diagnostics (N+1, unbounded queries, missing-index hints), and an
   OpenTelemetry-adaptable `Tracer`.
-- **CLI** -- `drel init`, `generate`, `migrate`, `seed`.
+- **CLI** -- `drel init`, `generate` (with `--watch` and `//go:generate`
+  support), `migrate`, `seed`; dialect validation and atomic code generation
+  that fails loudly on duplicate model names, unresolved relations, or
+  unsupported field types.
+- **Health & timeouts** -- `Engine.Ping`, `HealthCheck`, and `Stats`, plus a
+  configurable per-query timeout (`WithQueryTimeout`) and a PgBouncer-compatible
+  simple-exec mode.
 - **Typed errors** -- `errors.Is(err, drel.ErrUniqueViolation)` (and FK /
   not-null / check / serialization-failure / not-found / concurrency-conflict),
   classified uniformly across Postgres, SQLite, and LibSQL; the original driver
@@ -170,6 +194,8 @@ for app-assigned UUIDv7 (stamped at `Add()`).
 - True JOIN-based eager loading is intentionally not offered; relationships
   load via batched split queries (correct for every shape, no cartesian
   products).
+- Primary keys must be a single surrogate column (`int` auto-increment or
+  `uuid.UUID`); composite and natural keys are not yet supported.
 
 ## License
 
