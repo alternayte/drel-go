@@ -180,6 +180,62 @@ output:
 	require.NoError(t, err, "go build failed: %s", string(buildOut))
 }
 
+func TestResolveModuleRoot_ConfigInSubdir(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module testmod\n\ngo 1.22\n"), 0644))
+	sub := filepath.Join(root, "config", "nested")
+	require.NoError(t, os.MkdirAll(sub, 0755))
+
+	got := ResolveModuleRoot(sub)
+	assert.Equal(t, root, got)
+}
+
+func TestResolveModuleRoot_ConfigAtRoot(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module testmod\n\ngo 1.22\n"), 0644))
+
+	got := ResolveModuleRoot(root)
+	assert.Equal(t, root, got)
+}
+
+func TestResolveModuleRoot_NoGoMod_FallsBackToStart(t *testing.T) {
+	// A directory with no go.mod anywhere above it falls back to startDir,
+	// preserving today's behaviour for configs that *are* at the module root.
+	start := filepath.Join(t.TempDir(), "x", "y")
+	require.NoError(t, os.MkdirAll(start, 0755))
+
+	got := ResolveModuleRoot(start)
+	assert.Equal(t, start, got)
+}
+
+func TestGenerate_ConfigInSubdirOfModule(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/product.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Product struct {
+	drel.Model[int]
+	name string ` + "`db:\"name\"`" + `
+}
+`,
+		"config/drel.yaml": `packages:
+  - ./models
+output:
+  db: ./db/drel_gen.go
+`,
+	})
+
+	// Config lives in <module>/config, packages are relative to the module root.
+	err := Generate(filepath.Join(dir, "config", "drel.yaml"))
+	require.NoError(t, err)
+
+	// Model file is written next to the scanned package (module-rooted).
+	assert.FileExists(t, filepath.Join(dir, "models", "product_drel.go"))
+	// DB output stays anchored to the config's directory.
+	assert.FileExists(t, filepath.Join(dir, "config", "db", "drel_gen.go"))
+}
+
 func TestGenerate_WithValueObjects(t *testing.T) {
 	dir := setupGenerateModule(t, map[string]string{
 		"models/types.go": `package models

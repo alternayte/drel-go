@@ -8,6 +8,24 @@ import (
 	"strings"
 )
 
+// ResolveModuleRoot finds the Go module root (the nearest ancestor directory
+// containing go.mod) by walking up from startDir. It falls back to startDir when
+// no go.mod is found, preserving the prior behaviour for configs that already sit
+// at the module root.
+func ResolveModuleRoot(startDir string) string {
+	dir := startDir
+	for {
+		if fi, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil && !fi.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return startDir
+		}
+		dir = parent
+	}
+}
+
 // Generate runs the full code generation pipeline: loads config, scans packages,
 // emits per-model files, and emits the aggregated DB file.
 func Generate(configPath string) error {
@@ -26,7 +44,8 @@ func Generate(configPath string) error {
 		cfgDir = abs
 	}
 
-	models, err := ScanPackages(cfg.Packages, cfgDir)
+	scanDir := ResolveModuleRoot(cfgDir)
+	models, err := ScanPackages(cfg.Packages, scanDir)
 	if err != nil {
 		return err
 	}
