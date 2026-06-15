@@ -826,3 +826,33 @@ output:
 	assert.FileExists(t, filepath.Join(cfgDir, "models", "user_drel.go"),
 		"Generate must write the model file next to the source package")
 }
+
+// TestGenerate_JSONModelCompiles is a regression guard for the JSON/array codegen
+// path. It runs the full codegen pipeline on a model with []string and
+// map[string]string fields and then runs `go build ./...` on the output to prove
+// the generated diff code compiles (slices and maps are not !=-comparable in Go,
+// so the emitter must use slices.Equal / maps.Equal instead of !=).
+func TestGenerate_JSONModelCompiles(t *testing.T) {
+	dir := setupGenerateModule(t, map[string]string{
+		"models/model.go": `package models
+
+import "github.com/alternayte/drel"
+
+type Doc struct {
+	drel.Model[int]
+	Tags []string          ` + "`db:\"tags\"`" + `
+	Meta map[string]string ` + "`db:\"meta\"`" + `
+}
+`,
+		"drel.yaml": "packages:\n  - ./models\noutput:\n  db: ./db/drel_gen.go\ndialect: postgres\n",
+	})
+
+	require.NoError(t, Generate(filepath.Join(dir, "drel.yaml")))
+
+	// The generated package (model + drel_gen.go) must compile — this is the
+	// regression guard for the "slices/maps are not !=-comparable" finding.
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "generated code failed to compile:\n%s", out)
+}
