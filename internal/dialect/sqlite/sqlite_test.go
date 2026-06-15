@@ -1020,6 +1020,23 @@ func TestSQLite_BuildSelectDistinct(t *testing.T) {
 	assert.Nil(t, result.Args)
 }
 
+func TestSQLite_BuildSelectLeftJoin(t *testing.T) {
+	s := New()
+	node := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"users.name", "orders.total"},
+		Joins: []ast.JoinNode{
+			{Table: "orders", Type: ast.JoinLeft, On: `"orders"."user_id" = "users"."id"`},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := s.BuildSelect(node)
+	assert.Equal(t,
+		`SELECT "users"."name", "orders"."total" FROM "users" LEFT JOIN "orders" ON "orders"."user_id" = "users"."id"`,
+		result.SQL,
+	)
+}
+
 func TestSQLite_BuildSelectSumCoalesced(t *testing.T) {
 	s := New()
 	node := ast.SelectNode{

@@ -899,6 +899,40 @@ func TestBuildSelectDistinct(t *testing.T) {
 	assert.Nil(t, result.Args)
 }
 
+func TestBuildSelectLeftJoin(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"users.name", "orders.total"},
+		Joins: []ast.JoinNode{
+			{Table: "orders", Type: ast.JoinLeft, On: `"orders"."user_id" = "users"."id"`},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t,
+		`SELECT "users"."name", "orders"."total" FROM "users" LEFT JOIN "orders" ON "orders"."user_id" = "users"."id"`,
+		result.SQL,
+	)
+}
+
+func TestBuildSelectInnerJoin(t *testing.T) {
+	d := New()
+	node := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"users.name"},
+		Joins: []ast.JoinNode{
+			{Table: "orders", Type: ast.JoinInner, On: `"orders"."user_id" = "users"."id"`},
+		},
+		Type: ast.QuerySelect,
+	}
+	result := d.BuildSelect(node)
+	assert.Equal(t,
+		`SELECT "users"."name" FROM "users" INNER JOIN "orders" ON "orders"."user_id" = "users"."id"`,
+		result.SQL,
+	)
+}
+
 func TestBuildSelectSumCoalesced(t *testing.T) {
 	d := New()
 	node := ast.SelectNode{

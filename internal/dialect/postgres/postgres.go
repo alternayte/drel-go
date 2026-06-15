@@ -71,7 +71,7 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(quoteIdent(col))
+			b.WriteString(quoteCol(col))
 		}
 		for aggIdx, agg := range node.Aggregates {
 			if len(node.Columns) > 0 || aggIdx > 0 {
@@ -111,6 +111,17 @@ func (p *Postgres) BuildSelect(node ast.SelectNode) dialect.Result {
 		}
 		b.WriteString(" FROM ")
 		b.WriteString(quoteIdent(node.Table))
+		for _, j := range node.Joins {
+			switch j.Type {
+			case ast.JoinLeft:
+				b.WriteString(" LEFT JOIN ")
+			default:
+				b.WriteString(" INNER JOIN ")
+			}
+			b.WriteString(quoteIdent(j.Table))
+			b.WriteString(" ON ")
+			b.WriteString(j.On)
+		}
 	}
 
 	if node.Where != nil {
@@ -623,4 +634,14 @@ func aggFuncSQL(f ast.AggFunc) string {
 
 func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// quoteCol quotes a possibly table-qualified column reference. "users.name"
+// becomes "users"."name"; a bare "name" becomes "name". Each segment is quoted
+// independently so the dot is a separator, not part of an identifier.
+func quoteCol(name string) string {
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		return quoteIdent(name[:i]) + "." + quoteIdent(name[i+1:])
+	}
+	return quoteIdent(name)
 }
