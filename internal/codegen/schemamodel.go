@@ -129,6 +129,27 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 
 	// User-defined columns.
 	for _, f := range columnFields(m.Fields) {
+		if f.IsMultiColVO {
+			notNull := !strings.HasPrefix(f.GoType, "*")
+			for i, sub := range f.MultiColNames {
+				sqlType := "text"
+				if dialect == "sqlite" {
+					sqlType = "TEXT"
+				}
+				if i < len(f.MultiColTypes) && f.MultiColTypes[i] != "" {
+					sqlType = GoTypeToSQL(f.MultiColTypes[i], dialect)
+				}
+				sc := Column{Name: sub, Type: sqlType, NotNull: notNull}
+				if fks != nil {
+					if target, ok := fks[sub]; ok {
+						sc.Ref = target
+					}
+				}
+				t.Columns = append(t.Columns, sc)
+			}
+			continue
+		}
+
 		c := Column{Name: f.ColumnName, NotNull: !strings.HasPrefix(f.GoType, "*")}
 		sqlType := GoTypeToSQL(f.GoType, dialect)
 		if f.IsEnum {
