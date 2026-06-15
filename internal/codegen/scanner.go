@@ -230,7 +230,25 @@ func extractFields(st *types.Struct, ownerPkgPath string) []FieldInfo {
 				}
 				if isMultiColumnMapper(f.Type()) {
 					fi.IsMultiColVO = true
+					names := splitMultiColNames(rawDBTag(tag))
+					fi.MultiColNames = names
 					fi.MultiColPrefix = dbCol
+					if len(names) > 0 {
+						// Keep ColumnName as the first sub-column so columnFields()
+						// continues to include this field; the full set lives in
+						// MultiColNames. Options (unique/index/check) are NOT parsed
+						// for multi-col VOs — every segment is a column name.
+						fi.ColumnName = names[0]
+						fi.Unique = false
+						fi.Indexed = false
+						fi.IndexName = ""
+						fi.CheckExpr = ""
+					}
+					if hasDrelColumnTypes(f.Type()) {
+						fi.MultiColTypes = defaultMultiColTypes(names)
+					} else {
+						fi.MultiColTypes = defaultMultiColTypes(names)
+					}
 				}
 				if !isPrimitiveType(goTypeStr) && !fi.IsVO && !fi.IsMultiColVO {
 					enumValues := findEnumValues(f.Type())
@@ -314,6 +332,30 @@ func parseDBTag(rawTag string) (string, dbTagOpts) {
 		}
 	}
 	return col, opts
+}
+
+// rawDBTag returns the raw db struct tag value (the full comma list, unsplit).
+func rawDBTag(rawTag string) string {
+	st := reflect.StructTag(rawTag)
+	v, ok := st.Lookup("db")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// splitMultiColNames splits a multi-column VO db tag into its sub-column names,
+// trimming whitespace and dropping empty segments.
+func splitMultiColNames(rawDB string) []string {
+	parts := strings.Split(rawDB, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func parseRelTag(rawTag string) string {

@@ -33,7 +33,7 @@ func TestScanner_SingleColVO(t *testing.T) {
 
 func TestScanner_MultiColVO(t *testing.T) {
 	dir := setupTestModule(t, map[string]string{
-		"models/model.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Money struct {\n\tamount   int\n\tcurrency string\n}\n\nfunc (m Money) DrelColumns() []string        { return []string{\"amount\", \"currency\"} }\nfunc (m Money) DrelValues() ([]any, error)   { return []any{m.amount, m.currency}, nil }\nfunc (m *Money) DrelScanMulti(v []any) error { return nil }\n\ntype Product struct {\n\tdrel.Model[int]\n\tname    string " + "`db:\"name\"`" + "\n\tbalance Money  " + "`db:\"balance\"`" + "\n}\n",
+		"models/model.go": "package models\n\nimport \"github.com/alternayte/drel\"\n\ntype Money struct {\n\tamount   int\n\tcurrency string\n}\n\nfunc (m Money) DrelColumns() []string        { return []string{\"amount\", \"currency\"} }\nfunc (m Money) DrelValues() ([]any, error)   { return []any{m.amount, m.currency}, nil }\nfunc (m *Money) DrelScanMulti(v []any) error { return nil }\n\ntype Product struct {\n\tdrel.Model[int]\n\tname    string " + "`db:\"name\"`" + "\n\tbalance Money  " + "`db:\"balance_amount,balance_currency\"`" + "\n}\n",
 	})
 
 	models, err := ScanPackages([]string{filepath.Join(dir, "models")}, dir)
@@ -46,8 +46,17 @@ func TestScanner_MultiColVO(t *testing.T) {
 	balanceField := m.Fields[1]
 	assert.Equal(t, "balance", balanceField.Name)
 	assert.True(t, balanceField.IsMultiColVO)
-	assert.Equal(t, "balance", balanceField.MultiColPrefix)
 	assert.Equal(t, "Money", balanceField.LocalGoType)
+	// The first sub-column name is recorded as ColumnName so columnFields()
+	// keeps including the field; the full expansion lives in MultiColNames.
+	assert.Equal(t, "balance_amount", balanceField.ColumnName)
+	assert.Equal(t, []string{"balance_amount", "balance_currency"}, balanceField.MultiColNames)
+	assert.Equal(t, []string{"text", "text"}, balanceField.MultiColTypes)
+	// Multi-col VO fields must NOT run option parsing: a comma list is column
+	// names, not options, so Unique/Indexed/CheckExpr stay zero.
+	assert.False(t, balanceField.Unique)
+	assert.False(t, balanceField.Indexed)
+	assert.Empty(t, balanceField.CheckExpr)
 }
 
 func TestScanner_MultiColTypesDefaultText(t *testing.T) {
