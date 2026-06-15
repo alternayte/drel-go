@@ -971,6 +971,42 @@ func TestSQLite_BuildSoftDeleteVersioned(t *testing.T) {
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
 
+func TestSQLite_BuildSelect_EmptyIn(t *testing.T) {
+	s := New()
+
+	inNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "role",
+				Op:     ast.OpIn,
+				Values: nil,
+			},
+		},
+	}
+	got := s.BuildSelect(inNode)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE 0`, got.SQL)
+	assert.Empty(t, got.Args)
+
+	notInNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "role",
+				Op:     ast.OpNotIn,
+				Values: []any{},
+			},
+		},
+	}
+	got = s.BuildSelect(notInNode)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE 1`, got.SQL)
+	assert.Empty(t, got.Args)
+}
+
 // ─── Interface compliance ─────────────────────────────────────────────────────
 
 func TestSQLite_ImplementsDialect(t *testing.T) {

@@ -775,6 +775,42 @@ func TestPostgres_BuildSoftDeleteVersioned(t *testing.T) {
 	assert.Equal(t, []any{7, 3}, res.Args)
 }
 
+func TestPostgres_BuildSelect_EmptyIn(t *testing.T) {
+	pg := New()
+
+	inNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "role",
+				Op:     ast.OpIn,
+				Values: nil,
+			},
+		},
+	}
+	got := pg.BuildSelect(inNode)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE FALSE`, got.SQL)
+	assert.Empty(t, got.Args)
+
+	notInNode := ast.SelectNode{
+		Table:   "users",
+		Columns: []string{"id"},
+		Type:    ast.QuerySelect,
+		Where: &ast.WhereClause{
+			Comparison: &ast.ComparisonNode{
+				Column: "role",
+				Op:     ast.OpNotIn,
+				Values: []any{},
+			},
+		},
+	}
+	got = pg.BuildSelect(notInNode)
+	assert.Equal(t, `SELECT "id" FROM "users" WHERE TRUE`, got.SQL)
+	assert.Empty(t, got.Args)
+}
+
 func TestRawPlaceholder_MismatchReturnsError(t *testing.T) {
 	p := New()
 	sql := "a = ? AND b = ?"

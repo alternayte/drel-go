@@ -312,6 +312,11 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, pa
 	case ast.OpIsNotNull:
 		b.WriteString(col + " IS NOT NULL")
 	case ast.OpIn:
+		if len(cmp.Values) == 0 {
+			// Empty IN matches nothing.
+			b.WriteString("FALSE")
+			break
+		}
 		b.WriteString(col + " IN (")
 		for i, v := range cmp.Values {
 			if i > 0 {
@@ -323,6 +328,11 @@ func writeComparison(b *strings.Builder, args *[]any, cmp ast.ComparisonNode, pa
 		}
 		b.WriteString(")")
 	case ast.OpNotIn:
+		if len(cmp.Values) == 0 {
+			// Empty NOT IN matches everything.
+			b.WriteString("TRUE")
+			break
+		}
 		b.WriteString(col + " NOT IN (")
 		for i, v := range cmp.Values {
 			if i > 0 {
