@@ -110,26 +110,26 @@ output:
 `,
 	})
 
-	origDir, err := os.Getwd()
-	require.NoError(t, err)
-	t.Cleanup(func() { os.Chdir(origDir) })
-	require.NoError(t, os.Chdir(dir))
+	// Use absolute config path so the goroutine is not sensitive to process-wide
+	// os.Chdir races under the race detector.
+	configPath := filepath.Join(dir, "drel.yaml")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- GenerateWatch(ctx, "drel.yaml", 20*time.Millisecond) }()
+	go func() { done <- GenerateWatch(ctx, configPath, 20*time.Millisecond) }()
 
 	modelFile := filepath.Join(dir, "models", "user_drel.go")
 	dbFile := filepath.Join(dir, "db", "drel_gen.go")
 
-	// Initial run must produce both files.
+	// Initial run must produce both files. Allow generous timeout because the race
+	// detector slows packages.Load considerably (2-20x overhead).
 	requireEventually(t, func() bool {
 		_, e1 := os.Stat(modelFile)
 		_, e2 := os.Stat(dbFile)
 		return e1 == nil && e2 == nil
-	}, 5*time.Second, "initial generation did not produce output files")
+	}, 30*time.Second, "initial generation did not produce output files")
 
 	// Capture the DB file's current signature (mod time) for change detection.
 	before, err := os.ReadFile(dbFile)
@@ -151,7 +151,7 @@ type User struct {
 	requireEventually(t, func() bool {
 		c, e := os.ReadFile(modelFile)
 		return e == nil && strings.Contains(string(c), `NewCol`) && strings.Contains(string(c), "email")
-	}, 5*time.Second, "watch did not regenerate after source change")
+	}, 30*time.Second, "watch did not regenerate after source change")
 
 	// Sanity: the DB file content is unchanged (one model) but regen ran without panic.
 	_ = before
@@ -161,7 +161,7 @@ type User struct {
 	select {
 	case err := <-done:
 		assert.NoError(t, err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("GenerateWatch did not exit after ctx cancel")
 	}
 }
@@ -197,20 +197,19 @@ output:
 `,
 	})
 
-	origDir, err := os.Getwd()
-	require.NoError(t, err)
-	t.Cleanup(func() { os.Chdir(origDir) })
-	require.NoError(t, os.Chdir(dir))
+	// Use absolute config path so the goroutine is not sensitive to process-wide
+	// os.Chdir races under the race detector.
+	configPath := filepath.Join(dir, "drel.yaml")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = GenerateWatch(ctx, "drel.yaml", 20*time.Millisecond) }()
+	go func() { _ = GenerateWatch(ctx, configPath, 20*time.Millisecond) }()
 
 	modelFile := filepath.Join(dir, "models", "user_drel.go")
 	requireEventually(t, func() bool {
 		_, e := os.Stat(modelFile)
 		return e == nil
-	}, 5*time.Second, "initial generation did not run")
+	}, 30*time.Second, "initial generation did not run")
 
 	// Record the generated file's mtime, then wait several poll cycles WITHOUT
 	// touching any source file. If the watcher self-triggered, it would rewrite
@@ -219,7 +218,7 @@ output:
 	require.NoError(t, err)
 	firstMod := first.ModTime()
 
-	time.Sleep(300 * time.Millisecond) // ~15 poll cycles
+	time.Sleep(500 * time.Millisecond) // enough poll cycles even under race-detector overhead
 
 	after, err := os.Stat(modelFile)
 	require.NoError(t, err)
