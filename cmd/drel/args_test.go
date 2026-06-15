@@ -127,3 +127,14 @@ func TestParseArgs_Version(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "version", pc.Command)
 }
+
+func TestHandlersConsumeParsedCmd(t *testing.T) {
+	// Compile-time proof that the rewritten handlers take parsedCmd. This fails
+	// to compile until Task 5 changes the signatures, which is the failing state.
+	var _ = func(pc parsedCmd) {
+		runInit(pc)
+		runGenerate(pc)
+		runSeed(pc)
+		runMigrate(pc)
+	}
+}

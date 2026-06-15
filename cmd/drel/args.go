@@ -61,7 +61,7 @@ func parseArgs(argv []string) (parsedCmd, error) {
 		}
 		sub := argv[1]
 		switch sub {
-		case "new", "up", "down", "status", "lint":
+		case "new", "up", "down", "status", "lint", "check":
 		default:
 			return parsedCmd{}, fmt.Errorf("unknown migrate command: %s", sub)
 		}

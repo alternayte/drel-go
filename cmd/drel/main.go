@@ -14,24 +14,26 @@ var (
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	parsed, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "drel: %v\n", err)
 		printUsage()
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
+	switch parsed.Command {
 	case "init":
-		runInit()
+		runInit(parsed)
 	case "generate":
-		runGenerate()
+		runGenerate(parsed)
 	case "migrate":
-		runMigrate()
+		runMigrate(parsed)
 	case "seed":
-		runSeed()
+		runSeed(parsed)
 	case "version":
 		fmt.Printf("drel %s (%s)\n", version, commit)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", parsed.Command)
 		printUsage()
 		os.Exit(1)
 	}
@@ -46,6 +48,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  migrate     Manage database migrations")
 	fmt.Fprintln(os.Stderr, "  seed        Run seed functions against the database")
 	fmt.Fprintln(os.Stderr, "  version     Print version")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --config, -c <path>   Path to drel.yaml (default: drel.yaml)")
 }
 
 const defaultConfig = `# drel configuration — see https://github.com/alternayte/drel
@@ -60,14 +65,8 @@ output:
 dialect: postgres               # postgres | sqlite
 `
 
-func runInit() {
-	configPath := "drel.yaml"
-	for i := 2; i < len(os.Args); i++ {
-		if os.Args[i] == "--config" && i+1 < len(os.Args) {
-			configPath = os.Args[i+1]
-			i++
-		}
-	}
+func runInit(parsed parsedCmd) {
+	configPath := parsed.ConfigPath
 
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Fprintf(os.Stderr, "drel init: %s already exists; not overwriting\n", configPath)
@@ -82,16 +81,8 @@ func runInit() {
 	fmt.Println("drel: edit the packages list, then run `drel generate`")
 }
 
-func runSeed() {
-	configPath := "drel.yaml"
-	for i := 2; i < len(os.Args); i++ {
-		if os.Args[i] == "--config" && i+1 < len(os.Args) {
-			configPath = os.Args[i+1]
-			i++
-		}
-	}
-
-	cfg, err := codegen.LoadConfig(configPath)
+func runSeed(parsed parsedCmd) {
+	cfg, err := codegen.LoadConfig(parsed.ConfigPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel seed: %v\n", err)
 		os.Exit(1)
@@ -113,16 +104,8 @@ func runSeed() {
 	}
 }
 
-func runGenerate() {
-	configPath := "drel.yaml"
-	for i := 2; i < len(os.Args); i++ {
-		if os.Args[i] == "--config" && i+1 < len(os.Args) {
-			configPath = os.Args[i+1]
-			i++
-		}
-	}
-
-	if err := codegen.Generate(configPath); err != nil {
+func runGenerate(parsed parsedCmd) {
+	if err := codegen.Generate(parsed.ConfigPath); err != nil {
 		fmt.Fprintf(os.Stderr, "drel generate: %v\n", err)
 		os.Exit(1)
 	}

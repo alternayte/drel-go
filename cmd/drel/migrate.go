@@ -32,27 +32,22 @@ func openMigrateDriver(ctx context.Context, configPath, dataSource string) (driv
 	return dsn.OpenDriver(ctx, dataSource, authToken)
 }
 
-func runMigrate() {
-	if len(os.Args) < 3 {
-		printMigrateUsage()
-		os.Exit(1)
-	}
-
-	switch os.Args[2] {
+func runMigrate(parsed parsedCmd) {
+	switch parsed.Subcommand {
 	case "new":
-		runMigrateNew()
+		runMigrateNew(parsed)
 	case "up":
-		runMigrateUp()
+		runMigrateUp(parsed)
 	case "down":
-		runMigrateDown()
+		runMigrateDown(parsed)
 	case "status":
-		runMigrateStatus()
+		runMigrateStatus(parsed)
 	case "lint":
-		runMigrateLint()
+		runMigrateLint(parsed)
 	case "check":
-		runMigrateCheck()
+		runMigrateCheck(parsed)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown migrate command: %s\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "unknown migrate command: %s\n", parsed.Subcommand)
 		printMigrateUsage()
 		os.Exit(1)
 	}
@@ -74,17 +69,6 @@ func printMigrateUsage() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --config <path>      Path to drel.yaml (default ./drel.yaml)")
 	fmt.Fprintln(os.Stderr, "  --auth-token <tok>   LibSQL/Turso auth token (or TURSO_AUTH_TOKEN env)")
-}
-
-func cfgPath() string {
-	p := "drel.yaml"
-	for i := 3; i < len(os.Args); i++ {
-		if os.Args[i] == "--config" && i+1 < len(os.Args) {
-			p = os.Args[i+1]
-			i++
-		}
-	}
-	return p
 }
 
 func resolveMigrationsDir(configPath string) string {
@@ -124,13 +108,13 @@ func runnerDialect(configPath, dataSource string) string {
 	return dsn.DetectDialect(dataSource)
 }
 
-func runMigrateNew() {
-	if len(os.Args) < 4 {
+func runMigrateNew(parsed parsedCmd) {
+	if len(parsed.Positional) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: drel migrate new <name>")
 		os.Exit(1)
 	}
-	name := os.Args[3]
-	cp := cfgPath()
+	name := parsed.Positional[0]
+	cp := parsed.ConfigPath
 	mDir := resolveMigrationsDir(cp)
 
 	cfg, err := codegen.LoadConfig(cp)
@@ -212,19 +196,19 @@ func runMigrateNew() {
 	fmt.Printf("drel: created migration %s_%s\n", version, name)
 }
 
-func runMigrateUp() {
-	dataSource := requireDSN()
-	mDir := resolveMigrationsDir(cfgPath())
+func runMigrateUp(parsed parsedCmd) {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(parsed.ConfigPath)
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(parsed.ConfigPath, dsn))
 	count, err := runner.Up(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate up: %v\n", err)
@@ -237,19 +221,19 @@ func runMigrateUp() {
 	}
 }
 
-func runMigrateDown() {
-	dataSource := requireDSN()
-	mDir := resolveMigrationsDir(cfgPath())
+func runMigrateDown(parsed parsedCmd) {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(parsed.ConfigPath)
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(parsed.ConfigPath, dsn))
 	if err := runner.Down(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate down: %v\n", err)
 		os.Exit(1)
@@ -257,19 +241,19 @@ func runMigrateDown() {
 	fmt.Println("drel: rolled back last migration")
 }
 
-func runMigrateStatus() {
-	dataSource := requireDSN()
-	mDir := resolveMigrationsDir(cfgPath())
+func runMigrateStatus(parsed parsedCmd) {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(parsed.ConfigPath)
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(parsed.ConfigPath, dsn))
 	statuses, err := runner.Status(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate status: %v\n", err)
@@ -298,19 +282,19 @@ func runMigrateStatus() {
 	}
 }
 
-func runMigrateLint() {
-	dataSource := requireDSN()
-	mDir := resolveMigrationsDir(cfgPath())
+func runMigrateLint(parsed parsedCmd) {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(parsed.ConfigPath)
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(parsed.ConfigPath, dsn))
 	issues, err := runner.Lint(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate lint: %v\n", err)
@@ -326,19 +310,19 @@ func runMigrateLint() {
 	os.Exit(1)
 }
 
-func runMigrateCheck() {
-	dataSource := requireDSN()
-	mDir := resolveMigrationsDir(cfgPath())
+func runMigrateCheck(parsed parsedCmd) {
+	dsn := requireDSN()
+	mDir := resolveMigrationsDir(parsed.ConfigPath)
 	ctx := context.Background()
 
-	drv, err := openMigrateDriver(ctx, cfgPath(), dataSource)
+	drv, err := openMigrateDriver(ctx, parsed.ConfigPath, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate check: %v\n", err)
 		os.Exit(1)
 	}
 	defer drv.Close()
 
-	runner := migrate.NewRunner(drv, mDir, runnerDialect(cfgPath(), dataSource))
+	runner := migrate.NewRunner(drv, mDir, runnerDialect(parsed.ConfigPath, dsn))
 	pending, err := runner.Pending(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "drel migrate check: %v\n", err)
