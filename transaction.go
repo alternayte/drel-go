@@ -25,6 +25,7 @@ type TxOption func(*txConfig)
 
 type txConfig struct {
 	isolation *IsolationLevel
+	readOnly  bool
 	retry     *RetryConfig
 }
 
@@ -32,6 +33,16 @@ type txConfig struct {
 func WithIsolation(level IsolationLevel) TxOption {
 	return func(cfg *txConfig) {
 		cfg.isolation = &level
+	}
+}
+
+// WithReadOnly begins the transaction in read-only mode. On Postgres this lets
+// the server skip snapshot bookkeeping and rejects any write inside the tx; on
+// SQLite/libSQL the flag is forwarded to the driver. Compose it with
+// WithIsolation; both reach the driver's BeginTx.
+func WithReadOnly() TxOption {
+	return func(cfg *txConfig) {
+		cfg.readOnly = true
 	}
 }
 
@@ -50,17 +61,19 @@ func (e *Engine) Transaction(ctx context.Context, fn func(tx *Tx) error, opts ..
 
 	var dbTx driver.Tx
 	var err error
-	if cfg.isolation != nil {
+	if cfg.isolation != nil || cfg.readOnly {
 		drvIso := driver.IsoDefault
-		switch *cfg.isolation {
-		case ReadCommitted:
-			drvIso = driver.IsoReadCommitted
-		case RepeatableRead:
-			drvIso = driver.IsoRepeatableRead
-		case Serializable:
-			drvIso = driver.IsoSerializable
+		if cfg.isolation != nil {
+			switch *cfg.isolation {
+			case ReadCommitted:
+				drvIso = driver.IsoReadCommitted
+			case RepeatableRead:
+				drvIso = driver.IsoRepeatableRead
+			case Serializable:
+				drvIso = driver.IsoSerializable
+			}
 		}
-		dbTx, err = e.drv.BeginTx(ctx, driver.TxOptions{Isolation: drvIso})
+		dbTx, err = e.drv.BeginTx(ctx, driver.TxOptions{Isolation: drvIso, ReadOnly: cfg.readOnly})
 	} else {
 		dbTx, err = e.drv.Begin(ctx)
 	}

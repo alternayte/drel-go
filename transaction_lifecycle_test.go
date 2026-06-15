@@ -78,3 +78,31 @@ func TestUnitOfWork_FailsFastOnCancelledContext(t *testing.T) {
 	err := uow.SaveChanges(ctx)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestTransaction_WithReadOnly_AllowsReads(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx := context.Background()
+	insertItem(t, engine, "seed")
+
+	var got int
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		n, e := drel.NewTxRepository(tx, sqliteItemMeta).AsNoTracking().Count(ctx)
+		got = n
+		return e
+	}, drel.WithReadOnly())
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+}
+
+// WithReadOnly composes with WithIsolation: both must reach BeginTx.
+func TestTransaction_WithReadOnlyAndIsolation_Compose(t *testing.T) {
+	engine := setupSQLiteEngine(t)
+	ctx := context.Background()
+	insertItem(t, engine, "seed")
+
+	err := engine.Transaction(ctx, func(tx *drel.Tx) error {
+		_, e := drel.NewTxRepository(tx, sqliteItemMeta).AsNoTracking().Count(ctx)
+		return e
+	}, drel.WithReadOnly(), drel.WithIsolation(drel.Serializable))
+	require.NoError(t, err)
+}
