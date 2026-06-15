@@ -85,3 +85,63 @@ func TestBulkUpdate_AllRows_OptsOutOfGuard(t *testing.T) {
 		t.Fatalf("expected 2 rows updated, got %d", n)
 	}
 }
+
+func newSoftDeleteGuardEngine(t *testing.T) *drel.Engine {
+	t.Helper()
+	eng, err := drel.NewEngine(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { eng.Close() })
+	ctx := context.Background()
+	if _, err := eng.Exec(ctx, `CREATE TABLE sd_products (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		price INTEGER NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Exec(ctx, `INSERT INTO sd_products (name, price) VALUES ('A', 100), ('B', 200)`); err != nil {
+		t.Fatal(err)
+	}
+	return eng
+}
+
+func TestBulkDelete_SoftDelete_NoWhere_ReturnsGuardError(t *testing.T) {
+	eng := newSoftDeleteGuardEngine(t)
+	repo := drel.NewRepository(eng, testmodels.SoftDeleteProductMeta)
+	ctx := context.Background()
+
+	// No user Where; the soft-delete auto-filter must NOT satisfy the guard.
+	_, err := repo.OrderBy(testmodels.SoftDeleteProducts.Name.Asc()).
+		BulkDelete(ctx)
+	if !errors.Is(err, drel.ErrBulkDeleteRequiresFilter) {
+		t.Fatalf("expected ErrBulkDeleteRequiresFilter for soft-delete model, got %v", err)
+	}
+
+	// Both rows must still be live (deleted_at IS NULL).
+	live, err := repo.Count(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live != 2 {
+		t.Fatalf("expected 2 live rows (nothing soft-deleted), got %d", live)
+	}
+}
+
+func TestBulkDelete_SoftDelete_AllRows_OptsOut(t *testing.T) {
+	eng := newSoftDeleteGuardEngine(t)
+	repo := drel.NewRepository(eng, testmodels.SoftDeleteProductMeta)
+	ctx := context.Background()
+
+	n, err := repo.AllRows().BulkDelete(ctx)
+	if err != nil {
+		t.Fatalf("AllRows should opt out of the guard, got %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 rows soft-deleted, got %d", n)
+	}
+}

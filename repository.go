@@ -161,6 +161,13 @@ func (r *Repository[T]) Skip(n int) *QueryBuilder[T] {
 	return r.newBuilder().Skip(n)
 }
 
+// AllRows opts a BulkUpdate or BulkDelete started from this repository out of
+// the full-table safety guard, permitting a deliberate whole-table write with
+// no Where predicate.
+func (r *Repository[T]) AllRows() *QueryBuilder[T] {
+	return r.newBuilder().AllRows()
+}
+
 // After starts a cursor-paginated query positioned past the given cursor.
 func (r *Repository[T]) After(cursor string) *QueryBuilder[T] {
 	return r.newBuilder().After(cursor)

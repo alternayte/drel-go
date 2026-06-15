@@ -42,7 +42,7 @@ func (q *QueryBuilder[T]) BulkUpdate(ctx context.Context, sets ...SetClause) (in
 func (q *QueryBuilder[T]) BulkDelete(ctx context.Context) (int, error) {
 	where := q.combinedWhere()
 
-	if len(q.wheres) == 0 && len(q.filters) == 0 {
+	if len(q.wheres) == 0 && !q.allowFullTable {
 		return 0, ErrBulkDeleteRequiresFilter
 	}
 
