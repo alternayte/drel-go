@@ -18,6 +18,8 @@ type scanPlan struct {
 	// fields (the same slice scanDest iterates). It lets scanDestFor bind
 	// projected SQL columns to DTO fields by name instead of by struct order.
 	byColumn map[string]int
+	isScalar bool  // true when T is a non-struct scalar scanned into one dest
+	err      error // non-nil when T is unsupported (e.g. a map/slice/chan)
 }
 
 var (
@@ -42,6 +44,21 @@ func getScanPlan(t reflect.Type) *scanPlan {
 func buildScanPlan(t reflect.Type) *scanPlan {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		// []byte is a scannable scalar (e.g. for BLOB columns).
+		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+			return &scanPlan{isScalar: true}
+		}
+		// A scalar (or other single-value) destination is supported only for the
+		// kinds database/sql / pgx can scan into directly. Structs are handled by
+		// db-tagged fields above; maps/slices/funcs/chans are not scannable.
+		switch t.Kind() {
+		case reflect.Map, reflect.Slice, reflect.Array, reflect.Func, reflect.Chan, reflect.Invalid:
+			return &scanPlan{err: fmt.Errorf("requires a struct with db tags or a scalar column type; got %s", t.Kind())}
+		default:
+			return &scanPlan{isScalar: true}
+		}
 	}
 	var fields []scanField
 	byColumn := make(map[string]int)
@@ -68,6 +85,9 @@ func (p *scanPlan) columns() []string {
 func (p *scanPlan) scanDest(v reflect.Value) []any {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
+	}
+	if p.isScalar {
+		return []any{v.Addr().Interface()}
 	}
 	dests := make([]any, len(p.fields))
 	for i, f := range p.fields {

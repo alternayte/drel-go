@@ -20,6 +20,10 @@ func RawQuery[T any](ctx context.Context, e *Engine, sql string, args ...any) ([
 	}
 
 	plan := getScanPlan(reflect.TypeOf((*T)(nil)).Elem())
+	if plan.err != nil {
+		var zero T
+		return nil, fmt.Errorf("drel: RawQuery[%T] %w", zero, plan.err)
+	}
 
 	rows, err := e.queryInternal(ctx, sql, args...)
 	if err != nil {
@@ -52,6 +56,10 @@ func RawQueryRow[T any](ctx context.Context, e *Engine, sql string, args ...any)
 	}
 
 	plan := getScanPlan(reflect.TypeOf((*T)(nil)).Elem())
+	if plan.err != nil {
+		var zero T
+		return nil, fmt.Errorf("drel: RawQueryRow[%T] %w", zero, plan.err)
+	}
 	row := e.queryRowInternal(ctx, sql, args...)
 
 	rt := reflect.TypeOf((*T)(nil)).Elem()
