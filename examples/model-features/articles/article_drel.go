@@ -4,6 +4,8 @@ package articles
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/alternayte/drel"
@@ -13,6 +15,8 @@ var Articles = struct {
 	ID        drel.OrderedColumn[int]
 	Title     drel.StringColumn
 	Body      drel.StringColumn
+	Tags      drel.ComparableColumn[[]string]
+	Metadata  drel.ComparableColumn[map[string]string]
 	DeletedAt drel.ComparableColumn[*time.Time]
 	Version   drel.OrderedColumn[int]
 	CreatedBy drel.StringColumn
@@ -23,6 +27,8 @@ var Articles = struct {
 	ID:        drel.NewOrderedCol[int]("id"),
 	Title:     drel.NewStringCol("title"),
 	Body:      drel.NewStringCol("body"),
+	Tags:      drel.NewComparableCol[[]string]("tags"),
+	Metadata:  drel.NewComparableCol[map[string]string]("metadata"),
 	DeletedAt: drel.NewComparableCol[*time.Time]("deleted_at"),
 	Version:   drel.NewOrderedCol[int]("version"),
 	CreatedBy: drel.NewStringCol("created_by"),
@@ -35,7 +41,7 @@ func scanArticle(row drel.Row) (*Article, error) {
 	p := &Article{}
 	idPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()
 	createdByPtr, updatedByPtr := p.AuditPtrs()
-	err := row.Scan(idPtr, &p.Title, &p.Body, p.DeletedAtPtr(), p.VersionPtr(), createdByPtr, updatedByPtr, createdAtPtr, updatedAtPtr)
+	err := row.Scan(idPtr, &p.Title, &p.Body, drel.JSON[[]string]{V: &p.Tags}, drel.JSON[map[string]string]{V: &p.Metadata}, p.DeletedAtPtr(), p.VersionPtr(), createdByPtr, updatedByPtr, createdAtPtr, updatedAtPtr)
 	if err != nil {
 		return nil, err
 	}
@@ -43,12 +49,14 @@ func scanArticle(row drel.Row) (*Article, error) {
 }
 
 type articleSnapshot struct {
-	Title string
-	Body  string
+	Title    string
+	Body     string
+	Tags     []string
+	Metadata map[string]string
 }
 
 func snapshotArticle(p *Article) any {
-	return articleSnapshot{Title: p.Title, Body: p.Body}
+	return articleSnapshot{Title: p.Title, Body: p.Body, Tags: p.Tags, Metadata: p.Metadata}
 }
 
 func diffArticle(p *Article, snap any) []drel.FieldChange {
@@ -59,6 +67,12 @@ func diffArticle(p *Article, snap any) []drel.FieldChange {
 	}
 	if p.Body != s.Body {
 		changes = append(changes, drel.FieldChange{Column: "body", Value: p.Body})
+	}
+	if !slices.Equal(p.Tags, s.Tags) {
+		changes = append(changes, drel.FieldChange{Column: "tags", Value: drel.JSON[[]string]{V: &p.Tags}})
+	}
+	if !maps.Equal(p.Metadata, s.Metadata) {
+		changes = append(changes, drel.FieldChange{Column: "metadata", Value: drel.JSON[map[string]string]{V: &p.Metadata}})
 	}
 	return changes
 }
@@ -76,23 +90,27 @@ func articleColumnValue(p *Article, idx int) any {
 	case 2:
 		return p.Body
 	case 3:
-		return p.DeletedAt()
+		return drel.JSON[[]string]{V: &p.Tags}
 	case 4:
-		return p.Version()
+		return drel.JSON[map[string]string]{V: &p.Metadata}
 	case 5:
-		return p.CreatedBy()
+		return p.DeletedAt()
 	case 6:
-		return p.UpdatedBy()
+		return p.Version()
 	case 7:
-		return p.CreatedAt()
+		return p.CreatedBy()
 	case 8:
+		return p.UpdatedBy()
+	case 9:
+		return p.CreatedAt()
+	case 10:
 		return p.UpdatedAt()
 	}
 	return nil
 }
 
 func articleInsertColumns(p *Article) ([]string, []any) {
-	return []string{"title", "body", "created_by", "updated_by"}, []any{p.Title, p.Body, p.CreatedBy(), p.UpdatedBy()}
+	return []string{"title", "body", "tags", "metadata", "created_by", "updated_by"}, []any{p.Title, p.Body, drel.JSON[[]string]{V: &p.Tags}, drel.JSON[map[string]string]{V: &p.Metadata}, p.CreatedBy(), p.UpdatedBy()}
 }
 
 func articleScanReturning(p *Article, row drel.Row) error {
@@ -106,7 +124,7 @@ func articleNormalizeKey(v any) any {
 
 var ArticleMeta = drel.ModelMeta[Article]{
 	Table:         "articles",
-	Columns:       []string{"id", "title", "body", "deleted_at", "version", "created_by", "updated_by", "created_at", "updated_at"},
+	Columns:       []string{"id", "title", "body", "tags", "metadata", "deleted_at", "version", "created_by", "updated_by", "created_at", "updated_at"},
 	PKColumn:      "id",
 	Scan:          scanArticle,
 	Snapshot:      snapshotArticle,

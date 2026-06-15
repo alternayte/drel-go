@@ -7,6 +7,8 @@ type Article struct {
 	drel.SoftDelete
 	drel.Versioned
 	drel.Audit
-	Title string `db:"title"`
-	Body  string `db:"body"`
+	Title    string            `db:"title"`
+	Body     string            `db:"body"`
+	Tags     []string          `db:"tags"`
+	Metadata map[string]string `db:"metadata"`
 }

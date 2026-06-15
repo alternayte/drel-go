@@ -45,6 +45,8 @@ type FieldInfo struct {
 	CheckExpr      string // db tag option: column CHECK constraint expression (db:"...,check=expr")
 	Default        string // db tag option: column DEFAULT value (db:"...,default=expr")
 	TypeOverride   string // db tag option: explicit SQL type (db:"...,type=jsonb"); overrides inference
+	IsJSON         bool   // map/slice/struct mapped as JSON/jsonb (default for non-primitive, non-VO, non-enum container types)
+	IsArray        bool   // slice field (JSON array by default; native T[] when TypeOverride is set on Postgres)
 }
 
 // RelationFieldInfo holds parsed relationship metadata from a `rel:"..."` struct tag.

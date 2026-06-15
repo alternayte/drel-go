@@ -80,3 +80,41 @@ func isPrimitiveType(goType string) bool {
 	}
 	return false
 }
+
+// isSliceType reports whether t is a slice (after unwrapping a pointer).
+func isSliceType(t types.Type) bool {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	_, ok := t.Underlying().(*types.Slice)
+	return ok
+}
+
+// isMapType reports whether t is a map (after unwrapping a pointer).
+func isMapType(t types.Type) bool {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	_, ok := t.Underlying().(*types.Map)
+	return ok
+}
+
+// isJSONContainer reports whether t is a slice, map, array, or plain struct that
+// should be mapped as a JSON column. []byte is excluded (it maps to bytea/BLOB,
+// handled as a primitive elsewhere if ever added).
+func isJSONContainer(t types.Type) bool {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Slice:
+		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
+			return false // []byte is bytea/BLOB, not JSON
+		}
+		return true
+	case *types.Map, *types.Array, *types.Struct:
+		return true
+	default:
+		return false
+	}
+}

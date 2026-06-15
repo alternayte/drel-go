@@ -457,7 +457,7 @@ output:
 }
 
 func TestGenerate_AtomicOnEmitError(t *testing.T) {
-	// A valid model and a model with an unsupported []string field in the same
+	// A valid model and a model with an unsupported channel field in the same
 	// package. The unsupported field makes EmitModelFileChecked error; nothing
 	// should be written for EITHER model and no DB file should appear.
 	dir := setupGenerateModule(t, map[string]string{
@@ -472,7 +472,7 @@ type Good struct {
 
 type Bad struct {
 	drel.Model[int]
-	tags []string ` + "`db:\"tags\"`" + `
+	signal chan int ` + "`db:\"signal\"`" + `
 }
 `,
 		"drel.yaml": `packages:
@@ -489,7 +489,7 @@ output:
 
 	err = Generate("drel.yaml")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tags")
+	assert.Contains(t, err.Error(), "signal")
 
 	// Atomicity: NO per-model file and NO db file were written.
 	assert.NoFileExists(t, filepath.Join(dir, "models", "good_drel.go"))
@@ -702,20 +702,20 @@ output:
 	userFile := filepath.Join(dir, "models", "user_drel.go")
 	require.FileExists(t, userFile)
 
-	// Add a model with an unsupported type (slice) — triggers an emit error.
+	// Add a model with an unsupported type (channel) — triggers an emit error.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "models", "bad.go"), []byte(`package models
 
 import "github.com/alternayte/drel"
 
 type Bad struct {
 	drel.Model[int]
-	tags []string `+"`db:\"tags\"`"+`
+	signal chan int `+"`db:\"signal\"`"+`
 }
 `), 0644))
 
 	err = Generate("drel.yaml")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tags")
+	assert.Contains(t, err.Error(), "signal")
 
 	// user_drel.go must NOT have been deleted by the failed regen.
 	assert.FileExists(t, userFile, "pre-existing user_drel.go must survive a failed regen")

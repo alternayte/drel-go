@@ -166,13 +166,12 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 		// Otherwise, use the standard pointer-prefix heuristic.
 		notNull := !strings.HasPrefix(f.GoType, "*") && !(f.IsVO && f.HasIsZero)
 		c := Column{Name: f.ColumnName, NotNull: notNull}
-		sqlType := GoTypeToSQL(f.GoType, dialect)
-		if f.IsVO && f.VOBaseType != "" {
-			// Single-column VOs store the VO's underlying primitive, not a struct;
-			// resolve the column type from that primitive instead of defaulting to text.
-			sqlType = GoTypeToSQL(f.VOBaseType, dialect)
-		}
-		if f.IsEnum {
+		var sqlType string
+		switch {
+		case f.TypeOverride != "":
+			// Explicit author override wins on every dialect (e.g. text[], jsonb).
+			sqlType = f.TypeOverride
+		case f.IsEnum:
 			if f.EnumIsInt {
 				// Integer enum: underlying integer column type on both dialects.
 				sqlType = GoTypeToSQL(f.EnumBaseType, dialect)
@@ -181,9 +180,19 @@ func buildTable(m ModelInfo, fks map[string]string, dialect string) Table {
 			} else {
 				sqlType = quoteIdent(strings.ToLower(f.LocalGoType))
 			}
-		}
-		if f.TypeOverride != "" {
-			sqlType = f.TypeOverride
+		case f.IsJSON:
+			if dialect == "sqlite" {
+				sqlType = "TEXT" // SQLite stores JSON as text
+			} else {
+				sqlType = "jsonb"
+			}
+		default:
+			sqlType = GoTypeToSQL(f.GoType, dialect)
+			if f.IsVO && f.VOBaseType != "" {
+				// Single-column VOs store the VO's underlying primitive, not a struct;
+				// resolve the column type from that primitive instead of defaulting to text.
+				sqlType = GoTypeToSQL(f.VOBaseType, dialect)
+			}
 		}
 		c.Type = sqlType
 

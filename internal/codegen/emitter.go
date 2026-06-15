@@ -91,6 +91,48 @@ func columnTypeName(goType string) string {
 	}
 }
 
+// usesJSONWrapper reports whether the field round-trips through drel.JSON[T]
+// (default for JSON/array fields). A TypeOverride pointing at a native SQL type
+// (e.g. text[]) bypasses the wrapper and passes the Go value straight to the
+// driver, which encodes it natively (pgx slices -> arrays).
+func usesJSONWrapper(f FieldInfo) bool {
+	return f.IsJSON && f.TypeOverride == ""
+}
+
+// isSliceGoType / isMapGoType classify the diff strategy from the Go type string.
+func isSliceGoType(goType string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(goType, "*"), "[]")
+}
+
+func isMapGoType(goType string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(goType, "*"), "map[")
+}
+
+// isMappableField reports whether codegen can emit valid DDL + scan/value/diff
+// for the field. Anything else is rejected loudly instead of emitting text + !=.
+func isMappableField(f FieldInfo) bool {
+	if f.TypeOverride != "" {
+		return true
+	}
+	if isPrimitiveType(strings.TrimPrefix(f.GoType, "*")) {
+		return true
+	}
+	// time.Time and *time.Time are handled natively by the drivers.
+	switch f.GoType {
+	case "time.Time", "*time.Time":
+		return true
+	}
+	if f.LocalGoType == "time.Time" || f.LocalGoType == "*time.Time" {
+		return true
+	}
+	// Named primitive types (e.g. type Priority int with no enum consts) are
+	// comparable with != and generate valid diff code.
+	if f.IsNamedPrimitive {
+		return true
+	}
+	return f.IsVO || f.IsMultiColVO || f.IsEnum || f.IsJSON
+}
+
 // columnConstructor returns the drel constructor call for a Go type and column name.
 func columnConstructor(goType, colName string) string {
 	switch goType {
@@ -163,6 +205,12 @@ func emitImports(b *strings.Builder, m ModelInfo, extAliases map[string]string) 
 		if f.IsMultiColVO {
 			stdImports["fmt"] = true
 		}
+		if f.IsJSON && isSliceGoType(f.GoType) {
+			stdImports["slices"] = true
+		}
+		if f.IsJSON && isMapGoType(f.GoType) {
+			stdImports["maps"] = true
+		}
 	}
 
 	b.WriteString("import (\n")
@@ -211,14 +259,11 @@ func EmitModelFileChecked(m ModelInfo) (string, error) {
 	}
 	// Every db-mapped scalar field is compared with != in the generated diff
 	// function, so its Go type must be comparable. Reject anything that is not a
-	// primitive, time.Time, a single-column VO, or an enum before emitting code
-	// that would only fail at the user's subsequent `go build`.
+	// primitive, time.Time, a single-column VO, enum, or JSON/array before emitting
+	// code that would only fail at the user's subsequent `go build`.
 	for _, f := range m.Fields {
-		if f.ColumnName == "" || f.IsVO || f.IsEnum || f.IsMultiColVO {
-			continue
-		}
-		if !isComparableForDiff(f) {
-			return "", fmt.Errorf("drel: model %q field %q has unsupported type %q for code generation; implement sql.Scanner + driver.Valuer (single-column value object) or remove the db tag", m.Name, f.Name, f.GoType)
+		if f.ColumnName != "" && f.Relation == nil && !isMappableField(f) {
+			return "", fmt.Errorf("drel: model %q field %q has unsupported column type %q: it is not a primitive, value object, enum, JSON/array, and has no `db:\"...,type=...\"` override. Add a type override, implement sql.Scanner+driver.Valuer, or remove the db tag", m.Name, f.Name, f.GoType)
 		}
 	}
 	return EmitModelFile(m), nil
@@ -276,22 +321,22 @@ func EmitModelFile(m ModelInfo) string {
 	allCols := allColumns(m)
 
 	// --- Scan function ---
-	emitScanFunc(&b, m, lower, allCols)
+	emitScanFunc(&b, m, lower, allCols, aliases)
 
 	// --- Snapshot struct + function ---
 	emitSnapshot(&b, m, lower, aliases)
 
 	// --- Diff function ---
-	emitDiff(&b, m, lower)
+	emitDiff(&b, m, lower, aliases)
 
 	// --- PK value ---
 	b.WriteString(fmt.Sprintf("func %sPKValue(p *%s) any {\n\treturn p.ID()\n}\n\n", lower, m.Name))
 
 	// --- Column value ---
-	emitColumnValue(&b, m, lower, allCols)
+	emitColumnValue(&b, m, lower, allCols, aliases)
 
 	// --- Insert columns ---
-	emitInsertColumns(&b, m, lower)
+	emitInsertColumns(&b, m, lower, aliases)
 
 	// --- Scan returning ---
 	emitScanReturning(&b, m, lower)
@@ -442,7 +487,7 @@ func emitMultiValHelpers(b *strings.Builder, m ModelInfo, lower string, aliases 
 	}
 }
 
-func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []string) {
+func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []string, aliases map[string]string) {
 	b.WriteString(fmt.Sprintf("func scan%s(row drel.Row) (*%s, error) {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\tp := &%s{}\n", m.Name))
 	b.WriteString("\tidPtr, createdAtPtr, updatedAtPtr := p.ScanPtrs()\n")
@@ -472,7 +517,11 @@ func emitScanFunc(b *strings.Builder, m ModelInfo, lower string, allCols []strin
 			// for the zero value, so the column round-trips zero <-> NULL.
 			b.WriteString(fmt.Sprintf("\t// %s is a nullable value object: Scan(nil)->zero, Value()==nil for zero->NULL\n", f.ColumnName))
 		}
-		scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
+		if usesJSONWrapper(f) {
+			scanArgs = append(scanArgs, fmt.Sprintf("drel.JSON[%s]{V: &p.%s}", fieldDisplayType(f, aliases), f.Name))
+		} else {
+			scanArgs = append(scanArgs, fmt.Sprintf("&p.%s", f.Name))
+		}
 	}
 	if m.HasSoftDelete {
 		scanArgs = append(scanArgs, "p.DeletedAtPtr()")
@@ -525,7 +574,7 @@ func emitSnapshot(b *strings.Builder, m ModelInfo, lower string, aliases map[str
 	b.WriteString("}\n}\n\n")
 }
 
-func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
+func emitDiff(b *strings.Builder, m ModelInfo, lower string, aliases map[string]string) {
 	b.WriteString(fmt.Sprintf("func diff%s(p *%s, snap any) []drel.FieldChange {\n", exportName(lower), m.Name))
 	b.WriteString(fmt.Sprintf("\ts := snap.(%sSnapshot)\n", lower))
 	b.WriteString("\tvar changes []drel.FieldChange\n")
@@ -540,18 +589,36 @@ func emitDiff(b *strings.Builder, m ModelInfo, lower string) {
 			b.WriteString("\t}\n")
 			continue
 		}
-		cond := fmt.Sprintf("p.%s != s.%s", f.Name, f.Name)
-		if f.IsVO && f.HasEqual {
-			cond = fmt.Sprintf("!p.%s.Equal(s.%s)", f.Name, f.Name)
+		valExpr := fmt.Sprintf("p.%s", f.Name)
+		switch {
+		case f.IsJSON && isSliceGoType(f.GoType):
+			b.WriteString(fmt.Sprintf("\tif !slices.Equal(p.%s, s.%s) {\n", f.Name, f.Name))
+			if usesJSONWrapper(f) {
+				valExpr = fmt.Sprintf("drel.JSON[%s]{V: &p.%s}", fieldDisplayType(f, aliases), f.Name)
+			}
+		case f.IsJSON && isMapGoType(f.GoType):
+			b.WriteString(fmt.Sprintf("\tif !maps.Equal(p.%s, s.%s) {\n", f.Name, f.Name))
+			if usesJSONWrapper(f) {
+				valExpr = fmt.Sprintf("drel.JSON[%s]{V: &p.%s}", fieldDisplayType(f, aliases), f.Name)
+			}
+		case f.IsJSON:
+			// Struct/other JSON: compare marshaled bytes; emit drel.JSONEqual helper.
+			b.WriteString(fmt.Sprintf("\tif !drel.JSONEqual(p.%s, s.%s) {\n", f.Name, f.Name))
+			valExpr = fmt.Sprintf("drel.JSON[%s]{V: &p.%s}", fieldDisplayType(f, aliases), f.Name)
+		default:
+			cond := fmt.Sprintf("p.%s != s.%s", f.Name, f.Name)
+			if f.IsVO && f.HasEqual {
+				cond = fmt.Sprintf("!p.%s.Equal(s.%s)", f.Name, f.Name)
+			}
+			b.WriteString(fmt.Sprintf("\tif %s {\n", cond))
 		}
-		b.WriteString(fmt.Sprintf("\tif %s {\n", cond))
-		b.WriteString(fmt.Sprintf("\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: p.%s})\n", f.ColumnName, f.Name))
+		b.WriteString(fmt.Sprintf("\t\tchanges = append(changes, drel.FieldChange{Column: %q, Value: %s})\n", f.ColumnName, valExpr))
 		b.WriteString("\t}\n")
 	}
 	b.WriteString("\treturn changes\n}\n\n")
 }
 
-func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []string) {
+func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []string, aliases map[string]string) {
 	b.WriteString(fmt.Sprintf("func %sColumnValue(p *%s, idx int) any {\n", lower, m.Name))
 	b.WriteString("\tswitch idx {\n")
 
@@ -569,7 +636,11 @@ func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []st
 			}
 			continue
 		}
-		b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.%s\n", idx, f.Name))
+		if usesJSONWrapper(f) {
+			b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn drel.JSON[%s]{V: &p.%s}\n", idx, fieldDisplayType(f, aliases), f.Name))
+		} else {
+			b.WriteString(fmt.Sprintf("\tcase %d:\n\t\treturn p.%s\n", idx, f.Name))
+		}
 		idx++
 	}
 
@@ -597,7 +668,7 @@ func emitColumnValue(b *strings.Builder, m ModelInfo, lower string, allCols []st
 	b.WriteString("\t}\n\treturn nil\n}\n\n")
 }
 
-func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
+func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string, aliases map[string]string) {
 	b.WriteString(fmt.Sprintf("func %sInsertColumns(p *%s) ([]string, []any) {\n", lower, m.Name))
 	var colNames []string
 	var colVals []string
@@ -610,7 +681,11 @@ func emitInsertColumns(b *strings.Builder, m ModelInfo, lower string) {
 			continue
 		}
 		colNames = append(colNames, fmt.Sprintf("%q", f.ColumnName))
-		colVals = append(colVals, fmt.Sprintf("p.%s", f.Name))
+		if usesJSONWrapper(f) {
+			colVals = append(colVals, fmt.Sprintf("drel.JSON[%s]{V: &p.%s}", fieldDisplayType(f, aliases), f.Name))
+		} else {
+			colVals = append(colVals, fmt.Sprintf("p.%s", f.Name))
+		}
 	}
 	if m.HasAudit {
 		colNames = append(colNames, `"created_by"`, `"updated_by"`)

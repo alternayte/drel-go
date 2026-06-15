@@ -302,6 +302,9 @@ func extractFields(st *types.Struct, ownerPkgPath string) ([]FieldInfo, error) {
 						// but with no declared const values -- not an enum, but still
 						// comparable and safe to use with != in generated diff code.
 						fi.IsNamedPrimitive = true
+					} else if isJSONContainer(f.Type()) {
+						fi.IsJSON = true
+						fi.IsArray = isSliceType(f.Type())
 					}
 				}
 			}
