@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/alternayte/drel/internal/dialect"
 )
@@ -26,11 +25,6 @@ func isNoRows(err error) bool {
 		return true
 	}
 	return err.Error() == "no rows in result set"
-}
-
-// quoteIdentMutation quotes a SQL identifier for use in mutation readback queries.
-func quoteIdentMutation(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // applyPendingChanges performs DetectChanges + GetPendingChanges and executes all
@@ -62,68 +56,25 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 			vals = append([]any{te.meta.PKValue(te.entity)}, vals...)
 		}
 
-		if d.SupportsReturning() {
-			returning := []string{"id", "created_at", "updated_at"}
-			scan := te.meta.ScanReturning
-			if appAssigned {
-				returning = []string{"created_at", "updated_at"}
-				scan = te.meta.ScanGenerated
-			}
-			result := d.BuildInsert(te.meta.Table, cols, vals, returning)
-			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-			if scan != nil {
-				if err := scan(te.entity, row); err != nil {
-					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
-				}
-			} else {
-				discards := make([]any, len(returning))
-				for i := range discards {
-					discards[i] = new(any)
-				}
-				if err := row.Scan(discards...); err != nil {
-					return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
-				}
-			}
-		} else {
-			result := d.BuildInsert(te.meta.Table, cols, vals, nil)
-			if _, err := exec.execInternal(ctx, result.SQL, result.Args...); err != nil {
+		returning := []string{"id", "created_at", "updated_at"}
+		scan := te.meta.ScanReturning
+		if appAssigned {
+			returning = []string{"created_at", "updated_at"}
+			scan = te.meta.ScanGenerated
+		}
+		result := d.BuildInsert(te.meta.Table, cols, vals, returning)
+		row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+		if scan != nil {
+			if err := scan(te.entity, row); err != nil {
 				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
-			if appAssigned {
-				// Read back timestamps by the known id (correct for non-integer
-				// keys). Skip entirely if the model has no timestamp scanner.
-				if te.meta.ScanGenerated != nil {
-					readbackSQL := fmt.Sprintf(
-						`SELECT %s, %s FROM %s WHERE %s = ?`,
-						quoteIdentMutation("created_at"),
-						quoteIdentMutation("updated_at"),
-						quoteIdentMutation(te.meta.Table),
-						quoteIdentMutation(te.meta.PKColumn),
-					)
-					row := exec.queryRowInternal(ctx, readbackSQL, te.meta.PKValue(te.entity))
-					if err := te.meta.ScanGenerated(te.entity, row); err != nil {
-						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
-					}
-				}
-			} else {
-				readbackSQL := fmt.Sprintf(
-					`SELECT %s, %s, %s FROM %s WHERE rowid = last_insert_rowid()`,
-					quoteIdentMutation("id"),
-					quoteIdentMutation("created_at"),
-					quoteIdentMutation("updated_at"),
-					quoteIdentMutation(te.meta.Table),
-				)
-				row := exec.queryRowInternal(ctx, readbackSQL)
-				if te.meta.ScanReturning != nil {
-					if err := te.meta.ScanReturning(te.entity, row); err != nil {
-						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
-					}
-				} else {
-					var discard any
-					if err := row.Scan(&discard, &discard, &discard); err != nil {
-						return nil, fmt.Errorf("drel: insert readback %s: %w", te.meta.Table, err)
-					}
-				}
+		} else {
+			discards := make([]any, len(returning))
+			for i := range discards {
+				discards[i] = new(any)
+			}
+			if err := row.Scan(discards...); err != nil {
+				return nil, fmt.Errorf("drel: insert %s: %w", te.meta.Table, err)
 			}
 		}
 
@@ -177,29 +128,16 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 			currentVersion := te.meta.VersionValue(te.entity)
 			result := d.BuildUpdateVersioned(te.meta.Table, cvs, te.meta.PKColumn, pkVal, "version", currentVersion)
 
-			if d.SupportsReturning() {
-				// Postgres path: UPDATE ... RETURNING version
-				row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-				var newVersion int
-				if err := row.Scan(&newVersion); err != nil {
-					if isNoRows(err) {
-						return nil, ErrConcurrencyConflict
-					}
-					return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
-				}
-				te.meta.SetVersion(te.entity, newVersion)
-			} else {
-				// SQLite path: UPDATE without RETURNING, check affected rows.
-				affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
-				if err != nil {
-					return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
-				}
-				if affected == 0 {
+			// UPDATE ... RETURNING version (both dialects support RETURNING).
+			row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+			var newVersion int
+			if err := row.Scan(&newVersion); err != nil {
+				if isNoRows(err) {
 					return nil, ErrConcurrencyConflict
 				}
-				// Version was incremented in the UPDATE SET clause (version = version + 1).
-				te.meta.SetVersion(te.entity, currentVersion+1)
+				return nil, fmt.Errorf("drel: versioned update %s: %w", te.meta.Table, err)
 			}
+			te.meta.SetVersion(te.entity, newVersion)
 		} else {
 			result := d.BuildUpdate(te.meta.Table, cvs, te.meta.PKColumn, pkVal)
 			affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
@@ -265,27 +203,17 @@ func applyPendingChanges(ctx context.Context, exec txExec, d dialect.Dialect, tr
 }
 
 // execVersionedDelete runs a versioned (hard or soft) delete and reports a
-// concurrency conflict when the current version no longer matches. On Postgres
-// the builder appends RETURNING <pk>, so a missing row scans as no-rows; on
-// SQLite the affected-row count is authoritative.
-func execVersionedDelete(ctx context.Context, exec txExec, d dialect.Dialect, te *trackedEntity, result dialect.Result, currentVersion int) error {
-	if d.SupportsReturning() {
-		row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
-		var pk any
-		if err := row.Scan(&pk); err != nil {
-			if isNoRows(err) {
-				return ErrConcurrencyConflict
-			}
-			return fmt.Errorf("drel: versioned delete %s: %w", te.meta.Table, err)
+// concurrency conflict when the current version no longer matches. Both Postgres
+// and SQLite 3.35+ append RETURNING <pk> to their versioned-delete SQL, so a
+// missing row scans as no-rows (concurrency conflict).
+func execVersionedDelete(ctx context.Context, exec txExec, _ dialect.Dialect, te *trackedEntity, result dialect.Result, _ int) error {
+	row := exec.queryRowInternal(ctx, result.SQL, result.Args...)
+	var pk any
+	if err := row.Scan(&pk); err != nil {
+		if isNoRows(err) {
+			return ErrConcurrencyConflict
 		}
-		return nil
-	}
-	affected, err := exec.execInternal(ctx, result.SQL, result.Args...)
-	if err != nil {
 		return fmt.Errorf("drel: versioned delete %s: %w", te.meta.Table, err)
-	}
-	if affected == 0 {
-		return ErrConcurrencyConflict
 	}
 	return nil
 }
